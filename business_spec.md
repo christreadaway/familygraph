@@ -9,7 +9,7 @@
 | **Author** | Chris Treadaway |
 | **Status** | Draft |
 | **Document type** | Business spec (the "why," not the "how") |
-| **Companion docs** | `PRODUCT_SPEC.md` (the "how"), `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md` (the integration plan) |
+| **Companion docs** | `product_spec.md` (the "how"), `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md` (the integration plan), `session_notes.md` (decision log) |
 
 ---
 
@@ -153,6 +153,23 @@ Sanctus is part of a larger thesis: **Catholic institutions deserve software bui
 If Sanctus works at St. Theresa, the portfolio becomes more powerful at St. Theresa. If Sanctus works across multiple institutions, the portfolio becomes a real product line for Catholic institutions broadly. If Sanctus is eventually open-sourced through the Catholic Digital Commons Foundation, it becomes infrastructure that any Catholic-aligned developer can build on, multiplying the impact beyond what one builder could achieve alone.
 
 The order matters. Ship to St. Theresa. Make it work. Decide what's next based on what's true, not what's hoped.
+
+---
+
+## Addenda from v1 implementation
+
+The v1 implementation surfaced a few decisions that the original spec didn't
+address explicitly. They are recorded here so future work doesn't relitigate
+them:
+
+- **PII at rest is encrypted at the column level, not via SQLCipher.** Application-layer AES-256-GCM on every PII column gives the same "plaintext never lives in the SQLite file" guarantee without forcing a custom SQLite native build on every consumer. The on-disk ciphertext format is independent of the storage backend; if a future deployment moves to SQLCipher, the existing rows continue to decrypt unchanged. The data key, master Bearer token, and HMAC key live together in `$SANCTUS_HOME/secret.key`, mode 0600. Migrating the secret file into the OS keychain is a one-time copy-out.
+- **Searchable equality on PII.** Names, emails, phones, and addresses each have an HMAC-SHA256 hash column alongside the ciphertext. The hash is what the resolver and the dashboard search against. Free-form fields (notes, raw payloads) are encrypted-only, never hashed, because their value space is not amenable to safe HMAC equality.
+- **Token rotation does not re-encrypt existing data.** `sanctus rotate-secret` regenerates the master Bearer token only; the data key is preserved so existing ciphertext remains readable. Operators rotate when they suspect token compromise; rotating the data key is a v2 concern that requires a planned re-encryption pass.
+- **Audit log self-redaction.** Every metadata object passed to the audit recorder is run through a key-name redactor before write. Audit rows are therefore safe to share with peers, partners, or compliance reviewers; the operator does not need to hand-screen them.
+- **Folder-watch is non-recursive and idempotent.** Files are picked up only at the root of `$SANCTUS_WATCH_DIR`. Processed inputs move to `out/processed/`; collisions are renamed with a numeric suffix; errors land in `out/errors/` with a `.error.txt` sidecar. The agent never overwrites existing output, and never re-reads a moved file.
+- **Default is loopback.** The HTTP server binds to `127.0.0.1` and the safe API surface enforces loopback origin. Exposing Sanctus to a LAN address is a deliberate operator action (`SANCTUS_BIND=0.0.0.0`) and is out of scope for the trusted-desktop threat model.
+- **Bulk-import "preview" is not a write.** The import wizard's preview path is pure parsing; the operator runs the actual writes only after they've reviewed the inferred mapping and the canonical preview. This shape became necessary as soon as we wired vendor-specific handlers (FACTS, RenWeb, Ministry Platform), since auto-detection by header is heuristic and the operator needs visibility into what Sanctus thinks the file is before committing to a write.
+- **Conflict resolution is a one-way street, but reversible by alias resolution.** Resolving a conflict by merge is permanent in the sense that the loser code becomes an alias forever. But an operator who later realizes the merge was wrong can split the surviving family / re-create the loser as a new entity; the original alias still resolves transparently for any consumer that stored it.
 
 ---
 

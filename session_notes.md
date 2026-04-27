@@ -202,4 +202,129 @@ The product is small enough to build well and ambitious enough to be foundationa
 
 ---
 
+## v6 → v1 build session (Claude Code, 2026-04-27)
+
+The first end-to-end implementation pass against the v6 spec. Goal: produce a
+shippable v1 with no shortcuts and no deferred subsystems. The output of this
+session is the code currently in this repo plus the new `product_spec.md`.
+
+### What got built, in order
+
+1. **Database schema.** `server/db/schema.sql` lays out families, persons,
+   memberships (with started_at/ended_at history), addresses (multi),
+   emails/phones, relationships (with valid kinds + symmetric back-refs),
+   aliases, source_records + provenance, conflicts, resolution_rules,
+   token_sets, audit_events (tier-1 + tier-2), profiles, settings.
+   Foreign keys + WAL on. Schema is idempotent; `schema_version` table is
+   the migration record.
+2. **Identifiers.** `server/crypto/identifiers.js` produces non-semantic
+   8-hex-char codes per kind. Disambiguation tested for `addr_` vs `a_`-style
+   prefixes (the longest-prefix-first sort matters).
+3. **Crypto layer.** AES-256-GCM column ciphertext + HMAC-SHA256 search hashes
+   in `server/crypto/encryption.js`; key file in
+   `server/crypto/secret.js` (mode 0600, three keys: `master`, `dataKey`,
+   `hmacKey`). Tamper detection covered by tests.
+4. **Auth.** Bearer + loopback-only middlewares in
+   `server/auth/middleware.js`. Constant-time token comparison; loopback
+   accepts `127.0.0.1`, `::1`, `::ffff:127.0.0.1`.
+5. **Identity.** Families, persons, contacts, relationships, aliases, plus a
+   merge that re-points memberships, contacts, relationships, and provenance
+   in a single transaction. Split creates a new family and ends source
+   memberships with `reason='split'`.
+6. **Resolver.** Levenshtein-based per-field similarity with weighted scoring
+   (family 0.45, given 0.35, DOB 0.20). Auto-merge ≥ 0.92, conflict-queue
+   ≥ 0.7. Family attachment by membership majority. `rescorePerson` exists
+   for manual edits.
+7. **Source handlers.** FACTS, RenWeb, Ministry Platform, Google Sheets
+   (CSV), Excel, generic CSV. Header inference covers ~30 aliases per field.
+   Auto-detection by headers; operator can pin `source` explicitly.
+8. **Sanitize/desanitize.** Three-layer NER: regex (email/phone/SSN/DOB/
+   address), registry-driven HMAC matches against active-person hashes, and
+   capitalized-token heuristic. Token-set mappings are AES-256-GCM
+   ciphertext at rest. Tested that the raw blob does not contain plaintext.
+9. **Folder-watch agent.** chokidar with awaitWriteFinish, non-recursive,
+   moves processed files to `out/processed/`, errors to `out/errors/`,
+   never overwrites.
+10. **Two-tier audit.** PII-redacting metadata serializer; tier-2 events
+    record `destination + entity_codes + reason`.
+11. **Backup.** Hot snapshot via better-sqlite3's `.backup()` API; optional
+    AES-256-GCM + gzip wrapper with PBKDF2(200k iterations) from a
+    passphrase. Wrong-passphrase rejection is verified.
+12. **API.** Express, JSON-only, separate routers for safe vs PII surface.
+    `X-Sanctus-Actor` header carries the consuming-app name into the audit
+    log. Aliases are followed transparently — `GET /api/families/:loser`
+    returns the survivor.
+13. **Operator dashboard.** Vite + React 18. Routes for families, people,
+    conflicts, import (preview + run), sanitize/desanitize round-trip,
+    audit log. Bearer token kept in `localStorage`. Safe + PII surfaces are
+    distinct in the UI as well as the API.
+14. **CLI.** `bin/sanctus.js` wraps `start`, `rotate-secret`, `backup`,
+    `restore`, `show-token`.
+
+### Bugs found and fixed during the test pass
+
+70 `node:test` cases were authored alongside the implementation. The first
+full run had five failures, all real:
+
+1. **Diacritic regex was a literal NUL-class, not a Unicode property class.**
+   `[̀-ͯ]` was a copy-paste of the visible characters, not the U+0300–U+036F
+   range. Replaced with `\p{M}+/gu`. Without this, `María` normalized to
+   garbage and the resolver's HMAC blocking missed it.
+2. **Phone regex didn't match `(415) 555-0100` after a space.** The leading
+   `\b` requires a word/non-word transition, but `(` is non-word and a
+   preceding space is also non-word. Replaced with a `(?<![\w-])` lookbehind
+   and a tightened tail.
+3. **The `/api/*` 404 handler was unreachable for unauthenticated callers.**
+   `app.use('/api', bearer, sanitizeRouter)` meant the bearer middleware
+   intercepted every unknown `/api/*` path and returned 401 before the 404
+   handler could run. Split the sanitize router into two endpoints
+   (`buildSanitize` and `buildDesanitize`) and mounted each at its specific
+   path.
+4. **Tests used `assert.notMatch`, which doesn't exist in `node:assert`.**
+   The correct name is `assert.doesNotMatch`. Three tests fixed.
+5. **Test expectation for `normalizeName('María-José')` was wrong.** After
+   stripping diacritics the correct output is `'maria jose'`. Test corrected.
+
+After fixes, all 70 cases pass. End-to-end smoke testing through curl
+exercised: bearer rejection, bulk import (auto-detected resolver decisions,
+including a deliberate near-duplicate that landed in the conflict queue),
+PII vs safe surface differences, sanitize → desanitize round-trip,
+tier-2 export consent, folder-watch CSV import (with file moved to
+`processed/` and a sidecar summary written), and SPA fallback for the React
+client.
+
+### Settled in this build that the spec had left open
+
+- Closed-source for v1 reaffirmed. No `LICENSE`, `CONTRIBUTING.md`, or
+  `CODE_OF_CONDUCT.md` checked in. The `package.json` `license` field is
+  `UNLICENSED`.
+- Application-layer column encryption was chosen over SQLCipher to avoid
+  forcing custom-build SQLite on every consumer. The format is forward-
+  compatible with a SQLCipher migration if the threat model later requires
+  it.
+- The folder-watch sidecar format is `<stem>.import-summary.json` for
+  imports and `<stem>.token-set.json` for sanitization output.
+- The Bearer token is regenerated by `sanctus rotate-secret` without
+  touching the data key, so existing ciphertext keeps decrypting after a
+  rotation.
+- Conflict-queue actions are: `merge` (with `winner_code`), `reject` (the
+  pair is genuinely two distinct entities), `dismiss` (defer without a
+  semantic claim).
+
+### Open items (not blockers for v1)
+
+- **OS-keychain integration.** File-based secret storage is the v1 path;
+  the file format is keychain-compatible, so the migration is mechanical.
+- **Resolution-rule editor UI.** The schema exists; the dashboard is not
+  yet exposed for editing rules. Will land alongside the first real
+  operator who needs it.
+- **compromise / winkNLP NER.** The current NER detector is regex +
+  registry. Adding a JS-native NER engine is a drop-in for the third
+  layer of `server/sanitize/ner.js`. Deferred until the regex/registry
+  combo proves insufficient at St. Theresa.
+- **Per-app scoped API keys.** Single shared secret in v1 per the spec.
+  Carry-over to v2.
+
+---
+
 *End of session notes*

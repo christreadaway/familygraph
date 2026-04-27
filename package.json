@@ -1,0 +1,36 @@
+{
+  "name": "sanctus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local family registry. Source of truth for who is who in a Catholic institution.",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "main": "server/index.js",
+  "bin": {
+    "sanctus": "./bin/sanctus.js"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "SANCTUS_ENV=development node server/index.js",
+    "test": "node --test 'tests/**/*.test.js'",
+    "test:single": "node --test",
+    "client:install": "cd client && npm install",
+    "client:dev": "cd client && npm run dev",
+    "client:build": "cd client && npm run build",
+    "rotate-secret": "node bin/rotate-secret.js",
+    "backup": "node bin/backup.js",
+    "restore": "node bin/restore.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "chokidar": "^3.6.0",
+    "csv-parse": "^5.5.6",
+    "csv-stringify": "^6.5.1",
+    "express": "^4.21.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20"
+  }
+}

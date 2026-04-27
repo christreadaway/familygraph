@@ -1,0 +1,85 @@
+import React, { useEffect, useState } from 'react';
+import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { api, getToken, setToken } from './api.js';
+import Families from './views/Families.jsx';
+import FamilyDetail from './views/FamilyDetail.jsx';
+import People from './views/People.jsx';
+import PersonDetail from './views/PersonDetail.jsx';
+import Conflicts from './views/Conflicts.jsx';
+import ImportView from './views/Import.jsx';
+import AuditLog from './views/AuditLog.jsx';
+import SanitizeView from './views/Sanitize.jsx';
+
+function TokenBanner({ ok, onSetToken }) {
+  const [val, setVal] = useState('');
+  if (ok) return null;
+  return (
+    <div className="token-banner">
+      Sanctus needs your local Bearer token to talk to the PII surface. Run{' '}
+      <code>npx sanctus show-token</code> in the Sanctus directory and paste it here:
+      <div className="row" style={{ marginTop: 8 }}>
+        <input
+          style={{ flex: 1, fontFamily: 'var(--mono)' }}
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          placeholder="paste 64-character hex token"
+        />
+        <button className="primary" onClick={() => { onSetToken(val.trim()); setVal(''); }}>
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [tokenOk, setTokenOk] = useState(false);
+  const [health, setHealth] = useState(null);
+
+  useEffect(() => {
+    api.health().then(setHealth).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!getToken()) { setTokenOk(false); return; }
+    api.listFamilies().then(() => setTokenOk(true)).catch(() => setTokenOk(false));
+  }, []);
+
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <h1>Sanctus</h1>
+        <nav className="col">
+          <NavLink to="/families">Families</NavLink>
+          <NavLink to="/people">People</NavLink>
+          <NavLink to="/conflicts">Conflict queue</NavLink>
+          <NavLink to="/import">Import</NavLink>
+          <NavLink to="/sanitize">Sanitize / desanitize</NavLink>
+          <NavLink to="/audit">Audit log</NavLink>
+        </nav>
+        <div className="footer">
+          {health
+            ? <>Schema v{health.schema} · {health.status}</>
+            : <span className="error">backend unreachable</span>}
+          <div style={{ marginTop: 8 }}>
+            <button onClick={() => { setToken(''); setTokenOk(false); }}>Clear token</button>
+          </div>
+        </div>
+      </aside>
+      <main className="main">
+        <TokenBanner ok={tokenOk} onSetToken={t => { setToken(t); setTokenOk(!!t); }} />
+        <Routes>
+          <Route path="/" element={<Navigate to="/families" replace />} />
+          <Route path="/families" element={<Families />} />
+          <Route path="/families/:code" element={<FamilyDetail />} />
+          <Route path="/people" element={<People />} />
+          <Route path="/people/:code" element={<PersonDetail />} />
+          <Route path="/conflicts" element={<Conflicts />} />
+          <Route path="/import" element={<ImportView />} />
+          <Route path="/sanitize" element={<SanitizeView />} />
+          <Route path="/audit" element={<AuditLog />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
