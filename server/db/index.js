@@ -3,9 +3,13 @@
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const migrationsRunner = require('./migrations');
 
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
-const SCHEMA_VERSION = 1;
+const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
+// Bumped to 2 — adds api_keys table. Run-time migration adds the table on
+// existing v1 databases; fresh databases get it from schema.sql.
+const SCHEMA_VERSION = 2;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });
@@ -17,19 +21,25 @@ function open(dbPath, options = {}) {
 }
 
 function migrate(db) {
+  // Apply the bootstrap schema (idempotent, IF NOT EXISTS everywhere).
   const schema = fs.readFileSync(SCHEMA_PATH, 'utf8');
   db.exec(schema);
-  const row = db.prepare('SELECT MAX(version) AS v FROM schema_version').get();
-  const current = row && row.v ? row.v : 0;
-  if (current < SCHEMA_VERSION) {
+  // Run incremental migrations on top of the bootstrap schema. The runner
+  // tracks `schema_version` and is itself idempotent.
+  migrationsRunner.run(db, MIGRATIONS_DIR);
+  const cur = migrationsRunner.currentVersion(db);
+  if (cur < SCHEMA_VERSION) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
   }
-  return SCHEMA_VERSION;
+  return migrationsRunner.currentVersion(db);
 }
 
 function init(dbPath) {
   const db = open(dbPath);
   migrate(db);
+  // Seed the built-in profiles. Idempotent; INSERT OR IGNORE.
+  const profiles = require('../identity/profiles');
+  profiles.ensureBuiltins(db);
   return db;
 }
 

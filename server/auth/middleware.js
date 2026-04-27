@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const apiKeys = require('./api-keys');
 
 // Loopback addresses we accept. IPv6 mapping of IPv4 must be normalized.
 const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -31,16 +32,49 @@ function extractBearer(req) {
   return m ? m[1].trim() : null;
 }
 
-function bearerAuth(secrets) {
+// bearerAuth(secrets, { db, scope })
+//   Accepts either:
+//     - the shared master token (full access)
+//     - a per-app scoped key (sk_…) provisioned in api_keys
+//   When `scope` is provided, scoped keys must include the required scope or
+//   '*'. Master always passes.
+function bearerAuth(secrets, opts = {}) {
+  const required = opts.scope || null;
+  const db = opts.db || null;
   return function bearerAuthMw(req, res, next) {
     const token = extractBearer(req);
-    if (!token || !tokensEqual(token, secrets.master)) {
-      return res
-        .status(401)
-        .json({ error: 'unauthorized', detail: 'PII surface requires Bearer token' });
+    if (!token) {
+      return res.status(401).json({ error: 'unauthorized', detail: 'PII surface requires Bearer token' });
     }
-    req.auth = { kind: 'bearer', actor: req.get('x-sanctus-actor') || 'unknown_app' };
-    next();
+    if (tokensEqual(token, secrets.master)) {
+      req.auth = {
+        kind: 'master',
+        scopes: ['*'],
+        actor: req.get('x-sanctus-actor') || 'master_app',
+      };
+      return next();
+    }
+    if (db && token.startsWith('sk_')) {
+      const key = apiKeys.lookupByToken(db, token);
+      if (key) {
+        if (required && !apiKeys.authorizes(key.scopes, required)) {
+          return res
+            .status(403)
+            .json({ error: 'forbidden', detail: `missing scope: ${Array.isArray(required) ? required.join(',') : required}` });
+        }
+        apiKeys.recordUse(db, key.code);
+        req.auth = {
+          kind: 'scoped',
+          scopes: key.scopes,
+          actor: key.name,
+          key_code: key.code,
+        };
+        return next();
+      }
+    }
+    return res
+      .status(401)
+      .json({ error: 'unauthorized', detail: 'invalid or revoked token' });
   };
 }
 

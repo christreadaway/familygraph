@@ -82,4 +82,30 @@ function list(db, { limit = 100, action, actor, entityCode } = {}) {
     .map(row => ({ ...row, metadata: row.metadata ? JSON.parse(row.metadata) : null }));
 }
 
-module.exports = { record, list, redact };
+// Retention sweep. Removes tier-1 events older than `days` days. Tier-2
+// events (export-consent) are NEVER deleted — they are the operator's record
+// of what PII has left the machine, and they are what the operator hands to
+// counsel or counts toward compliance reviews.
+function sweep(db, days) {
+  if (typeof days !== 'number' || days <= 0) return 0;
+  const cutoff = new Date(Date.now() - days * 86400 * 1000).toISOString();
+  const r = db.prepare(
+    `DELETE FROM audit_events WHERE tier = 1 AND created_at < ?`
+  ).run(cutoff);
+  if (r.changes > 0) {
+    record(db, {
+      action: 'audit_sweep',
+      actor: 'system',
+      metadata: { removed: r.changes, cutoff, days },
+    });
+  }
+  return r.changes;
+}
+
+function effectiveRetentionDays(db, fallback = null) {
+  const row = db.prepare("SELECT value_json FROM settings WHERE key = 'audit_retention_days'").get();
+  if (!row) return fallback;
+  try { return Number(JSON.parse(row.value_json)); } catch (_) { return fallback; }
+}
+
+module.exports = { record, list, redact, sweep, effectiveRetentionDays };

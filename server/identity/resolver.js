@@ -19,6 +19,7 @@ const people = require('./people');
 const families = require('./families');
 const contacts = require('./contacts');
 const aliases = require('./aliases');
+const rules = require('./rules');
 const audit = require('../audit');
 const { newCode } = require('../crypto/identifiers');
 
@@ -126,9 +127,17 @@ function findCandidates(db, secrets, incoming) {
 //   action = 'auto_merged' | 'enqueued' | 'attached' | 'created'
 function resolveOrCreatePerson(db, secrets, thresholds, incoming, opts = {}) {
   const candidates = findCandidates(db, secrets, incoming);
+  const activeRules = rules.loadActive(db, 'person');
   let best = null;
   for (const c of candidates) {
-    const r = scorePerson(incoming, c);
+    let r = scorePerson(incoming, c);
+    if (activeRules.length > 0) {
+      const adjusted = rules.applyToScore(activeRules, r, incoming, c, {
+        incoming: { email: (incoming.emails || [])[0], postal: incoming.postal },
+        candidate: { email: c.email, postal: c.postal },
+      });
+      r = { score: adjusted.score, reasons: adjusted.reasons, override: adjusted.override };
+    }
     if (!best || r.score > best.score) best = { ...r, candidate: c };
   }
 

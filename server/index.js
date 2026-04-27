@@ -15,9 +15,29 @@ const buildFamilies = require('./api/families');
 const buildPeople = require('./api/people');
 const buildSafe = require('./api/safe');
 const { buildSanitize, buildDesanitize } = require('./api/sanitize');
-const buildAudit = require('./api/audit');
+const auditMod = require('./api/audit');
+const buildAuditList = auditMod.buildList;
+const buildAuditExport = auditMod.buildExternalExport;
 const buildConflicts = require('./api/conflicts');
 const buildImport = require('./api/import');
+const buildRules = require('./api/rules');
+const buildApiKeys = require('./api/api-keys');
+const buildSearch = require('./api/search');
+const buildMembershipHistory = require('./api/membership-history');
+const buildProfiles = require('./api/profiles');
+const buildSettings = require('./api/settings');
+const buildExport = require('./api/export');
+const buildRelationships = require('./api/relationships');
+
+// method2scope: chooses one of two scoped middlewares depending on the HTTP
+// method. GET/HEAD use the read middleware; everything else uses the write
+// middleware. Returned function is mounted with app.use(...).
+function method2scope(readMw, writeMw) {
+  return function pickByMethod(req, res, next) {
+    if (req.method === 'GET' || req.method === 'HEAD') return readMw(req, res, next);
+    return writeMw(req, res, next);
+  };
+}
 
 function buildApp({ db, secrets, thresholds }) {
   const app = express();
@@ -26,8 +46,16 @@ function buildApp({ db, secrets, thresholds }) {
   app.use(express.json({ limit: '20mb' }));
 
   // Inject auth context onto every request: PII routes require Bearer; safe
-  // routes require loopback.
-  const bearer = auth.bearerAuth(secrets);
+  // routes require loopback. Scoped Bearer middlewares enforce per-app scopes
+  // when consumers use `sk_…` tokens; the master token always satisfies them.
+  const bearerRead = auth.bearerAuth(secrets, { db, scope: 'pii.read' });
+  const bearerWrite = auth.bearerAuth(secrets, { db, scope: 'pii.write' });
+  const bearerSanitize = auth.bearerAuth(secrets, { db, scope: 'sanitize' });
+  const bearerAuditRead = auth.bearerAuth(secrets, { db, scope: 'audit.read' });
+  const bearerAuditWrite = auth.bearerAuth(secrets, { db, scope: 'audit.write' });
+  const bearerImport = auth.bearerAuth(secrets, { db, scope: 'import' });
+  const bearerRulesWrite = auth.bearerAuth(secrets, { db, scope: 'rules.write' });
+  const bearerMaster = auth.bearerAuth(secrets, { db, scope: '*' });
   const loopback = auth.loopbackOnly();
 
   // Health (open).
@@ -36,14 +64,24 @@ function buildApp({ db, secrets, thresholds }) {
   // Safe surface (loopback only, no PII).
   app.use('/api/safe', loopback, buildSafe({ db, secrets }));
 
-  // PII surface (Bearer required).
-  app.use('/api/families', bearer, buildFamilies({ db, secrets, includePii: true }));
-  app.use('/api/people', bearer, buildPeople({ db, secrets, includePii: true }));
-  app.use('/api/conflicts', bearer, buildConflicts({ db, secrets }));
-  app.use('/api/audit', bearer, buildAudit({ db }));
-  app.use('/api/import', bearer, buildImport({ db, secrets, thresholds }));
-  app.use('/api/sanitize', bearer, buildSanitize({ db, secrets }));
-  app.use('/api/desanitize', bearer, buildDesanitize({ db, secrets }));
+  // PII surface (Bearer required). Different scopes per surface so an app
+  // issued only `pii.read` cannot also write or run imports.
+  app.use('/api/families', method2scope(bearerRead, bearerWrite), buildFamilies({ db, secrets, includePii: true }));
+  app.use('/api/people', method2scope(bearerRead, bearerWrite), buildPeople({ db, secrets, includePii: true }));
+  app.use('/api/relationships', bearerWrite, buildRelationships({ db }));
+  app.use('/api/conflicts', method2scope(bearerRead, bearerWrite), buildConflicts({ db, secrets }));
+  app.use('/api/audit/external-export', bearerAuditWrite, buildAuditExport({ db }));
+  app.use('/api/audit', bearerAuditRead, buildAuditList({ db }));
+  app.use('/api/import', bearerImport, buildImport({ db, secrets, thresholds }));
+  app.use('/api/sanitize', bearerSanitize, buildSanitize({ db, secrets }));
+  app.use('/api/desanitize', bearerSanitize, buildDesanitize({ db, secrets }));
+  app.use('/api/rules', bearerRulesWrite, buildRules({ db }));
+  app.use('/api/keys', bearerMaster, buildApiKeys({ db }));
+  app.use('/api/search', bearerRead, buildSearch({ db, secrets }));
+  app.use('/api/membership-history', bearerRead, buildMembershipHistory({ db, secrets }));
+  app.use('/api/profiles', bearerRulesWrite, buildProfiles({ db }));
+  app.use('/api/settings', bearerMaster, buildSettings({ db }));
+  app.use('/api/export', bearerRead, buildExport({ db, secrets }));
 
   // Static client (built React UI).
   const clientDir = path.join(__dirname, '..', 'client', 'dist');
@@ -82,6 +120,15 @@ function start() {
     // eslint-disable-next-line no-console
     console.log(`[sanctus] listening on http://${config.bind}:${config.port}`);
   });
+
+  // Daily audit sweep. Tier-2 events are never deleted; tier-1 events expire
+  // when `audit_retention_days` is set in settings.
+  const audit = require('./audit');
+  const sweepInterval = setInterval(() => {
+    const days = audit.effectiveRetentionDays(db, null);
+    if (days) audit.sweep(db, days);
+  }, 24 * 60 * 60 * 1000);
+  sweepInterval.unref();
 
   let watcher = null;
   if (process.env.SANCTUS_DISABLE_WATCH !== '1') {

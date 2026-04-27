@@ -4,8 +4,10 @@ const express = require('express');
 const sources = require('../sources');
 const importPipeline = require('../identity/import');
 const audit = require('../audit');
+const profiles = require('../identity/profiles');
 
 function build({ db, secrets, thresholds }) {
+  const effective = () => profiles.thresholdsFor(db, thresholds);
   const r = express.Router();
 
   r.post('/preview', (req, res) => {
@@ -27,7 +29,7 @@ function build({ db, secrets, thresholds }) {
     if (!content) return res.status(400).json({ error: 'content required' });
     const handler = (source && sources.HANDLERS[source]) || sources.csv;
     const out = handler.loadString(content, { mapping });
-    const results = importPipeline.importBatch(db, secrets, thresholds, out.canonical, {
+    const results = importPipeline.importBatch(db, secrets, effective(), out.canonical, {
       source: out.source || source || 'csv',
       sourceRef: source_ref,
       actor: req.auth?.actor || 'operator',

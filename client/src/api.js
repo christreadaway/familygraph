@@ -68,4 +68,32 @@ export const api = {
 
   sanitize: body => request('POST', '/api/sanitize', body),
   desanitize: body => request('POST', '/api/desanitize', body),
+
+  // v1.x extensions
+  search: params => {
+    const qs = new URLSearchParams(params).toString();
+    return request('GET', `/api/search?${qs}`);
+  },
+  membershipHistoryPerson: code => request('GET', `/api/membership-history/person/${code}`),
+  membershipHistoryFamily: code => request('GET', `/api/membership-history/family/${code}`),
+  listRules: kind => request('GET', `/api/rules${kind ? `?kind=${kind}` : ''}`),
+  createRule: body => request('POST', '/api/rules', body),
+  updateRule: (code, body) => request('PATCH', `/api/rules/${code}`, body),
+  deleteRule: code => request('DELETE', `/api/rules/${code}`),
+  listKeys: () => request('GET', '/api/keys'),
+  provisionKey: body => request('POST', '/api/keys', body),
+  revokeKey: code => request('DELETE', `/api/keys/${code}`),
+  listProfiles: () => request('GET', '/api/profiles'),
+  activateProfile: name => request('POST', '/api/profiles/activate', { name }),
+  listSettings: () => request('GET', '/api/settings'),
+  putSetting: (key, value) => request('PUT', `/api/settings/${key}`, { value }),
+  deleteSetting: key => request('DELETE', `/api/settings/${key}`),
+  exportData: body => fetch('/api/export', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${getToken()}`, 'x-sanctus-actor': 'dashboard' },
+    body: JSON.stringify(body),
+  }),
+  addRelationship: body => request('POST', '/api/relationships', body),
+  listRelationships: code => request('GET', `/api/relationships/${code}`),
+  removeRelationship: code => request('DELETE', `/api/relationships/${code}`),
 };

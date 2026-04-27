@@ -315,15 +315,77 @@ client.
 
 - **OS-keychain integration.** File-based secret storage is the v1 path;
   the file format is keychain-compatible, so the migration is mechanical.
-- **Resolution-rule editor UI.** The schema exists; the dashboard is not
-  yet exposed for editing rules. Will land alongside the first real
-  operator who needs it.
-- **compromise / winkNLP NER.** The current NER detector is regex +
-  registry. Adding a JS-native NER engine is a drop-in for the third
-  layer of `server/sanitize/ner.js`. Deferred until the regex/registry
-  combo proves insufficient at St. Theresa.
-- **Per-app scoped API keys.** Single shared secret in v1 per the spec.
-  Carry-over to v2.
+
+---
+
+## v1.x extensions session (Claude Code, 2026-04-27, continued)
+
+A second pass that promoted every v1.x deferral that wasn't explicitly v2
+into v1 proper. The shape and posture of v1 didn't change; the surface
+expanded.
+
+### What was added
+
+1. **Resolution-rule engine.** `server/identity/rules.js` validates and
+   persists rules against the existing `resolution_rules` table; the
+   resolver consults active rules and applies `auto_merge`, `never_merge`,
+   `boost`, or `penalize` decisions before the threshold check. CRUD
+   surface at `/api/rules`. Dashboard editor at `/rules`.
+2. **compromise NER.** Added as the third layer of the sanitize detector,
+   between the registry HMAC layer and the capitalized-token heuristic.
+   Loaded lazily so removing the dependency leaves the rest of the system
+   working.
+3. **Per-app scoped API keys.** New `api_keys` table (sha256-hashed
+   tokens, scope arrays). `auth/middleware.js` accepts both the master
+   token and `sk_…` scoped tokens; scope is enforced per route. New scopes:
+   `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`,
+   `import`, `rules.write`, `*`.
+4. **HMAC-backed search.** `/api/search` answers exact normalized lookups
+   for names (via `_hash` columns), emails, and phones. Substring scan
+   over encrypted PII is deliberately unsupported because it would
+   defeat the encryption-at-rest guarantee.
+5. **Membership history.** `/api/membership-history/{person|family}/:code`
+   returns every row including ended memberships with reason. Surfaced
+   in the FamilyDetail dashboard view.
+6. **Profiles activated.** Built-ins (`catholic_school`, `parish_donor`,
+   `diocese`) seed on first boot. The active profile's thresholds
+   override the resolver defaults at import time. `/api/profiles` +
+   `/api/profiles/activate`. Dashboard at `/profiles`.
+7. **Settings persistence.** Allow-listed keys (`institution_name`,
+   `operator_name`, `audit_retention_days`, plus `custom.*` namespace).
+   `/api/settings` and dashboard at `/settings`.
+8. **Audit retention sweeper.** Daily `setInterval` triggers a sweep of
+   tier-1 events older than `audit_retention_days`. Tier-2 events are
+   never swept — they are the operator's PII-export ledger and must
+   persist.
+9. **Numbered migrations runner.** `server/db/migrations/` with a runner
+   that picks up `NNNN_*.sql` and `NNNN_*.js` files and applies them in
+   order, updating `schema_version`. Schema version bumped to 2 to
+   reflect the `api_keys` addition.
+10. **Family-to-family relationships UI.** Add / list / remove via
+    `/api/relationships`. Dashboard exposes the operations in the
+    family detail page.
+11. **Bulk export with consent gate.** `/api/export` with `mode=safe`
+    (codes only) and `mode=pii` (requires `consent: true` + `destination`,
+    records a tier-2 audit event). CSV/JSON.
+
+### Bugs found and fixed during this pass
+
+- **Audit `external-export` route shadow.** Mounting `buildAudit` at both
+  `/api/audit` and `/api/audit/external-export` (with different scopes)
+  caused the POST endpoint to be reachable at
+  `/api/audit/external-export/external-export`. Split into `buildList`
+  (GET) and `buildExternalExport` (POST `/`) and mounted each at the
+  correct base path.
+- **Search test expectation.** I expected hashing `'Mary'` would match
+  both Mary Smith and Maria Smith via shared family-name hash. Mary's
+  given-name hash matches one row, Smith's family-name hash matches both.
+  Test corrected.
+
+After fixes: 103 / 103 `node:test` cases pass. End-to-end smoke run
+confirmed scoped tokens reject writes (403), wrong-scope tokens reject
+audit-export attempts (403), built-in profiles seed on boot, the schema
+migrates cleanly to version 2.
 
 ---
 

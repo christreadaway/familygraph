@@ -318,3 +318,24 @@ CREATE TABLE IF NOT EXISTS settings (
   value_json   TEXT NOT NULL,
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+
+-------------------------------------------------------------------------------
+-- Per-app scoped API keys (v1.x)
+-------------------------------------------------------------------------------
+-- A scoped key has a name (the consuming app), a SHA-256 hash of the secret
+-- (we never store the secret), a JSON `scopes` array describing which surfaces
+-- the holder may call, and an optional revoked_at timestamp. The shared master
+-- token continues to work for backwards compatibility; scoped keys are added
+-- on top.
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  code         TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  hash         TEXT NOT NULL UNIQUE,        -- SHA-256 hex of the issued token
+  scopes       TEXT NOT NULL,               -- JSON array of scope strings
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_used_at TEXT,
+  revoked_at   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS api_keys_name_idx ON api_keys (name);

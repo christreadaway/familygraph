@@ -9,6 +9,12 @@ import Conflicts from './views/Conflicts.jsx';
 import ImportView from './views/Import.jsx';
 import AuditLog from './views/AuditLog.jsx';
 import SanitizeView from './views/Sanitize.jsx';
+import Rules from './views/Rules.jsx';
+import Keys from './views/Keys.jsx';
+import Profiles from './views/Profiles.jsx';
+import Settings from './views/Settings.jsx';
+import Search from './views/Search.jsx';
+import ExportView from './views/Export.jsx';
 
 function TokenBanner({ ok, onSetToken }) {
   const [val, setVal] = useState('');
@@ -50,12 +56,18 @@ export default function App() {
       <aside className="sidebar">
         <h1>Sanctus</h1>
         <nav className="col">
+          <NavLink to="/search">Search</NavLink>
           <NavLink to="/families">Families</NavLink>
           <NavLink to="/people">People</NavLink>
           <NavLink to="/conflicts">Conflict queue</NavLink>
+          <NavLink to="/rules">Resolution rules</NavLink>
           <NavLink to="/import">Import</NavLink>
+          <NavLink to="/export">Export</NavLink>
           <NavLink to="/sanitize">Sanitize / desanitize</NavLink>
           <NavLink to="/audit">Audit log</NavLink>
+          <NavLink to="/profiles">Profiles</NavLink>
+          <NavLink to="/keys">API keys</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
         <div className="footer">
           {health
@@ -70,14 +82,20 @@ export default function App() {
         <TokenBanner ok={tokenOk} onSetToken={t => { setToken(t); setTokenOk(!!t); }} />
         <Routes>
           <Route path="/" element={<Navigate to="/families" replace />} />
+          <Route path="/search" element={<Search />} />
           <Route path="/families" element={<Families />} />
           <Route path="/families/:code" element={<FamilyDetail />} />
           <Route path="/people" element={<People />} />
           <Route path="/people/:code" element={<PersonDetail />} />
           <Route path="/conflicts" element={<Conflicts />} />
+          <Route path="/rules" element={<Rules />} />
           <Route path="/import" element={<ImportView />} />
+          <Route path="/export" element={<ExportView />} />
           <Route path="/sanitize" element={<SanitizeView />} />
           <Route path="/audit" element={<AuditLog />} />
+          <Route path="/profiles" element={<Profiles />} />
+          <Route path="/keys" element={<Keys />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
     </div>

@@ -306,13 +306,23 @@ All 70 pass against `node:test` (Node 20+).
 - React dashboard for the operator
 - Bearer + loopback dual-surface API
 
-**Does not ship in v1 (deferred to v1.x or v2):**
-- Per-app scoped API keys (single shared secret in v1)
+**Does not ship in v1 (deferred to v2):**
 - OS-keychain-backed secret storage (file-based in v1, file format is keychain-compatible)
-- Resolution-rule editor UI (data model exists; CRUD UI is v1.x)
-- compromise / winkNLP NER engine (regex + registry covers the documented use cases; pluggable v2)
 - Multi-party sharing (explicitly v2 per session_notes)
 - Bitemporal point-in-time queries (explicitly out of scope per session_notes)
+
+**v1.x extensions added in this build (all included in `npm test`):**
+- Per-app scoped API keys: `api_keys` table, `POST /api/keys` provisioning, `DELETE /api/keys/:code` revoke, scope-aware `bearerAuth`. Scopes: `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`, `import`, `rules.write`, `*`. Master token always satisfies any scope.
+- Resolution-rule engine: `resolution_rules` consulted by the resolver. Actions are `auto_merge`, `never_merge`, `boost`, `penalize`. CRUD via `/api/rules`. Dashboard editor at `/rules`.
+- compromise NER as the third sanitize layer (loaded lazily so the system still works if removed).
+- Numbered migrations runner (`server/db/migrations/`) layered on top of the bootstrap schema. Each migration runs in a transaction; `schema_version` is updated after success.
+- Built-in profiles (catholic_school, parish_donor, diocese) seeded on first boot. The active profile's thresholds override the defaults at import time. Endpoints `/api/profiles` + `/api/profiles/activate`.
+- Settings persistence (`/api/settings`) with allow-list of known keys (`institution_name`, `operator_name`, `audit_retention_days`).
+- Audit retention sweeper: tier-1 events older than `audit_retention_days` are deleted on a daily timer; tier-2 events are never deleted. Sweep is also exposed as a function for tests.
+- HMAC-backed search at `/api/search` (name → persons + their families; email → emails; phone → phones). Substring scan over encrypted columns is intentionally not supported.
+- Membership history at `/api/membership-history/person/:code` and `/family/:code` — every row including ended ones, with `reason`.
+- Family-to-family relationships endpoint `/api/relationships` (add / list / remove). UI exposed in `FamilyDetail`.
+- Bulk export at `/api/export` with safe (codes only) and PII (consent + destination + reason → tier-2 audit event) modes.
 
 ---
 

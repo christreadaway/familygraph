@@ -1,11 +1,20 @@
 'use strict';
 
-// Pure-JS NER detection. Three layers:
-//   1. Regex for high-confidence structured PII (email, phone, SSN-shaped).
-//   2. Registry-driven name lookups (every active person's name + display).
-//   3. Simple capitalized-token heuristics for unseen names.
-// No external NLP dependencies. The compromise/winkNLP path is left as a
-// future enhancement.
+// Pure-JS NER detection. Four layers, in order of confidence:
+//   1. Regex for high-confidence structured PII (email, phone, SSN-shaped, DOB,
+//      US-style street address).
+//   2. Registry-driven name lookups (every active person's name HMAC).
+//   3. compromise NLP entity detection (#Person, #Place) — pure JS, MIT.
+//   4. Simple capitalized-token heuristic for unseen names.
+
+let nlp = null;
+try {
+  // compromise is loaded lazily so the rest of the system still works if the
+  // dep is removed in a constrained build.
+  nlp = require('compromise');
+} catch (_) {
+  nlp = null;
+}
 
 const enc = require('../crypto/encryption');
 
@@ -118,10 +127,34 @@ function detectKnownNames(db, secrets, text) {
   return findings;
 }
 
+function detectNlpPeople(text) {
+  if (!nlp) return [];
+  try {
+    const doc = nlp(text);
+    const findings = [];
+    const people = doc.people().out('offset');
+    for (const p of people) {
+      if (typeof p.offset === 'object' && p.offset.start != null) {
+        findings.push({
+          kind: 'name_candidate',
+          value: p.text,
+          start: p.offset.start,
+          end: p.offset.start + p.text.length,
+          source: 'compromise',
+        });
+      }
+    }
+    return findings;
+  } catch (_) {
+    return [];
+  }
+}
+
 function detect(db, secrets, text) {
   const all = [
     ...detectStructured(text),
     ...detectKnownNames(db, secrets, text),
+    ...detectNlpPeople(text),
     ...detectNameCandidates(text),
   ];
   // Deduplicate overlapping findings, preferring higher-confidence kinds.
@@ -139,4 +172,4 @@ function detect(db, secrets, text) {
   return accepted.sort((a, b) => a.start - b.start);
 }
 
-module.exports = { detect, detectStructured, detectKnownNames, detectNameCandidates };
+module.exports = { detect, detectStructured, detectKnownNames, detectNameCandidates, detectNlpPeople };

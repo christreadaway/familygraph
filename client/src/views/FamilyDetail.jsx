@@ -11,9 +11,17 @@ export default function FamilyDetail() {
   const [newAddress, setNewAddress] = useState({ line1: '', city: '', region: '', postal: '' });
   const [mergeWinner, setMergeWinner] = useState('');
   const [splitPicks, setSplitPicks] = useState({});
+  const [history, setHistory] = useState([]);
+  const [rels, setRels] = useState([]);
+  const [newRel, setNewRel] = useState({ to: '', kind: 'related_household', detail: '' });
 
   function load() {
-    api.getFamily(code).then(d => { setData(d); setEdit({ display_name: d.family.display_name || '', notes: d.family.notes || '' }); }).catch(e => setError(e.message));
+    api.getFamily(code).then(d => {
+      setData(d);
+      setEdit({ display_name: d.family.display_name || '', notes: d.family.notes || '' });
+    }).catch(e => setError(e.message));
+    api.membershipHistoryFamily(code).then(d => setHistory(d.items || [])).catch(() => {});
+    api.listRelationships(code).then(d => setRels(d.items || [])).catch(() => {});
   }
 
   useEffect(load, [code]);
@@ -115,6 +123,62 @@ export default function FamilyDetail() {
           <input placeholder="Postal" value={newAddress.postal} onChange={e => setNewAddress({ ...newAddress, postal: e.target.value })} style={{ width: 100 }} />
           <button>Add</button>
         </form>
+      </div>
+
+      <div className="panel">
+        <h3>Family-to-family relationships</h3>
+        <p className="muted" style={{ marginTop: 0 }}>Used for divorced parents, joint custody across households, or related-household links between branches of the same family.</p>
+        <table>
+          <thead><tr><th>Other family</th><th>Kind</th><th>Detail</th><th></th></tr></thead>
+          <tbody>
+            {rels.map(r => (
+              <tr key={r.code}>
+                <td><Link to={`/families/${r.from_code === code ? r.to_code : r.from_code}`}><code>{r.from_code === code ? r.to_code : r.from_code}</code></Link></td>
+                <td>{r.kind}</td>
+                <td className="muted">{r.detail || '—'}</td>
+                <td><button className="danger" onClick={async () => { await api.removeRelationship(r.code); load(); }}>remove</button></td>
+              </tr>
+            ))}
+            {rels.length === 0 && <tr><td colSpan={4} className="muted">No related families.</td></tr>}
+          </tbody>
+        </table>
+        <form className="row" style={{ marginTop: 12 }} onSubmit={async e => {
+          e.preventDefault();
+          if (!newRel.to) return;
+          await api.addRelationship({ from: code, to: newRel.to, kind: newRel.kind, detail: newRel.detail || null });
+          setNewRel({ to: '', kind: 'related_household', detail: '' });
+          load();
+        }}>
+          <input placeholder="other family code (f_…)" value={newRel.to} onChange={e => setNewRel({ ...newRel, to: e.target.value })} />
+          <select value={newRel.kind} onChange={e => setNewRel({ ...newRel, kind: e.target.value })}>
+            <option>related_household</option>
+            <option>custody_of</option>
+            <option>guardian_of</option>
+            <option>other</option>
+          </select>
+          <input placeholder="optional note" value={newRel.detail} onChange={e => setNewRel({ ...newRel, detail: e.target.value })} />
+          <button>Link</button>
+        </form>
+      </div>
+
+      <div className="panel">
+        <h3>Membership history ({history.length})</h3>
+        <table>
+          <thead><tr><th>Person</th><th>Role</th><th>Custody</th><th>Started</th><th>Ended</th><th>Reason</th></tr></thead>
+          <tbody>
+            {history.map(h => (
+              <tr key={h.membership_code}>
+                <td><Link to={`/people/${h.person_code}`}><code>{h.person_code}</code></Link>{h.person_display_name && <> · {h.person_display_name}</>}</td>
+                <td>{h.role}</td>
+                <td>{h.custody || <span className="muted">—</span>}</td>
+                <td className="muted">{new Date(h.started_at).toLocaleString()}</td>
+                <td className="muted">{h.ended_at ? new Date(h.ended_at).toLocaleString() : <span className="tag action">active</span>}</td>
+                <td>{h.reason || <span className="muted">—</span>}</td>
+              </tr>
+            ))}
+            {history.length === 0 && <tr><td colSpan={6} className="muted">No membership history.</td></tr>}
+          </tbody>
+        </table>
       </div>
 
       <div className="split">
