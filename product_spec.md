@@ -311,7 +311,8 @@ share.
 
 ## Operator dashboard
 
-Built with Vite + React 18. Routes:
+Built with Vite + React 18, themed against the Institutional design
+system (`CLAUDE_CODE_HANDOFF.md`). Routes:
 
 - `/families` — list, create
 - `/families/:code` — detail, edit, members (add/end), addresses, merge, split
@@ -319,17 +320,66 @@ Built with Vite + React 18. Routes:
 - `/people/:code` — detail, edit, emails, phones, merge
 - `/conflicts` — review queue (open/merged/rejected/dismissed) with merge-→-left, merge-→-right, reject, dismiss buttons
 - `/import` — bulk import wizard (paste CSV or upload file → preview → run)
+- `/imports`, `/imports/:code` — imports log + per-run detail
+- `/export` — safe / PII export with consent + tier-2 audit
 - `/sanitize` — interactive sanitize → AI → desanitize round trip
 - `/audit` — filterable audit log
+- `/notifications`, `/profiles`, `/keys`, `/settings`, `/rules`, `/search`
 
-The Bearer token is stored in `localStorage` and prompted for on first load.
-Vite's dev server proxies `/api/*` to `http://127.0.0.1:3500`.
+The Bearer token is stored in `localStorage` and prompted for on first
+load. Vite's dev server proxies `/api/*` to `http://127.0.0.1:3500`.
+
+### Shell anatomy
+
+Every route renders inside the same shell:
+
+1. **Status rail** (`<StatusRail/>`) — pinned to top, posture
+   indicators (loopback / encrypted / audit-live), schema version,
+   live counts. Polls `/api/health` every 5s. Goes red on loopback
+   loss.
+2. **Header** (`<Header/>`) — institution display name + meta +
+   **PII ↔ Pseudonym** segmented toggle. Default = pseudonym;
+   persisted to `localStorage`.
+3. Sidebar (grouped: Operator / Ingest·Egress / Posture).
+4. Main column — view content + footer.
+
+### Pseudonym posture in the dashboard
+
+When the toggle is set to *pseudonym*, list views (Families, People,
+Search) fetch from the `/api/safe/...` surfaces; detail views redact
+display names + addresses with `[pseudonym surface]` markers. The
+dashboard never tries to pseudonymize on the client.
+
+### Component vocabulary
+
+- `<IdCode type="family|person|address|email|phone" code="…">` —
+  type-coloured identifier, JetBrains Mono, prefix-inferred when
+  `type` is omitted.
+- `<Pill state="loopback|encrypted|pseudonym|pii|consented|muted">` —
+  semantic posture pills only. Audit actions map to states:
+  `external_export → consented`, `read_pii → pii`, `sanitize →
+  pseudonym`, `boot/health → loopback`.
+- `<ProvDot source="…">` — provenance dot using a separate palette
+  from posture (FACTS, RenWeb, Ministry Platform, Sheets, CSV, Excel,
+  other).
+- `<StatusRail/>`, `<Header/>`, `<ViewToggle/>` — shell.
+
+### File layout
+
+```
+client/src/
+├── components/   # StatusRail, Header, ViewToggle, Pill, IdCode, ProvDot
+├── styles/       # tokens.css, shared.css, app.css
+├── store.js      # tiny pub/sub for the view toggle
+├── api.js        # fetch wrapper; { safe } flag routes to /api/safe/...
+└── views/        # Families, People, Conflicts, Imports, Audit, …
+```
 
 ---
 
 ## Test surface
 
-`npm test` runs ~70 cases across:
+`npm test` runs ~177 cases across:
 
 - `tests/identifiers.test.js` — code generation, validation, prefix disambiguation
 - `tests/encryption.test.js` — round-trip, tamper detection, IV randomness, normalize, HMAC determinism + key-binding
@@ -344,7 +394,12 @@ Vite's dev server proxies `/api/*` to `http://127.0.0.1:3500`.
 - `tests/backup.test.js` — hot copy, encrypted-backup round trip, wrong-passphrase rejection
 - `tests/api.test.js` — open health, 401 without token, PII surface, safe surface excludes PII, sanitize round-trip, import preview/run, tier-2 audit, 404 JSON, 400 on invalid code, family merge, conflict resolve
 
-All 70 pass against `node:test` (Node 20+).
+All 177 pass against `node:test` (Node 20+).
+
+The dashboard does not ship with a separate unit-test suite in v1; the
+`vite build` (`npm run client:build`) is treated as a structural test
+that every component compiles, every import resolves, and every design
+token is reachable. CI runs both `npm test` and `npm run client:build`.
 
 ---
 

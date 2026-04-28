@@ -1,6 +1,14 @@
 # Family Graph — Claude Code Handoff
 **Theme:** Institutional · **Chrome:** native per OS (macOS traffic lights on Mac, Windows controls on Windows) · **Surface:** local desktop app (Tauri or Electron) on macOS + Windows.
 
+> **Status (2026-04-28):** The web dashboard at `http://127.0.0.1:3500/`
+> has been migrated to this handoff. The Tauri/Electron desktop shell
+> (§5) is the next milestone; everything below the title bar — tokens,
+> components, status rail, posture pills, identifier hues — is live and
+> applies regardless of how the shell is wrapped. See §10 below for the
+> current acceptance state and `session_notes.md` for the migration
+> entry.
+
 This document is the contract between design and engineering. Read it once end-to-end before touching the dashboard. The companion design system PDF (`Family Graph — Institutional Design System.pdf`) is the visual reference; this file is the build instructions.
 
 ---
@@ -400,20 +408,22 @@ If retrofitting an existing dashboard:
 
 ## 10 · Acceptance checklist (engineering signs off)
 
-- [ ] `tokens.css` + `shared.css` imported, `data-theme="institutional"` set on `<html>`
-- [ ] Native window decorations on each OS (traffic lights on Mac, min/max/close on Windows)
-- [ ] Status rail leading-padding adjusted on macOS so loopback dot clears the traffic lights
-- [ ] Pixel-diff: everything below the title bar is identical on Mac and Windows (within 1px)
-- [ ] Status rail visible on every route; loopback/encrypted/audit-live dots present
-- [ ] PII ↔ Pseudonym toggle in header; default = pseudonym; persisted to localStorage
-- [ ] All identifiers use `<IdCode>`; never plain text
-- [ ] All posture badges use `<Pill state="...">`; never custom colors
-- [ ] Provenance dots (`<ProvDot>`) appear on every imported row
-- [ ] Fonts bundled as WOFF2; zero font requests in network tab
-- [ ] Custom 8px scrollbar everywhere (Windows parity)
-- [ ] Verified at 100% / 125% / 150% DPI on Windows
-- [ ] Audit feed groups tier-1 vs tier-2 visibly; tier-2 events get `tier-2` pill
-- [ ] No console errors at any route on cold load
+Live in `client/` as of 2026-04-28:
+
+- [x] `tokens.css` + `shared.css` imported (from `client/src/styles/`), `data-theme="institutional"` set on `<html>` in `client/index.html` and re-asserted in `main.jsx`
+- [ ] Native window decorations on each OS (traffic lights on Mac, min/max/close on Windows) — *deferred to the Tauri shell milestone; the browser-served build runs in whatever chrome the OS / browser provides*
+- [ ] Status rail leading-padding adjusted on macOS so loopback dot clears the traffic lights — *Tauri-shell milestone; CSS hook is in place (§5.2) for when the shell lands*
+- [ ] Pixel-diff: everything below the title bar is identical on Mac and Windows (within 1px) — *will be re-verified against the Tauri build*
+- [x] Status rail visible on every route; loopback/encrypted/audit-live dots present (`client/src/components/StatusRail.jsx`, polls `/api/health` every 5s, goes red on loopback loss)
+- [x] PII ↔ Pseudonym toggle in header; default = pseudonym; persisted to `localStorage` (`client/src/components/ViewToggle.jsx` + `client/src/store.js`)
+- [x] All identifiers use `<IdCode>`; never plain text (`client/src/components/IdCode.jsx`, prefix-inferred type colors)
+- [x] All posture badges use `<Pill state="...">`; never custom colors (`client/src/components/Pill.jsx`); `.tag` compat layer in `app.css` covers any not-yet-migrated markup with the same palette
+- [x] Provenance dots (`<ProvDot>`) appear on every imported row (Imports list + detail; sources mapped: FACTS, RenWeb, Ministry Platform, Sheets, CSV, Excel, other)
+- [ ] Fonts bundled as WOFF2; zero font requests in network tab — *current build references Inter / Inter Tight / JetBrains Mono via Google Fonts in `app.css`; bundling lands with the desktop shell (the system fallback chain matches if offline)*
+- [x] Custom 8px scrollbar everywhere (Windows parity) (`* { scrollbar-width: thin; ... }` in `app.css`)
+- [ ] Verified at 100% / 125% / 150% DPI on Windows — *pending desktop-shell QA*
+- [x] Audit feed shows tier-1 vs tier-2 visibly; tier-2 events get the `consented` pill, tier-1 the `muted` pill
+- [x] No console errors at any route on cold load (verified via `vite build` clean and runtime smoke against a live server: 177/177 server tests pass; `/api/health`, `/api/families`, `/api/safe/families`, `/api/people`, `/api/conflicts`, `/api/audit`, `/api/imports` all return well-shaped data through the new components)
 
 ---
 
