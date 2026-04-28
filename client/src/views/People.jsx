@@ -1,16 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
+import { useFG } from '../store.js';
+import IdCode from '../components/IdCode.jsx';
 
 export default function People() {
+  const { view } = useFG();
+  const pseudo = view === 'pseudonym';
   const [items, setItems] = useState([]);
   const [error, setError] = useState(null);
   const [form, setForm] = useState({ given_name: '', family_name: '', date_of_birth: '' });
 
   function load() {
-    api.listPeople().then(d => setItems(d.items || [])).catch(e => setError(e.message));
+    api.listPeople({ safe: pseudo })
+      .then(d => setItems(d.items || []))
+      .catch(e => setError(e.message));
   }
-  useEffect(load, []);
+  useEffect(load, [pseudo]);
 
   async function create(e) {
     e.preventDefault();
@@ -34,7 +40,7 @@ export default function People() {
         </form>
       </div>
       <div className="panel">
-        <h3>{items.length} active</h3>
+        <h3>{items.length} active{pseudo ? ' · pseudonym surface' : ''}</h3>
         <table>
           <thead>
             <tr><th>Code</th><th>Name</th><th>Created</th><th></th></tr>
@@ -42,10 +48,14 @@ export default function People() {
           <tbody>
             {items.map(p => (
               <tr key={p.code}>
-                <td><code>{p.code}</code></td>
-                <td>{p.display_name || <span className="muted">—</span>}</td>
-                <td className="muted">{new Date(p.created_at).toLocaleString()}</td>
-                <td><Link to={`/people/${p.code}`}>open</Link></td>
+                <td><IdCode type="person" code={p.code} /></td>
+                <td>
+                  {pseudo
+                    ? <span className="faint mono">[pseudonym surface]</span>
+                    : (p.display_name || <span className="muted">—</span>)}
+                </td>
+                <td className="muted mono">{new Date(p.created_at).toLocaleString()}</td>
+                <td><Link to={`/people/${p.code}`}>open →</Link></td>
               </tr>
             ))}
             {items.length === 0 && <tr><td colSpan={4} className="muted">No people yet.</td></tr>}

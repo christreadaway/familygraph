@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
+import IdCode from '../components/IdCode.jsx';
 
 export default function PersonDetail() {
   const { code } = useParams();
@@ -50,7 +51,7 @@ export default function PersonDetail() {
 
   return (
     <>
-      <h2>Person <code>{person.code}</code></h2>
+      <h2>Person <IdCode type="person" code={person.code} /></h2>
       <div className="panel">
         <h3>Edit</h3>
         <div className="split">

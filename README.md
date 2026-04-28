@@ -344,14 +344,84 @@ which middleware refused the call and why.
 
 ---
 
+## Dashboard
+
+The dashboard ships built; opening <http://127.0.0.1:3500> after `npm
+start` is enough. The design follows the **Institutional** theme from
+the Family Graph design system (see `CLAUDE_CODE_HANDOFF.md`):
+
+- A **status rail** is pinned to the top of every screen with
+  posture indicators — loopback green, encrypted cyan, audit-live
+  indigo, schema version and live counts on the right. The rail polls
+  `/api/health` every 5s and turns red on loopback loss.
+- The header carries a **PII ↔ Pseudonym** segmented toggle. The
+  default is *pseudonym* (per the handoff). The toggle is persisted to
+  `localStorage` and routes list views to `/api/safe/...` when in
+  pseudonym mode, and redacts display names + addresses on detail
+  pages. Posture, not just a surface.
+- Every identifier is type-coloured (family indigo, person cyan,
+  address green, email yellow, phone amber) via the `<IdCode>`
+  component. Conflicts, imports, and audit feed use posture pills
+  semantically — `external_export` reads as consented, `read_pii` as
+  PII, `sanitize` as pseudonym, etc.
+- Provenance dots distinguish source systems (FACTS, RenWeb, Ministry
+  Platform, Sheets, CSV/Excel, other) and use a separate palette from
+  posture so "where the data came from" never reads the same as "what
+  state it's in."
+
+### Client dev workflow
+
+For interactive frontend work, run the API server and the Vite dev
+server side-by-side:
+
+```sh
+# terminal 1 — API
+npm start
+
+# terminal 2 — dashboard with HMR
+npm run client:dev
+```
+
+Vite serves the dashboard at <http://127.0.0.1:5173> and proxies
+`/api/*` to `http://127.0.0.1:3500`. Edits to anything under
+`client/src/` reload immediately.
+
+To produce a production bundle that the Express server will serve at
+`/`, run:
+
+```sh
+npm run client:build
+```
+
+The build emits to `client/dist/`. Output is roughly 240 kB JS / 15 kB
+CSS uncompressed (≈ 71 kB JS / 3.5 kB CSS gzipped).
+
+### Design tokens
+
+The institutional theme tokens live at `client/src/styles/tokens.css`
+and the shared component CSS at `client/src/styles/shared.css`. Both
+are imported once from `client/src/main.jsx`; component CSS should
+read tokens via `var(--…)` rather than re-declaring colors. The
+`<html data-theme="institutional">` attribute is set in
+`client/index.html`; v1 ships a single theme by design.
+
+---
+
 ## Test
 
 ```sh
+# server tests (177 cases via node:test)
 npm test
+
+# verify the dashboard builds
+npm run client:install      # first time only
+npm run client:build
 ```
 
-Runs the full `node:test` suite (>100 cases). No external test runner is
-required.
+The server suite runs against `node:test` and needs no external
+runner. The client doesn't ship a separate unit-test suite in v1; the
+`vite build` step is a structural check that every component compiles
+and that the design tokens resolve. CI should run both.
 
 ---
 

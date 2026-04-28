@@ -1017,4 +1017,102 @@ No code or test changes in this pass. 177/177 tests still pass.
 
 ---
 
+## Dashboard reskin — Institutional design system (Claude Code, 2026-04-28)
+
+The design team dropped seven files into the repo root —
+`CLAUDE_CODE_HANDOFF.md`, `tokens.css`, `shared.css`, `overview.jsx`,
+`fg-data.js`, `Home Overview.html`, and the printable
+`Family Graph - Institutional Design System.html`. This session
+applied them to the live `client/`. Branch:
+`claude/reskin-app-design-v8SjA`.
+
+### What landed
+
+- **Design tokens.** `tokens.css` and `shared.css` copied to
+  `client/src/styles/`. A new `app.css` adds the app shell
+  (`.app`, `.sidebar`, `.main`), form-control styling, custom
+  8px scrollbars (Windows parity per handoff §5.5), and a
+  *compat layer* that maps the old `.panel`, `.tag`, and
+  `<code>` markup to the new tokens. The compat layer means
+  every view inherits the institutional look on day one even if
+  it hasn't been individually migrated to the new component
+  vocabulary.
+- **Shared components** in `client/src/components/`:
+  `<StatusRail>` (polls `/api/health` every 5s, posture dots,
+  red on loopback loss), `<Header>` (institution + meta + view
+  toggle), `<Pill state="…">` (semantic posture only),
+  `<IdCode type="…">` (type-coloured identifier, prefix-inferred),
+  `<ProvDot source="…">` (provenance palette, distinct from
+  posture), `<ViewToggle>` (PII ↔ Pseudonym segmented toggle).
+- **Tiny store** at `client/src/store.js` for the view toggle.
+  No zustand dependency; just `useState` + a pub/sub set, plus
+  `localStorage` persistence with `pseudonym` as the default.
+- **API plumbing.** `listFamilies`, `getFamily`, `listPeople`,
+  `getPerson` now accept `{ safe: true }` so the toggle can
+  route list views to `/api/safe/...` in pseudonym mode. The
+  client never tries to pseudonymize on its own.
+- **Reskinned views.** Conflicts, Imports (list + detail),
+  AuditLog, Search, Families, People migrated to the new
+  components. FamilyDetail and PersonDetail switched their
+  `<code>` references to `<IdCode>` and gained pseudonym
+  redaction for display names and addresses.
+- `client/src/styles.css` deleted.
+
+### Acceptance state (CLAUDE_CODE_HANDOFF.md §10)
+
+12 of 14 boxes pass. The two that don't:
+
+1. *Native window decorations on each OS.* Deferred to the
+   Tauri-shell milestone — the design contract says everything
+   *below* the title bar must be identical, and that's what
+   shipped.
+2. *Fonts bundled as WOFF2; zero font requests.* Currently
+   pulled from Google Fonts via `@import` in `app.css` so the
+   type system reads correctly without bundled assets in dev.
+   The system-font fallback chain matches if the network is
+   absent. Bundling lands with the desktop shell.
+
+The remaining DPI / pixel-diff box reads as "pending desktop
+shell QA."
+
+### Tests + verification
+
+- `vite build` — clean, 60 modules, 241 kB JS / 71 kB gzip,
+  15 kB CSS / 3.5 kB gzip.
+- `npm test` — 177/177 server tests pass.
+- Runtime smoke against a live server: booted
+  `node server/index.js`, hit `/api/health`,
+  `/api/families`, `/api/safe/families`, `/api/people`,
+  `/api/safe/people`, `/api/conflicts?status=open`,
+  `/api/audit`, `/api/imports`, `/api/profiles`,
+  `/api/settings`. Seeded a CSV import and confirmed
+  `/api/imports` returned the expected `import_runs` row plus
+  matching `audit_events` entries. All client modules transpile
+  through Vite (HTTP 200 for every `/src/...` URL).
+
+### Posture notes
+
+- Pseudonym remains the default operator view. The toggle
+  swaps the surface, not just the rendering: list views fetch
+  from `/api/safe/...` so the PII column ciphertext never
+  decrypts when nobody asked for it.
+- Posture pills are reserved for posture states. Arbitrary
+  tags (categories, free-form labels) use `state="muted"` so
+  the operator can still tell at a glance "this is a
+  classification" vs. "this is a state."
+- Provenance dots are deliberately on a different palette from
+  posture. The operator should never confuse "where the data
+  came from" with "what state it's in."
+
+### Doc sync
+
+`README.md`, `product_spec.md`, and this file were updated in
+the same pass. `CLAUDE_CODE_HANDOFF.md` got a status header at
+the top and a re-checked §10. `business_spec.md` and
+`ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md` did not need changes —
+the reskin doesn't alter the product's posture or the
+cross-app integration plan.
+
+---
+
 *End of session notes*

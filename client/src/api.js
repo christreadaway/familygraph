@@ -62,8 +62,8 @@ export async function validateToken() {
 export const api = {
   health: () => request('GET', '/api/health'),
 
-  listFamilies: () => request('GET', '/api/families'),
-  getFamily: code => request('GET', `/api/families/${code}`),
+  listFamilies: (opts) => request('GET', opts?.safe ? '/api/safe/families' : '/api/families'),
+  getFamily: (code, opts) => request('GET', opts?.safe ? `/api/safe/families/${code}` : `/api/families/${code}`),
   createFamily: body => request('POST', '/api/families', body),
   updateFamily: (code, body) => request('PATCH', `/api/families/${code}`, body),
   addMember: (code, body) => request('POST', `/api/families/${code}/members`, body),
@@ -72,8 +72,8 @@ export const api = {
   splitFamily: (code, body) => request('POST', `/api/families/${code}/split`, body),
   addAddress: (code, body) => request('POST', `/api/families/${code}/addresses`, body),
 
-  listPeople: () => request('GET', '/api/people'),
-  getPerson: code => request('GET', `/api/people/${code}`),
+  listPeople: (opts) => request('GET', opts?.safe ? '/api/safe/people' : '/api/people'),
+  getPerson: (code, opts) => request('GET', opts?.safe ? `/api/safe/people/${code}` : `/api/people/${code}`),
   createPerson: body => request('POST', '/api/people', body),
   updatePerson: (code, body) => request('PATCH', `/api/people/${code}`, body),
   mergePerson: (code, winner) => request('POST', `/api/people/${code}/merge`, { winner_code: winner }),
