@@ -126,23 +126,86 @@ Family Graph identifiers are safe to use as foreign keys in your app's database.
 
 ## Authentication
 
-Shared local secret model in v1. Single 256-bit secret stored in the OS keychain. Apps read it at startup and include it as a Bearer token on PII-surface API calls.
+Two acceptable token shapes in v1:
+
+1. **Shared master Bearer token.** A single 256-bit secret generated on
+   Family Graph's first run and stored in `$FAMILY_GRAPH_HOME/secret.key`
+   (mode 0600 on POSIX, NTFS-ACL inherited on Windows). Apps read it at
+   startup and present it as `Authorization: Bearer <master>` on every
+   PII-surface call. Master tokens have full access (all scopes).
+2. **Per-app scoped tokens (recommended for new apps).** Issued by the
+   operator from the Family Graph dashboard or via
+   `POST /api/keys`. Each token starts with the prefix `sk_`,
+   has a name (the consuming app), and a list of scopes drawn from
+   `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`,
+   `import`, `rules.write`, or `*`. The token is shown to the operator
+   exactly once; only its SHA-256 hash is persisted. Revoke by name in
+   the dashboard at any time; the next call from that app fails with
+   `401 unauthorized` and a structured `reason` of
+   `unknown_or_revoked_scoped_token`.
+
+Consuming apps SHOULD identify themselves on every PII call by setting
+the `X-Family-Graph-Actor` header to a short, stable string (e.g.,
+`missioniq`, `parentpoint`). The actor is recorded on every audit row
+and surfaced in the dashboard's audit log so the operator can see who
+read or wrote what. For master tokens the header is honoured verbatim;
+for scoped tokens the actor is forced to the key's name (the operator's
+label) so a consuming app cannot spoof a different actor.
 
 ### Setup
 
-1. Family Graph is installed first. On first run, it generates the secret and stores it in the keychain.
-2. Each consuming app, at startup, reads the Family Graph secret from the keychain (same key namespace).
-3. App includes the secret in the `Authorization` header as a Bearer token on all PII-surface calls.
-4. Pseudonym-surface calls require no token but must originate from loopback (which they already do).
+1. Family Graph is installed first. On first run, it generates the
+   master secret + the data-encryption key + the HMAC key and writes
+   them to `secret.key`.
+2. The operator either:
+   - hands the master token to the consuming app's secret store, or
+   - logs into the Family Graph dashboard, opens API keys, and
+     provisions a scoped key with the smallest scope set the app
+     needs. The plaintext token is shown once at provisioning time.
+3. App includes the token in the `Authorization` header as a Bearer
+   token on all PII-surface calls.
+4. Pseudonym-surface calls require no token but must originate from
+   loopback (which they already do).
 
 ### Rotation
 
-Operator can run `family-graph rotate-secret` to invalidate the old token. Apps re-fetch from the keychain on next startup. A graceful rotation procedure (apps reload tokens without restart) may be added later if needed; for v1, restart on rotation is acceptable.
+- **Master token.** Operator runs `family-graph rotate-secret` to
+  invalidate the old master without touching the data or HMAC keys
+  (so existing ciphertext keeps decrypting). Apps re-read the file on
+  next startup.
+- **Scoped token.** Operator revokes the named key in the dashboard
+  and provisions a fresh one. The consuming app gets the new token
+  through whatever secret-distribution mechanism the operator uses
+  (env var, secrets manager, hand-off).
+
+### Auth-failure reasons
+
+When an auth check fails, the response body includes a structured
+`reason` field that consuming apps can branch on:
+
+- `no_bearer` — request had no `Authorization` header at all.
+- `token_mismatch` — token present but did not match the master.
+- `unknown_or_revoked_scoped_token` — `sk_…` token is unknown to the
+  registry or has been revoked.
+- `missing_scope` — token is valid but lacks the scope this endpoint
+  requires.
+- `non_loopback_origin` — request hit the safe surface from a
+  non-loopback origin.
+
+These are stable strings; logs use the same vocabulary.
 
 ### Threat model
 
-- Any app on the same machine that can read the Family Graph keychain entry can read PII. This is acceptable for v1 (single-operator desktop, all apps trusted by the operator).
-- If the threat model expands (untrusted code on the same machine, multi-user installations), per-app scoped keys with capability boundaries become necessary. Out of scope for v1.
+- A process on the same machine that can read `secret.key` can read
+  PII directly without going through the API. Acceptable on a
+  trusted single-operator desktop.
+- v2 evolution: move the keys into the OS keychain (Keychain on
+  macOS, Credential Manager on Windows, libsecret on Linux). The
+  on-disk JSON shape is keychain-compatible, so the migration is
+  mechanical.
+- v2 evolution: capability tokens scoped per-record-group (e.g.,
+  "this app can only read families tagged `school`"). Out of scope
+  for v1.
 
 ---
 

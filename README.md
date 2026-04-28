@@ -257,6 +257,19 @@ token issued via `POST /api/keys` with one or more of the scopes
 `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`, `import`,
 `rules.write`, or `*`.
 
+Consuming apps SHOULD set the `X-Family-Graph-Actor` header to a short
+stable identifier (e.g. `missioniq`, `parentpoint`). It is recorded on
+every audit row so the operator can see who read or wrote what. For
+master tokens the header is honoured verbatim; for scoped tokens the
+actor is forced to the key's name so a consuming app cannot spoof a
+different identity.
+
+When auth fails, the response body includes a stable `reason` field —
+`no_bearer`, `token_mismatch`, `unknown_or_revoked_scoped_token`,
+`missing_scope`, or `non_loopback_origin`. The dashboard surfaces this
+reason in the token banner; the same string also appears in
+`server.log` next to the matching `auth.reject` line.
+
 The full route table is in [`product_spec.md`](./product_spec.md#api-contract).
 
 ---
