@@ -143,6 +143,16 @@ function start() {
   }, 24 * 60 * 60 * 1000);
   sweepInterval.unref();
 
+  // Conflict-assignment expiry sweep. Runs every 15 minutes; on first start we
+  // also run it once so a process restart doesn't leave expired assignments
+  // visible until the first interval fires.
+  const conflictsMod = require('./identity/conflicts');
+  try { conflictsMod.sweepExpiredAssignments(db); } catch (_) { /* ok at boot */ }
+  const assignSweep = setInterval(() => {
+    try { conflictsMod.sweepExpiredAssignments(db); } catch (_) { /* ignore */ }
+  }, 15 * 60 * 1000);
+  assignSweep.unref();
+
   let watcher = null;
   if (process.env.SANCTUS_DISABLE_WATCH !== '1') {
     try {

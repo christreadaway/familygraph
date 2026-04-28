@@ -53,9 +53,15 @@ export const api = {
   addEmail: (code, body) => request('POST', `/api/people/${code}/emails`, body),
   addPhone: (code, body) => request('POST', `/api/people/${code}/phones`, body),
 
-  listConflicts: status => request('GET', `/api/conflicts?status=${encodeURIComponent(status || 'open')}`),
+  listConflicts: params => {
+    const qs = new URLSearchParams(params || { status: 'open' }).toString();
+    return request('GET', `/api/conflicts?${qs}`);
+  },
   getConflict: code => request('GET', `/api/conflicts/${code}`),
   resolveConflict: (code, body) => request('POST', `/api/conflicts/${code}/resolve`, body),
+  assignConflicts: body => request('POST', '/api/conflicts/assign', body),
+  assignConflict: (code, body) => request('POST', `/api/conflicts/${code}/assign`, body),
+  unassignConflict: code => request('DELETE', `/api/conflicts/${code}/assignment`),
 
   audit: params => {
     const qs = new URLSearchParams(params || {}).toString();

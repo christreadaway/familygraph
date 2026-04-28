@@ -7,9 +7,11 @@ const migrationsRunner = require('./migrations');
 
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
-// Bumped to 2 — adds api_keys table. Run-time migration adds the table on
-// existing v1 databases; fresh databases get it from schema.sql.
-const SCHEMA_VERSION = 2;
+// Schema versions:
+//   1 — bootstrap (families, persons, contacts, memberships, etc.)
+//   2 — api_keys table.
+//   3 — conflicts.assigned_to + assigned_at + assignment_expires_at.
+const SCHEMA_VERSION = 3;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

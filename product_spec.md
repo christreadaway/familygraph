@@ -160,6 +160,10 @@ calling app for audit purposes (defaults to `unknown_app`).
 | `GET` | `/api/conflicts` | list resolver conflicts |
 | `GET` | `/api/conflicts/:code` | one conflict |
 | `POST` | `/api/conflicts/:code/resolve` | `{decision: merge \| reject \| dismiss, winner_code?}` |
+| `POST` | `/api/conflicts/assign` | bulk-assign open conflicts. Body: `{codes?: string[], all_open?: bool, assignee, ttl_hours: 4\|12\|24\|48\|72}` |
+| `POST` | `/api/conflicts/:code/assign` | per-conflict assign. Body: `{assignee, ttl_hours}` |
+| `DELETE` | `/api/conflicts/:code/assignment` | clear an assignment |
+| `GET` | `/api/conflicts?assigned_to=…` | filter by assignee email; also `?assigned=unassigned\|assigned` |
 | `POST` | `/api/sanitize` | replace names/emails/phones with codes; returns token-set code |
 | `POST` | `/api/desanitize` | restore PII from a token set |
 | `GET` | `/api/audit` | tier-1 + tier-2 events |

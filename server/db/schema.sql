@@ -233,22 +233,31 @@ CREATE INDEX IF NOT EXISTS provenance_entity_idx ON provenance (entity_code);
 -------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS conflicts (
-  code         TEXT PRIMARY KEY,
-  kind         TEXT NOT NULL,             -- family | person
-  left_code    TEXT NOT NULL,
-  right_code   TEXT NOT NULL,
-  score        REAL NOT NULL,
-  reasons      TEXT NOT NULL,             -- JSON array of match-reason strings
-  status       TEXT NOT NULL DEFAULT 'open',  -- open | merged | rejected | dismissed
-  resolved_by  TEXT,
-  resolved_at  TEXT,
-  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  code                   TEXT PRIMARY KEY,
+  kind                   TEXT NOT NULL,             -- family | person
+  left_code              TEXT NOT NULL,
+  right_code             TEXT NOT NULL,
+  score                  REAL NOT NULL,
+  reasons                TEXT NOT NULL,             -- JSON array of match-reason strings
+  status                 TEXT NOT NULL DEFAULT 'open',  -- open | merged | rejected | dismissed
+  resolved_by            TEXT,
+  resolved_at            TEXT,
+  -- Operator may park an open conflict on a colleague's email. The
+  -- assignment auto-expires per the operator-chosen TTL; the sweeper clears
+  -- expired rows back to unassigned. None of these columns are PII; the email
+  -- is the colleague's address.
+  assigned_to            TEXT,
+  assigned_at            TEXT,
+  assignment_expires_at  TEXT,
+  created_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   CHECK (kind IN ('family','person')),
   CHECK (status IN ('open','merged','rejected','dismissed'))
 );
 
-CREATE INDEX IF NOT EXISTS conflicts_status_idx ON conflicts (status);
-CREATE INDEX IF NOT EXISTS conflicts_kind_idx   ON conflicts (kind);
+CREATE INDEX IF NOT EXISTS conflicts_status_idx        ON conflicts (status);
+CREATE INDEX IF NOT EXISTS conflicts_kind_idx          ON conflicts (kind);
+CREATE INDEX IF NOT EXISTS conflicts_assigned_to_idx   ON conflicts (assigned_to);
+CREATE INDEX IF NOT EXISTS conflicts_assignment_exp_idx ON conflicts (assignment_expires_at);
 
 -------------------------------------------------------------------------------
 -- Resolution rules (operator-curated matching rules vendored from MissionIQ)

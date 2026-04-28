@@ -453,4 +453,80 @@ Everything else the v6 spec described is now in v1 and tested.
 
 ---
 
+## Conflict assignment workflow (Claude Code, 2026-04-28, continued)
+
+Field-driven addition: the operator wants to park open conflicts on a
+colleague's email for review, and assignments must auto-expire after a
+chosen TTL of 4, 12, 24, 48, or 72 hours so a stale parking spot doesn't
+silently hide a conflict forever.
+
+### What was added
+
+- **Schema v3.** `conflicts` gains `assigned_to`, `assigned_at`, and
+  `assignment_expires_at`. Migration `0003_conflicts_assignee.js` is a
+  PRAGMA-checked `ALTER TABLE` that's idempotent for fresh and existing
+  installs. Two indexes (`assigned_to`, `assignment_expires_at`).
+- **Helpers in `identity/conflicts.js`.** `assign()` accepts either a
+  list of codes or `allOpen: true`. The TTL is whitelisted to
+  `{4, 12, 24, 48, 72}` hours; anything else is rejected at the helper
+  boundary. The assignee must look like an email
+  (`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`); used as a label, not for delivery.
+  Reassignment overwrites the assignee and bumps the expiry. Both events
+  are auditable.
+- **`sweepExpiredAssignments()`.** Clears `assigned_*` for any row whose
+  `assignment_expires_at` has passed. Records a single
+  `conflict_assignment_expired` event with the count and codes. Wired to
+  fire every 15 minutes via `setInterval`, plus a one-shot run at boot
+  so a process restart doesn't show stale assignments.
+- **API.**
+  - `POST /api/conflicts/assign` — body
+    `{codes?, all_open?, assignee, ttl_hours}`. Translates snake-case
+    `ttl_hours` to camel-case at the boundary.
+  - `POST /api/conflicts/:code/assign` — per-conflict.
+  - `DELETE /api/conflicts/:code/assignment` — clear.
+  - `GET /api/conflicts?assigned_to=…&assigned=unassigned|assigned` —
+    filter by assignee email or assignment state.
+  - `GET /api/conflicts` now also returns `ttl_options` so the dashboard
+    can render the dropdown without hardcoding the whitelist.
+- **Dashboard.** Conflicts page gets a TTL dropdown
+  (`4 | 12 | 24 | 48 | 72 hours`), an assignee email input, "Assign N
+  selected" and "Assign ALL open" buttons, per-row checkboxes with
+  "select all", and Assigned + Expires columns. The expires column
+  shows minutes/hours and goes amber when within 4 hours.
+- **Audit trail.** New events: `conflict_assign`, `conflict_unassign`,
+  `conflict_assignment_expired`. Tier 1, redacted, swept by retention
+  like the rest. The assignee is not PII as we use it (it's the
+  colleague's organizational email), but if the operator is paranoid
+  they can add `email` and `assignee` to the redactor's PII key list.
+
+### Tests
+
+124 / 124 pass. Fourteen new cases cover:
+- TTL whitelist (rejects 1, 2, 3, 5, 6, 36, 100, 'four', null, NaN; accepts 4/12/24/48/72).
+- Email-shape validator rejects every empty / malformed input.
+- `all_open` assigns every open conflict; `expires_at` is within 5s of
+  `now + ttlHours`.
+- `codes` mode skips already-resolved (dismissed) conflicts.
+- Reassignment overwrites assignee and bumps expiry.
+- `unassign` clears columns and records a `conflict_unassign` event.
+- `sweepExpiredAssignments` clears past-due rows and emits ONE audit row
+  for the batch (not one per row).
+- Sweeper with nothing expired is a no-op.
+- `?assigned=unassigned` filter excludes assigned rows; `=assigned`
+  excludes unassigned rows.
+- API: `/assign` with `all_open`, `/assign` with bad `ttl_hours=10` → 400,
+  `?assigned_to=…` filter, `DELETE /assignment` returns 204.
+- Migration 0003 is idempotent on a fresh schema (running it twice
+  doesn't throw "duplicate column").
+
+### Bugs found and fixed
+
+- **API key-name mismatch.** Helper expects `ttlHours`, the JSON body
+  carries `ttl_hours`. The first version of the route spread `req.body`
+  into the helper without translating, so the helper saw
+  `ttlHours=undefined` and returned 400. Fixed at the route boundary
+  by mapping each key explicitly.
+
+---
+
 *End of session notes*
