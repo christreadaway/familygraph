@@ -50,7 +50,7 @@ function bearerAuth(secrets, opts = {}) {
       req.auth = {
         kind: 'master',
         scopes: ['*'],
-        actor: req.get('x-sanctus-actor') || 'master_app',
+        actor: req.get('x-custos-actor') || 'master_app',
       };
       return next();
     }
@@ -85,7 +85,7 @@ function loopbackOnly() {
         .status(403)
         .json({ error: 'forbidden', detail: 'safe surface is loopback-only' });
     }
-    req.auth = req.auth || { kind: 'loopback', actor: req.get('x-sanctus-actor') || 'local' };
+    req.auth = req.auth || { kind: 'loopback', actor: req.get('x-custos-actor') || 'local' };
     next();
   };
 }

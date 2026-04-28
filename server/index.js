@@ -95,7 +95,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   } else {
     app.get('/', (req, res) => {
       res.type('text/plain').send(
-        'Sanctus is running. Build the React client with `npm run client:build` to enable the dashboard.'
+        'Custos is running. Build the React client with `npm run client:build` to enable the dashboard.'
       );
     });
   }
@@ -104,7 +104,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api', (req, res) => res.status(404).json({ error: 'not found' }));
   app.use((err, req, res, _next) => {
     // eslint-disable-next-line no-console
-    console.error('[sanctus] unhandled', err);
+    console.error('[custos] unhandled', err);
     if (res.headersSent) return;
     res.status(500).json({ error: 'internal error' });
   });
@@ -133,7 +133,7 @@ function start() {
   const app = buildApp({ db, secrets, thresholds, watchState });
   const server = app.listen(config.port, config.bind, () => {
     // eslint-disable-next-line no-console
-    console.log(`[sanctus] listening on http://${config.bind}:${config.port}`);
+    console.log(`[custos] listening on http://${config.bind}:${config.port}`);
   });
 
   // Daily audit sweep. Tier-2 events are never deleted; tier-1 events expire
@@ -165,31 +165,31 @@ function start() {
   const dispatchOnce = () => {
     notify.dispatchPending(db).catch(e => {
       // eslint-disable-next-line no-console
-      console.error('[sanctus] notification dispatch failed:', e.message);
+      console.error('[custos] notification dispatch failed:', e.message);
     });
   };
-  if (process.env.SANCTUS_DISABLE_NOTIFY !== '1') {
+  if (process.env.CUSTOS_DISABLE_NOTIFY !== '1') {
     dispatchOnce();
     const notifyInterval = setInterval(dispatchOnce, 60 * 1000);
     notifyInterval.unref();
   }
 
   let watcher = null;
-  if (process.env.SANCTUS_DISABLE_WATCH !== '1') {
+  if (process.env.CUSTOS_DISABLE_WATCH !== '1') {
     try {
       const wd = folderWatch.start(db, secrets, thresholds, {
         watchDir: config.watchDir,
         outDir: config.outDir,
-        processExisting: process.env.SANCTUS_WATCH_PROCESS_EXISTING === '1',
+        processExisting: process.env.CUSTOS_WATCH_PROCESS_EXISTING === '1',
         onProcessed: () => { watcherRef.processedSinceBoot += 1; },
       });
       watcher = wd.watcher;
       watcherRef.value = watcher;
       // eslint-disable-next-line no-console
-      console.log(`[sanctus] folder-watch on ${config.watchDir} -> ${config.outDir}`);
+      console.log(`[custos] folder-watch on ${config.watchDir} -> ${config.outDir}`);
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[sanctus] folder-watch failed to start:', e.message);
+      console.error('[custos] folder-watch failed to start:', e.message);
     }
   }
 

@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 // Backup format (single file):
-//   [magic:8 'SANCTUS1'][iv:12][tag:16][ciphertext: gzip(<sqlite-bytes>)]
+//   [magic:8 'CUSTOS1'][iv:12][tag:16][ciphertext: gzip(<sqlite-bytes>)]
 // The ciphertext is encrypted under a key derived from PBKDF2(passphrase, salt).
 //
 // For convenience, we also support an unencrypted backup (no passphrase) that
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 // require encrypted backups (for example, when the OS already provides
 // volume-level encryption) can use this path.
 
-const MAGIC = Buffer.from('SANCTUS1', 'utf8');
+const MAGIC = Buffer.from('CUSTOS1', 'utf8');
 const SALT_LEN = 16;
 const IV_LEN = 12;
 const TAG_LEN = 16;
@@ -37,7 +37,7 @@ function encryptedBackup(dbPath, outPath, passphrase) {
 
 function decryptedRestore(backupPath, dbOutPath, passphrase) {
   const blob = fs.readFileSync(backupPath);
-  if (!blob.slice(0, MAGIC.length).equals(MAGIC)) throw new Error('not a Sanctus backup file');
+  if (!blob.slice(0, MAGIC.length).equals(MAGIC)) throw new Error('not a Custos backup file');
   let offset = MAGIC.length;
   const salt = blob.subarray(offset, offset + SALT_LEN); offset += SALT_LEN;
   const iv = blob.subarray(offset, offset + IV_LEN); offset += IV_LEN;
@@ -56,7 +56,7 @@ function decryptedRestore(backupPath, dbOutPath, passphrase) {
 function plainCopyBackup(dbPath, backupsDir) {
   fs.mkdirSync(backupsDir, { recursive: true, mode: 0o700 });
   const stamp = new Date().toISOString().replace(/[:]/g, '-');
-  const out = path.join(backupsDir, `sanctus-${stamp}.sqlite`);
+  const out = path.join(backupsDir, `custos-${stamp}.sqlite`);
   fs.copyFileSync(dbPath, out);
   fs.chmodSync(out, 0o600);
   return out;
@@ -66,15 +66,15 @@ function plainCopyBackup(dbPath, backupsDir) {
 async function hotBackup(db, backupsDir, { passphrase = null } = {}) {
   fs.mkdirSync(backupsDir, { recursive: true, mode: 0o700 });
   const stamp = new Date().toISOString().replace(/[:]/g, '-');
-  const tmp = path.join(backupsDir, `.tmp-sanctus-${stamp}.sqlite`);
+  const tmp = path.join(backupsDir, `.tmp-custos-${stamp}.sqlite`);
   await db.backup(tmp);
   if (passphrase) {
-    const out = path.join(backupsDir, `sanctus-${stamp}.sanctus-backup`);
+    const out = path.join(backupsDir, `custos-${stamp}.custos-backup`);
     encryptedBackup(tmp, out, passphrase);
     fs.unlinkSync(tmp);
     return out;
   }
-  const out = path.join(backupsDir, `sanctus-${stamp}.sqlite`);
+  const out = path.join(backupsDir, `custos-${stamp}.sqlite`);
   fs.renameSync(tmp, out);
   fs.chmodSync(out, 0o600);
   return out;

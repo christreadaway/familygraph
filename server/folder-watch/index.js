@@ -114,7 +114,7 @@ function start(db, secrets, thresholds, opts) {
   fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
 
   // Optionally process whatever is already in the watch dir at startup. Useful
-  // when files were dropped while Sanctus was down. Off by default — a fresh
+  // when files were dropped while Custos was down. Off by default — a fresh
   // boot shouldn't accidentally re-import files left over from prior runs.
   if (opts.processExisting) {
     const existing = fs

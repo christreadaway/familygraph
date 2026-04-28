@@ -1,8 +1,8 @@
-# Sanctus
+# Custos
 
 **Local family registry for Catholic institutions.** Closed source for v1.
 
-Sanctus is the source of truth for family identity in an institution's data
+Custos is the source of truth for family identity in an institution's data
 ecosystem. It accepts files from existing systems (FACTS, RenWeb, Ministry
 Platform, Google Sheets, Excel, generic CSV), reconciles them against a
 persistent ledger, and exposes that ledger to the institution's other tools
@@ -27,15 +27,15 @@ npm run client:build
 npm start
 ```
 
-Sanctus listens on `http://127.0.0.1:3500` and serves the React dashboard at
-`/`. On first boot it creates `~/.sanctus/` (mode 0700), writes
+Custos listens on `http://127.0.0.1:3500` and serves the React dashboard at
+`/`. On first boot it creates `~/.custos/` (mode 0700), writes
 `secret.key` (mode 0600), initialises the SQLite database, seeds the
-built-in profiles, and starts the folder-watch agent on `~/.sanctus/watch`.
+built-in profiles, and starts the folder-watch agent on `~/.custos/watch`.
 
 Print the master Bearer token (paste into the dashboard the first time):
 
 ```sh
-node bin/sanctus.js show-token
+node bin/custos.js show-token
 ```
 
 ---
@@ -44,29 +44,29 @@ node bin/sanctus.js show-token
 
 | Command | What it does |
 |---|---|
-| `node bin/sanctus.js start` | Default. Runs the API server + folder-watch agent. |
-| `node bin/sanctus.js status` | Prints schema version, profile, audit count, backup count, key + watch dir paths. |
-| `node bin/sanctus.js show-token` | Prints the master Bearer token. |
-| `node bin/sanctus.js rotate-secret` | Regenerates the master Bearer token. The data + HMAC keys are preserved so existing ciphertext keeps decrypting. |
-| `node bin/sanctus.js backup [passphrase]` | Hot snapshot. Encrypted with PBKDF2 + AES-256-GCM if a passphrase is given. |
-| `node bin/sanctus.js list-backups` | Lists files in the backups directory. |
-| `node bin/sanctus.js prune-backups [keep=10]` | Keeps the most recent N backups, deletes older. |
-| `node bin/sanctus.js restore <passphrase> <src> <dest>` | Restores an encrypted backup to a new sqlite path. |
+| `node bin/custos.js start` | Default. Runs the API server + folder-watch agent. |
+| `node bin/custos.js status` | Prints schema version, profile, audit count, backup count, key + watch dir paths. |
+| `node bin/custos.js show-token` | Prints the master Bearer token. |
+| `node bin/custos.js rotate-secret` | Regenerates the master Bearer token. The data + HMAC keys are preserved so existing ciphertext keeps decrypting. |
+| `node bin/custos.js backup [passphrase]` | Hot snapshot. Encrypted with PBKDF2 + AES-256-GCM if a passphrase is given. |
+| `node bin/custos.js list-backups` | Lists files in the backups directory. |
+| `node bin/custos.js prune-backups [keep=10]` | Keeps the most recent N backups, deletes older. |
+| `node bin/custos.js restore <passphrase> <src> <dest>` | Restores an encrypted backup to a new sqlite path. |
 
 ---
 
 ## Folder-watch agent
 
-Drop a file in `~/.sanctus/watch`:
+Drop a file in `~/.custos/watch`:
 
-| Extension | Behaviour | Output in `~/.sanctus/out` |
+| Extension | Behaviour | Output in `~/.custos/out` |
 |---|---|---|
 | `.csv`, `.tsv` | Source-handler import | `<file>.import-summary.json`, source moved to `processed/` |
 | `.xlsx`, `.xls`, `.xlsm` | Excel import (first sheet) | same |
 | `.txt`, `.md`, `.eml`, `.json` | Text sanitization | `<stem>.sanitized.<ext>` + `<stem>.token-set.json` |
 | anything else | Error | moved to `errors/` with a `.error.txt` sidecar |
 
-Set `SANCTUS_WATCH_PROCESS_EXISTING=1` to process whatever is already in the
+Set `CUSTOS_WATCH_PROCESS_EXISTING=1` to process whatever is already in the
 watch dir at startup (default: only new files are picked up).
 
 ---
@@ -90,22 +90,22 @@ The full route table is in [`product_spec.md`](./product_spec.md#api-contract).
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SANCTUS_HOME` | `~/.sanctus` | Root for data, secrets, backups, watch dirs |
-| `SANCTUS_DB` | `$SANCTUS_HOME/data/sanctus.sqlite` | |
-| `SANCTUS_SECRET` | `$SANCTUS_HOME/secret.key` | mode 0600, holds master/data/HMAC keys |
-| `SANCTUS_WATCH_DIR` | `$SANCTUS_HOME/watch` | folder-watch input |
-| `SANCTUS_OUT_DIR` | `$SANCTUS_HOME/out` | folder-watch output |
-| `SANCTUS_PORT` | `3500` | |
-| `SANCTUS_BIND` | `127.0.0.1` | loopback by default |
-| `SANCTUS_AUTO_MERGE` | `0.92` | resolver auto-merge threshold |
-| `SANCTUS_REVIEW` | `0.7` | resolver conflict-queue threshold |
-| `SANCTUS_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
-| `SANCTUS_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
-| `SANCTUS_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
-| `SANCTUS_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
+| `CUSTOS_HOME` | `~/.custos` | Root for data, secrets, backups, watch dirs |
+| `CUSTOS_DB` | `$CUSTOS_HOME/data/custos.sqlite` | |
+| `CUSTOS_SECRET` | `$CUSTOS_HOME/secret.key` | mode 0600, holds master/data/HMAC keys |
+| `CUSTOS_WATCH_DIR` | `$CUSTOS_HOME/watch` | folder-watch input |
+| `CUSTOS_OUT_DIR` | `$CUSTOS_HOME/out` | folder-watch output |
+| `CUSTOS_PORT` | `3500` | |
+| `CUSTOS_BIND` | `127.0.0.1` | loopback by default |
+| `CUSTOS_AUTO_MERGE` | `0.92` | resolver auto-merge threshold |
+| `CUSTOS_REVIEW` | `0.7` | resolver conflict-queue threshold |
+| `CUSTOS_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
+| `CUSTOS_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
+| `CUSTOS_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
+| `CUSTOS_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 
-The active profile (Dashboard → Profiles) overrides `SANCTUS_AUTO_MERGE` /
-`SANCTUS_REVIEW` for imports.
+The active profile (Dashboard → Profiles) overrides `CUSTOS_AUTO_MERGE` /
+`CUSTOS_REVIEW` for imports.
 
 ---
 

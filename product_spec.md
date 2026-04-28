@@ -1,6 +1,6 @@
-# Sanctus — Product Specification (v1)
+# Custos — Product Specification (v1)
 
-**The "how." Implementation contract for the Sanctus family registry.**
+**The "how." Implementation contract for the Custos family registry.**
 
 ---
 
@@ -18,7 +18,7 @@
 - `server/`            — Express HTTP API, identity store, sanitize/desanitize, folder-watch agent, audit log, backup/restore
 - `client/`            — React 18 dashboard (Vite-built). Served from the same Express process.
 - `tests/`             — `node:test` suites covering crypto, identity, resolver, sources, sanitize, audit, auth, API, folder watch, backup
-- `bin/sanctus.js`     — operator CLI (`start`, `rotate-secret`, `backup`, `restore`, `show-token`)
+- `bin/custos.js`     — operator CLI (`start`, `rotate-secret`, `backup`, `restore`, `show-token`)
 
 ---
 
@@ -29,7 +29,7 @@ npm install                # installs server deps
 npm run client:install     # installs client deps
 npm run client:build       # builds the dashboard
 npm start                  # http://127.0.0.1:3500
-node bin/sanctus.js show-token   # paste into the dashboard the first time
+node bin/custos.js show-token   # paste into the dashboard the first time
 ```
 
 Other CLI entry points: `status`, `rotate-secret`, `backup [passphrase]`,
@@ -39,16 +39,16 @@ Environment overrides:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SANCTUS_HOME` | `~/.sanctus` | Root directory for keys, db, watch/out, backups |
-| `SANCTUS_DB` | `$SANCTUS_HOME/data/sanctus.sqlite` | SQLite database path |
-| `SANCTUS_SECRET` | `$SANCTUS_HOME/secret.key` | Master/data/HMAC key file (mode 0600) |
-| `SANCTUS_WATCH_DIR` | `$SANCTUS_HOME/watch` | Folder-watch input |
-| `SANCTUS_OUT_DIR` | `$SANCTUS_HOME/out` | Folder-watch output |
-| `SANCTUS_PORT` | `3500` | TCP port |
-| `SANCTUS_BIND` | `127.0.0.1` | Bind address (loopback by default) |
-| `SANCTUS_AUTO_MERGE` | `0.92` | Auto-merge threshold for the resolver |
-| `SANCTUS_REVIEW` | `0.7` | Conflict-queue threshold for the resolver |
-| `SANCTUS_DISABLE_WATCH` | unset | Set to `1` to disable the folder-watch agent |
+| `CUSTOS_HOME` | `~/.custos` | Root directory for keys, db, watch/out, backups |
+| `CUSTOS_DB` | `$CUSTOS_HOME/data/custos.sqlite` | SQLite database path |
+| `CUSTOS_SECRET` | `$CUSTOS_HOME/secret.key` | Master/data/HMAC key file (mode 0600) |
+| `CUSTOS_WATCH_DIR` | `$CUSTOS_HOME/watch` | Folder-watch input |
+| `CUSTOS_OUT_DIR` | `$CUSTOS_HOME/out` | Folder-watch output |
+| `CUSTOS_PORT` | `3500` | TCP port |
+| `CUSTOS_BIND` | `127.0.0.1` | Bind address (loopback by default) |
+| `CUSTOS_AUTO_MERGE` | `0.92` | Auto-merge threshold for the resolver |
+| `CUSTOS_REVIEW` | `0.7` | Conflict-queue threshold for the resolver |
+| `CUSTOS_DISABLE_WATCH` | unset | Set to `1` to disable the folder-watch agent |
 
 ---
 
@@ -103,14 +103,14 @@ startup.
 
 ## Cryptographic posture
 
-- **Key file** at `$SANCTUS_HOME/secret.key`, mode 0600, written by the server on first boot.
+- **Key file** at `$CUSTOS_HOME/secret.key`, mode 0600, written by the server on first boot.
   - `master`  — Bearer token for the PII surface
   - `dataKey` — AES-256-GCM key for PII-column ciphertext
   - `hmacKey` — HMAC-SHA256 key for searchable hashes
 - **PII at rest:** every `_ct` column is `[version:1][iv:12][tag:16][cipher: variable]`. Null inputs pass through unchanged.
 - **Searchable equality:** name lookups use `HMAC-SHA256(hmacKey, normalize(input))`. Email/phone/address dedup by `norm_hash`.
-- **Token rotation:** `node bin/sanctus.js rotate-secret` regenerates the master Bearer token without touching `dataKey` or `hmacKey`. Apps re-fetch on next startup.
-- **Backups:** `bin/sanctus.js backup [passphrase]` produces either a hot copy of the SQLite file (mode 0600) or, if a passphrase is given, an encrypted `.sanctus-backup` (gzip + AES-256-GCM with PBKDF2-derived key, 200k iterations).
+- **Token rotation:** `node bin/custos.js rotate-secret` regenerates the master Bearer token without touching `dataKey` or `hmacKey`. Apps re-fetch on next startup.
+- **Backups:** `bin/custos.js backup [passphrase]` produces either a hot copy of the SQLite file (mode 0600) or, if a passphrase is given, an encrypted `.custos-backup` (gzip + AES-256-GCM with PBKDF2-derived key, 200k iterations).
 - **Threat model (v1):** trusted single-operator desktop; any process that can read the secret file can read PII. Per-app scoped keys are a known v2 evolution.
 
 > SQLCipher was deliberately not used. Application-layer column encryption gives
@@ -123,7 +123,7 @@ startup.
 ## API contract
 
 All routes are JSON. PII routes require `Authorization: Bearer <master>`. Safe
-routes are loopback-only, no token. The `X-Sanctus-Actor` header identifies the
+routes are loopback-only, no token. The `X-Custos-Actor` header identifies the
 calling app for audit purposes (defaults to `unknown_app`).
 
 ### Open
@@ -235,7 +235,7 @@ Auto-detection is by header heuristic; the user can pin a source via
 
 ## Folder-watch agent
 
-`server/folder-watch/index.js` watches `$SANCTUS_WATCH_DIR` (chokidar,
+`server/folder-watch/index.js` watches `$CUSTOS_WATCH_DIR` (chokidar,
 non-recursive, with `awaitWriteFinish`). On a settled file:
 
 - `*.csv | *.tsv` → parsed via `sources.load`, run through the import

@@ -2,7 +2,7 @@
 // dashboard prompts the operator for it on first load and links to the CLI
 // command that prints it.
 
-const TOKEN_KEY = 'sanctus.bearer';
+const TOKEN_KEY = 'custos.bearer';
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY) || '';
@@ -13,7 +13,7 @@ export function setToken(t) {
 }
 
 async function request(method, path, body) {
-  const headers = { 'content-type': 'application/json', 'x-sanctus-actor': 'dashboard' };
+  const headers = { 'content-type': 'application/json', 'x-custos-actor': 'dashboard' };
   const t = getToken();
   if (t) headers['authorization'] = `Bearer ${t}`;
   const res = await fetch(path, {
@@ -104,7 +104,7 @@ export const api = {
   deleteSetting: key => request('DELETE', `/api/settings/${key}`),
   exportData: body => fetch('/api/export', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${getToken()}`, 'x-sanctus-actor': 'dashboard' },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${getToken()}`, 'x-custos-actor': 'dashboard' },
     body: JSON.stringify(body),
   }),
   addRelationship: body => request('POST', '/api/relationships', body),

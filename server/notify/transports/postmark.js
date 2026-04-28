@@ -3,7 +3,7 @@
 const https = require('https');
 
 // Postmark transport. Uses the Email API directly — no SDK dependency.
-// Server token comes from the SANCTUS_POSTMARK_TOKEN env var (never stored
+// Server token comes from the CUSTOS_POSTMARK_TOKEN env var (never stored
 // in the database). The `from` address and message stream live in settings.
 //
 // Postmark response shape (success):
@@ -15,7 +15,7 @@ const HOST = 'api.postmarkapp.com';
 const PATH = '/email';
 
 function send({ token, from, messageStream }, msg) {
-  if (!token) return Promise.reject(new Error('postmark: missing SANCTUS_POSTMARK_TOKEN'));
+  if (!token) return Promise.reject(new Error('postmark: missing CUSTOS_POSTMARK_TOKEN'));
   if (!from) return Promise.reject(new Error('postmark: missing postmark.from setting'));
   const payload = JSON.stringify({
     From: from,

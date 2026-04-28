@@ -29,7 +29,7 @@ export default function ExportView() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `sanctus-${entity}-${mode}.${format === 'json' ? 'json' : 'csv'}`;
+      a.download = `custos-${entity}-${mode}.${format === 'json' ? 'json' : 'csv'}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

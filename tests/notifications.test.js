@@ -33,13 +33,13 @@ function seedConflict(db, secrets) {
 test('templates > assignTemplate produces subject + text + html with TTL and link', () => {
   const exp = new Date(Date.now() + 24 * 3_600_000).toISOString();
   const t = templates.assignTemplate({
-    count: 3, expiresAt: exp, dashboardUrl: 'https://sanctus.example.org', assignee: 'sarah@x.org', ttlHours: 24, institution: 'St Theresa',
+    count: 3, expiresAt: exp, dashboardUrl: 'https://custos.example.org', assignee: 'sarah@x.org', ttlHours: 24, institution: 'St Theresa',
   });
   assert.match(t.subject, /3 family-data conflicts/);
   assert.match(t.subject, /resolve within 24h/);
-  assert.match(t.text, /https:\/\/sanctus\.example\.org\/conflicts\?assigned_to=sarah%40x\.org/);
+  assert.match(t.text, /https:\/\/custos\.example\.org\/conflicts\?assigned_to=sarah%40x\.org/);
   assert.match(t.text, /Time remaining/);
-  assert.match(t.html, /<a href="https:\/\/sanctus\.example\.org\/conflicts\?assigned_to=sarah%40x\.org"/);
+  assert.match(t.html, /<a href="https:\/\/custos\.example\.org\/conflicts\?assigned_to=sarah%40x\.org"/);
 });
 
 test('templates > reminder + expired include the link and counts', () => {

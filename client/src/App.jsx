@@ -22,8 +22,8 @@ function TokenBanner({ ok, onSetToken }) {
   if (ok) return null;
   return (
     <div className="token-banner">
-      Sanctus needs your local Bearer token to talk to the PII surface. Run{' '}
-      <code>npx sanctus show-token</code> in the Sanctus directory and paste it here:
+      Custos needs your local Bearer token to talk to the PII surface. Run{' '}
+      <code>npx custos show-token</code> in the Custos directory and paste it here:
       <div className="row" style={{ marginTop: 8 }}>
         <input
           style={{ flex: 1, fontFamily: 'var(--mono)' }}
@@ -61,7 +61,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <h1>Sanctus</h1>
+        <h1>Custos</h1>
         <nav className="col">
           <NavLink to="/search">Search</NavLink>
           <NavLink to="/families">Families</NavLink>

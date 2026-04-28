@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Log transport. Appends a JSONL line per message to a file under
-// $SANCTUS_HOME. Used in tests and as the default when no Postmark token is
+// $CUSTOS_HOME. Used in tests and as the default when no Postmark token is
 // configured — the operator can verify what *would* have been sent before
 // flipping the transport to postmark.
 

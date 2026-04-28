@@ -7,7 +7,7 @@
 // level achieves the goal that "PII never lives in plaintext in the file"
 // without forcing every consumer to install a custom SQLite build. If the
 // SQLite file is exfiltrated, every PII column is unreadable without the
-// data key, which lives in $SANCTUS_HOME/secret.key (mode 0600) — or, in v2,
+// data key, which lives in $CUSTOS_HOME/secret.key (mode 0600) — or, in v2,
 // the OS keychain. The shape of the ciphertext is stable across both stores.
 //
 // Ciphertext layout per BLOB column:

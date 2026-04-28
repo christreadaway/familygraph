@@ -79,7 +79,7 @@ test('api > PII surface with bearer returns data', async t => {
   const { port, secrets } = await makeServer(t);
   const res = await request(port, {
     path: '/api/families',
-    headers: { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'unit-test' },
+    headers: { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'unit-test' },
   });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { items: [] });
@@ -87,7 +87,7 @@ test('api > PII surface with bearer returns data', async t => {
 
 test('api > create + read family includes PII', async t => {
   const { port, secrets } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'unit-test' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'unit-test' };
   const create = await request(port, { method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'Smith' } });
   assert.equal(create.status, 201);
   const code = create.body.code;
@@ -98,7 +98,7 @@ test('api > create + read family includes PII', async t => {
 
 test('api > safe surface returns no PII', async t => {
   const { port, secrets } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'unit-test' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'unit-test' };
   await request(port, { method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'Smith Privacy Test' } });
   const safe = await request(port, { path: '/api/safe/families' });
   assert.equal(safe.status, 200);
@@ -110,7 +110,7 @@ test('api > safe surface returns no PII', async t => {
 
 test('api > sanitize/desanitize round trip', async t => {
   const { port, secrets } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'unit-test' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'unit-test' };
   const text = 'Mary Smith can be reached at mary@example.org.';
   const r = await request(port, { method: 'POST', path: '/api/sanitize', headers: auth, body: { text } });
   assert.equal(r.status, 200);
@@ -127,7 +127,7 @@ test('api > sanitize/desanitize round trip', async t => {
 
 test('api > import preview + run', async t => {
   const { port, secrets } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'unit-test' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'unit-test' };
   const csvBody = 'first_name,last_name,email,city,state,zip\nMary,Smith,mary@example.org,Lima,OH,45801\n';
   const preview = await request(port, { method: 'POST', path: '/api/import/preview', headers: auth, body: { content: csvBody } });
   assert.equal(preview.status, 200);
@@ -140,7 +140,7 @@ test('api > import preview + run', async t => {
 
 test('api > external-export consent records tier-2 audit event', async t => {
   const { port, secrets } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'missioniq' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'missioniq' };
   const r = await request(port, {
     method: 'POST',
     path: '/api/audit/external-export',
@@ -163,14 +163,14 @@ test('api > 404 on unknown api path returns JSON', async t => {
 
 test('api > invalid family code is 400', async t => {
   const { port, secrets } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'unit-test' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'unit-test' };
   const res = await request(port, { path: '/api/families/not_a_code', headers: auth });
   assert.equal(res.status, 400);
 });
 
 test('api > merge + split families', async t => {
   const { port, secrets } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'unit-test' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'unit-test' };
   const a = (await request(port, { method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'A' } })).body.code;
   const b = (await request(port, { method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'B' } })).body.code;
   const merge = await request(port, { method: 'POST', path: `/api/families/${a}/merge`, headers: auth, body: { winner_code: b } });
@@ -183,7 +183,7 @@ test('api > merge + split families', async t => {
 
 test('api > conflict resolve via merge', async t => {
   const { port, secrets, db } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-sanctus-actor': 'unit-test' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'unit-test' };
   const p1 = (await request(port, { method: 'POST', path: '/api/people', headers: auth, body: { given_name: 'Pio', family_name: 'Pietrelcina' } })).body.code;
   const p2 = (await request(port, { method: 'POST', path: '/api/people', headers: auth, body: { given_name: 'Pio', family_name: 'Pietrelcina' } })).body.code;
   // Trigger a rescore to create a conflict.

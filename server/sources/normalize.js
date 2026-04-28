@@ -1,6 +1,6 @@
 'use strict';
 
-// Map a vendor row + a field-mapping definition into Sanctus's canonical shape.
+// Map a vendor row + a field-mapping definition into Custos's canonical shape.
 // Canonical shape:
 //   {
 //     family: { display_name, notes },

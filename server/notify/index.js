@@ -25,7 +25,7 @@ function effectiveConfig(db, env = process.env) {
     dashboardUrl: _getSetting(db, 'dashboard_url', null) || `http://${config.bind}:${config.port}`,
     institution: _getSetting(db, 'institution_name', null),
     postmark: {
-      token: env.SANCTUS_POSTMARK_TOKEN || null,
+      token: env.CUSTOS_POSTMARK_TOKEN || null,
       from: _getSetting(db, 'postmark.from', null),
       messageStream: _getSetting(db, 'postmark.message_stream', 'outbound'),
     },

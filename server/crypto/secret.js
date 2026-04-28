@@ -12,7 +12,7 @@ const path = require('path');
 //     hmacKey: <64 hex chars: 256-bit HMAC-SHA256 key for searchable hashes>,
 //     createdAt: ISO timestamp
 //   }
-// The whole file is stored mode 0600 in $SANCTUS_HOME and never logged.
+// The whole file is stored mode 0600 in $CUSTOS_HOME and never logged.
 // In v2, this file is replaced by the OS keychain. The shape of the keys is
 // stable, so the migration is a copy-out without any ciphertext changes.
 
@@ -37,7 +37,7 @@ function load(secretPath) {
   const raw = fs.readFileSync(secretPath, 'utf8');
   const parsed = JSON.parse(raw);
   if (!parsed.master || !parsed.dataKey || !parsed.hmacKey) {
-    throw new Error('Sanctus secret file is malformed; refusing to start.');
+    throw new Error('Custos secret file is malformed; refusing to start.');
   }
   return parsed;
 }
