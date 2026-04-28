@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
+import { useFG } from '../store.js';
+import IdCode from '../components/IdCode.jsx';
+import Pill from '../components/Pill.jsx';
 
 export default function FamilyDetail() {
   const { code } = useParams();
@@ -14,6 +17,9 @@ export default function FamilyDetail() {
   const [history, setHistory] = useState([]);
   const [rels, setRels] = useState([]);
   const [newRel, setNewRel] = useState({ to: '', kind: 'related_household', detail: '' });
+
+  const { view } = useFG();
+  const pseudo = view === 'pseudonym';
 
   function load() {
     api.getFamily(code).then(d => {
@@ -63,7 +69,7 @@ export default function FamilyDetail() {
 
   return (
     <>
-      <h2>Family <code>{fam.code}</code></h2>
+      <h2>Family <IdCode type="family" code={fam.code} /></h2>
       <div className="panel">
         <h3>Edit</h3>
         <div className="col" style={{ gap: 12 }}>
@@ -92,8 +98,8 @@ export default function FamilyDetail() {
             {data.members.map(m => (
               <tr key={m.membership_code}>
                 <td>
-                  <Link to={`/people/${m.person_code}`}><code>{m.person_code}</code></Link>
-                  {m.person.display_name && <> · {m.person.display_name}</>}
+                  <Link to={`/people/${m.person_code}`}><IdCode type="person" code={m.person_code} /></Link>
+                  {!pseudo && m.person.display_name && <> · {m.person.display_name}</>}
                 </td>
                 <td>{m.role}</td>
                 <td>{m.custody || <span className="muted">—</span>}</td>
@@ -111,8 +117,10 @@ export default function FamilyDetail() {
         <div className="col">
           {data.contacts.addresses.map(a => (
             <div key={a.code} className="row">
-              <span className="tag">{a.label}{a.is_primary ? ' · primary' : ''}</span>
-              <span>{[a.line1, a.line2, a.city, a.region, a.postal].filter(Boolean).join(', ') || <span className="muted">[address unavailable]</span>}</span>
+              <Pill state={a.is_primary ? 'loopback' : 'muted'}>{a.label}{a.is_primary ? ' · primary' : ''}</Pill>
+              <span>{pseudo
+                ? <span className="faint mono">[address redacted in pseudonym view]</span>
+                : ([a.line1, a.line2, a.city, a.region, a.postal].filter(Boolean).join(', ') || <span className="muted">[address unavailable]</span>)}</span>
             </div>
           ))}
         </div>
@@ -133,7 +141,7 @@ export default function FamilyDetail() {
           <tbody>
             {rels.map(r => (
               <tr key={r.code}>
-                <td><Link to={`/families/${r.from_code === code ? r.to_code : r.from_code}`}><code>{r.from_code === code ? r.to_code : r.from_code}</code></Link></td>
+                <td><Link to={`/families/${r.from_code === code ? r.to_code : r.from_code}`}><IdCode type="family" code={r.from_code === code ? r.to_code : r.from_code} /></Link></td>
                 <td>{r.kind}</td>
                 <td className="muted">{r.detail || '—'}</td>
                 <td><button className="danger" onClick={async () => { await api.removeRelationship(r.code); load(); }}>remove</button></td>
@@ -168,11 +176,11 @@ export default function FamilyDetail() {
           <tbody>
             {history.map(h => (
               <tr key={h.membership_code}>
-                <td><Link to={`/people/${h.person_code}`}><code>{h.person_code}</code></Link>{h.person_display_name && <> · {h.person_display_name}</>}</td>
+                <td><Link to={`/people/${h.person_code}`}><IdCode type="person" code={h.person_code} /></Link>{!pseudo && h.person_display_name && <> · {h.person_display_name}</>}</td>
                 <td>{h.role}</td>
                 <td>{h.custody || <span className="muted">—</span>}</td>
                 <td className="muted">{new Date(h.started_at).toLocaleString()}</td>
-                <td className="muted">{h.ended_at ? new Date(h.ended_at).toLocaleString() : <span className="tag action">active</span>}</td>
+                <td className="muted">{h.ended_at ? new Date(h.ended_at).toLocaleString() : <Pill state="loopback">active</Pill>}</td>
                 <td>{h.reason || <span className="muted">—</span>}</td>
               </tr>
             ))}
@@ -200,8 +208,8 @@ export default function FamilyDetail() {
                   checked={!!splitPicks[m.person_code]}
                   onChange={e => setSplitPicks({ ...splitPicks, [m.person_code]: e.target.checked })}
                 />
-                <code>{m.person_code}</code>
-                {m.person.display_name && <span className="muted">{m.person.display_name}</span>}
+                <IdCode type="person" code={m.person_code} />
+                {!pseudo && m.person.display_name && <span className="muted">{m.person.display_name}</span>}
               </label>
             ))}
             <button>Split selected into new family</button>

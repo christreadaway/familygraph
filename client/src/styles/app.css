@@ -1,0 +1,333 @@
+/* Family Graph — application styles
+   Imports tokens + shared component CSS, layers the app shell, and provides
+   a thin compat layer so existing markup (.panel, .tag, code) renders in the
+   institutional look without being rewritten everywhere.
+*/
+
+/* ─── Inter / Inter Tight / JetBrains Mono ───────────────────────────
+   Bundling note: Per CLAUDE_CODE_HANDOFF.md §5.5 the production build
+   should ship WOFF2 files locally. In dev we fall back to Google Fonts
+   so the type system reads correctly without bundled assets. If the
+   network is offline, the system stack below covers parity. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+html, body, #root { height: 100%; }
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-sunken);
+}
+
+/* ─── Custom 8px scrollbars (Windows parity) ─────────────────────── */
+* { scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ─── Anchors / focus ────────────────────────────────────────────── */
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* ─── Form controls ──────────────────────────────────────────────── */
+input, select, textarea {
+  background: var(--bg-elev);
+  color: var(--ink);
+  border: 0.5px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: var(--t-small);
+  font-family: var(--font-text);
+  line-height: 1.4;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+textarea {
+  font-family: var(--font-mono);
+  font-size: var(--t-mono-data);
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 60px;
+}
+label {
+  display: block;
+  color: var(--ink-faint);
+  margin-bottom: 4px;
+  font-size: var(--t-micro);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+
+/* Native button styling — bridge to .fg-btn */
+button {
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--rule-strong);
+  background: var(--bg-elev);
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.2;
+}
+button:hover:not(:disabled) { background: var(--bg-sunken); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary {
+  background: var(--accent);
+  color: var(--bg-elev);
+  border-color: var(--accent);
+}
+button.primary:hover:not(:disabled) { filter: brightness(0.95); }
+button.danger {
+  background: transparent;
+  border-color: var(--c-pii);
+  color: var(--c-pii);
+}
+button.danger:hover:not(:disabled) { background: var(--c-pii-bg); }
+
+/* ─── App shell ──────────────────────────────────────────────────── */
+.app {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-text);
+}
+.app-body {
+  display: grid;
+  grid-template-columns: 224px 1fr;
+  min-height: 0;
+}
+
+/* ─── Sidebar ────────────────────────────────────────────────────── */
+.sidebar {
+  background: var(--bg-sunken);
+  border-right: 0.5px solid var(--rule);
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+}
+.sidebar-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  font-weight: 500;
+  padding: 4px 10px 10px;
+}
+.sidebar nav { display: flex; flex-direction: column; gap: 1px; }
+.sidebar nav a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-mute);
+  font-size: var(--t-small);
+  font-weight: 500;
+}
+.sidebar nav a:hover {
+  background: var(--bg-elev);
+  color: var(--ink);
+  text-decoration: none;
+}
+.sidebar nav a.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-faint);
+  line-height: 1.6;
+}
+.sidebar-footer code {
+  color: var(--ink-mute);
+  background: transparent;
+  padding: 0;
+}
+
+/* ─── Main column ────────────────────────────────────────────────── */
+.main {
+  padding: 24px 28px 32px;
+  overflow: auto;
+  min-width: 0;
+}
+.main h2 {
+  font-family: var(--font-display);
+  font-size: var(--t-h1);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0 0 18px;
+  color: var(--ink);
+}
+.main h2 code {
+  font-size: 0.78em;
+  color: var(--code-family);
+  font-weight: 500;
+  margin-left: 4px;
+}
+
+/* ─── Compat layer: .panel → .fg-card ────────────────────────────── */
+.panel {
+  background: var(--bg-elev);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+.panel h3 {
+  margin: 0 0 12px;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.panel.error {
+  background: var(--c-pii-bg);
+  color: var(--c-pii);
+  box-shadow: 0 0 0 0.5px var(--c-pii);
+}
+.panel.error code { color: var(--c-pii); background: transparent; }
+
+/* ─── Tables ─────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  text-align: left;
+  padding: 9px 10px;
+  border-bottom: 0.5px solid var(--rule);
+  font-size: var(--t-small);
+  vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+th {
+  color: var(--ink-faint);
+  font-weight: 500;
+  font-size: var(--t-micro);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 0.5px solid var(--rule-strong);
+}
+tbody tr:hover td { background: var(--bg-sunken); }
+
+/* ─── Inline code ────────────────────────────────────────────────── */
+code, .mono {
+  font-family: var(--font-mono);
+  font-size: var(--t-mono-data);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+code { color: var(--code-family); }
+/* Heuristic colors for the most common inline code values */
+code:where(:not([class])) { color: var(--ink-mute); }
+
+/* ─── Compat: .tag → .fg-pill.muted look ─────────────────────────── */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--bg-sunken);
+  color: var(--ink-mute);
+  line-height: 1;
+  border: 0.5px solid var(--rule);
+}
+.tag.action {
+  background: var(--c-loopback-bg);
+  color: var(--c-loopback);
+  border-color: transparent;
+}
+.tag.warn {
+  background: var(--c-pii-bg);
+  color: var(--c-pii);
+  border-color: transparent;
+}
+.tag.error {
+  background: var(--c-consented-bg);
+  color: var(--c-consented);
+  border-color: transparent;
+}
+
+/* ─── Helpers ────────────────────────────────────────────────────── */
+.muted { color: var(--ink-mute); }
+.faint { color: var(--ink-faint); }
+.error { color: var(--c-consented); }
+.row { display: flex; gap: 12px; align-items: center; }
+.col { display: flex; flex-direction: column; gap: 8px; }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.spacer { flex: 1; }
+
+/* ─── Token banner (when bearer is missing) ──────────────────────── */
+.token-banner {
+  background: var(--c-pii-bg);
+  border: 0.5px solid var(--c-pii);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: var(--t-small);
+  color: var(--ink);
+}
+.token-banner code {
+  color: var(--c-pii);
+  background: transparent;
+  font-family: var(--font-mono);
+}
+
+/* ─── Key-value lists ────────────────────────────────────────────── */
+.kvp {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+.kvp dt {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.kvp dd { margin: 0; font-size: var(--t-small); }
+
+/* ─── Resize guard for narrow viewports ──────────────────────────── */
+.resize-guard {
+  display: none;
+  padding: 40px;
+  font-family: var(--font-mono);
+  color: var(--ink-mute);
+  text-align: center;
+}
+@media (max-width: 1024px) {
+  .app-body { display: none; }
+  .resize-guard { display: block; }
+}

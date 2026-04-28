@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
+import IdCode from '../components/IdCode.jsx';
+import Pill from '../components/Pill.jsx';
 
 const TTL_OPTIONS = [4, 12, 24, 48, 72];
 
@@ -20,7 +22,7 @@ export default function Conflicts() {
   const [items, setItems] = useState([]);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState({ status: 'open', assigned: '', assigned_to: '' });
-  const [picked, setPicked] = useState({}); // code -> bool
+  const [picked, setPicked] = useState({});
   const [assignee, setAssignee] = useState('');
   const [ttl, setTtl] = useState(24);
   const [busy, setBusy] = useState(false);
@@ -102,9 +104,17 @@ export default function Conflicts() {
       {filter.status === 'open' && (
         <div className="panel">
           <h3>Assign to a colleague</h3>
-          <p className="muted" style={{ marginTop: 0 }}>Park open conflicts on a colleague's email for review. The assignment auto-expires after the TTL you choose; expired assignments fall back into the unassigned pool.</p>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Park open conflicts on a colleague's email for review. The assignment auto-expires
+            after the TTL you choose; expired assignments fall back into the unassigned pool.
+          </p>
           <div className="row">
-            <input placeholder="colleague@example.org" value={assignee} onChange={e => setAssignee(e.target.value)} style={{ flex: 1 }} />
+            <input
+              placeholder="colleague@example.org"
+              value={assignee}
+              onChange={e => setAssignee(e.target.value)}
+              style={{ flex: 1 }}
+            />
             <label style={{ margin: 0 }}>Expires in</label>
             <select value={ttl} onChange={e => setTtl(Number(e.target.value))}>
               {TTL_OPTIONS.map(h => <option key={h} value={h}>{h} hours</option>)}
@@ -137,32 +147,55 @@ export default function Conflicts() {
           <tbody>
             {items.map(c => {
               const exp = formatExpires(c.assignment_expires_at);
+              const linkBase = c.kind === 'family' ? 'families' : 'people';
               return (
                 <tr key={c.code}>
-                  <td><input type="checkbox" checked={!!picked[c.code]} onChange={e => setPicked({ ...picked, [c.code]: e.target.checked })} /></td>
-                  <td><code>{c.code}</code></td>
-                  <td>{c.kind}</td>
                   <td>
-                    <Link to={`/${c.kind === 'family' ? 'families' : 'people'}/${c.left_code}`}><code>{c.left_code}</code></Link><br />
-                    <Link to={`/${c.kind === 'family' ? 'families' : 'people'}/${c.right_code}`}><code>{c.right_code}</code></Link>
+                    <input
+                      type="checkbox"
+                      checked={!!picked[c.code]}
+                      onChange={e => setPicked({ ...picked, [c.code]: e.target.checked })}
+                    />
                   </td>
-                  <td>{Math.round(c.score * 100)}%</td>
+                  <td><IdCode code={c.code} /></td>
+                  <td><Pill state="muted">{c.kind}</Pill></td>
                   <td>
-                    {c.assigned_to
-                      ? <><span className="tag">{c.assigned_to}</span>{c.status === 'open' && <button onClick={() => unassign(c)} style={{ marginLeft: 6 }}>clear</button>}</>
+                    <div className="col" style={{ gap: 2 }}>
+                      <Link to={`/${linkBase}/${c.left_code}`}>
+                        <IdCode type={c.kind} code={c.left_code} />
+                      </Link>
+                      <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>↕ vs</span>
+                      <Link to={`/${linkBase}/${c.right_code}`}>
+                        <IdCode type={c.kind} code={c.right_code} />
+                      </Link>
+                    </div>
+                  </td>
+                  <td className="mono tnum">{Math.round(c.score * 100)}%</td>
+                  <td>
+                    {c.assigned_to ? (
+                      <>
+                        <Pill state="muted">{c.assigned_to}</Pill>
+                        {c.status === 'open' && (
+                          <button onClick={() => unassign(c)} style={{ marginLeft: 6 }}>clear</button>
+                        )}
+                      </>
+                    ) : <span className="muted">—</span>}
+                  </td>
+                  <td>
+                    {exp
+                      ? <Pill state={exp.warn ? 'pii' : 'muted'}>{exp.label}</Pill>
                       : <span className="muted">—</span>}
                   </td>
-                  <td>{exp ? <span className={exp.warn ? 'tag warn' : 'tag'}>{exp.label}</span> : <span className="muted">—</span>}</td>
                   <td>
                     {c.status === 'open' ? (
-                      <div className="col">
-                        <div className="row">
-                          <button className="primary" onClick={() => resolve(c, 'merge', c.left_code)}>merge → left</button>
-                          <button className="primary" onClick={() => resolve(c, 'merge', c.right_code)}>merge → right</button>
+                      <div className="col" style={{ gap: 6 }}>
+                        <div className="row" style={{ gap: 6 }}>
+                          <button className="primary" title="Merge left" onClick={() => resolve(c, 'merge', c.left_code)}>← left</button>
+                          <button className="primary" title="Merge right" onClick={() => resolve(c, 'merge', c.right_code)}>→ right</button>
                         </div>
-                        <div className="row">
-                          <button onClick={() => resolve(c, 'reject')}>reject (different)</button>
-                          <button onClick={() => resolve(c, 'dismiss')}>dismiss</button>
+                        <div className="row" style={{ gap: 6 }}>
+                          <button onClick={() => resolve(c, 'reject')}>reject</button>
+                          <button onClick={() => resolve(c, 'dismiss')}>✕ dismiss</button>
                         </div>
                       </div>
                     ) : (
