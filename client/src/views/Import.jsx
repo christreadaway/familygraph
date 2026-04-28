@@ -23,19 +23,35 @@ function StatPill({ label, value, kind }) {
 export default function ImportView() {
   const [content, setContent] = useState('');
   const [source, setSource] = useState('');
+  const [sourceRef, setSourceRef] = useState('dashboard-import');
   const [category, setCategory] = useState('');
   const [tagsRaw, setTagsRaw] = useState('');
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [sheetUrl, setSheetUrl] = useState('');
+  const [fetched, setFetched] = useState(null);
 
   async function readFile(e) {
     const f = e.target.files[0];
     if (!f) return;
     const reader = new FileReader();
-    reader.onload = () => setContent(reader.result);
+    reader.onload = () => { setContent(reader.result); setSourceRef(f.name || 'dashboard-import'); setFetched(null); };
     reader.readAsText(f);
+  }
+
+  async function fetchSheet() {
+    setError(null); setBusy(true); setFetched(null);
+    try {
+      const r = await api.fetchSheet(sheetUrl);
+      setContent(r.content);
+      setSourceRef(r.source_ref || 'sheet');
+      setSource('sheets');
+      setFetched({ byte_len: r.byte_len, final_url: r.final_url });
+    } catch (e) {
+      setError(e.message);
+    } finally { setBusy(false); }
   }
 
   async function doPreview() {
@@ -56,7 +72,7 @@ export default function ImportView() {
         content,
         source: source || null,
         mapping: preview ? preview.mapping : null,
-        source_ref: 'dashboard-import',
+        source_ref: sourceRef || 'dashboard-import',
         category: category || null,
         tags: tagsRaw,
       });
@@ -69,6 +85,32 @@ export default function ImportView() {
     <>
       <h2>Bulk import</h2>
       {error && <div className="panel error">{error}</div>}
+
+      <div className="panel">
+        <h3>Pull from a Google Sheets URL</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Paste a link like <code>https://docs.google.com/spreadsheets/d/&lt;ID&gt;/edit?gid=0</code>.
+          The sheet must be shared "Anyone with the link can view." Family Graph fetches the
+          published CSV, populates the box below, and then you preview / run as normal.
+        </p>
+        <div className="row">
+          <input
+            placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+            value={sheetUrl}
+            onChange={e => setSheetUrl(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button onClick={fetchSheet} disabled={!sheetUrl || busy}>
+            {busy ? 'Fetching…' : 'Fetch'}
+          </button>
+        </div>
+        {fetched && (
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
+            Fetched {Math.round(fetched.byte_len / 1024)} KB from <code>{fetched.final_url}</code>
+          </div>
+        )}
+      </div>
+
       <div className="panel">
         <h3>Step 1 · Choose source</h3>
         <div className="row">

@@ -214,6 +214,7 @@ calling app for audit purposes (defaults to `unknown_app`).
 | `POST` | `/api/audit/external-export` | tier-2 export-consent event |
 | `POST` | `/api/import/preview` | parse a file, return inferred mapping + canonical preview |
 | `POST` | `/api/import/run` | run a batch import. Body: `{content, source?, mapping?, source_ref?, category?: 'church'\|'school'\|'other', tags?: string\|string[]}`. Returns `{import_run, rows, totals, results}` |
+| `POST` | `/api/import/fetch-sheet` | fetch a Google Sheets URL as CSV. Body: `{url}`. Returns `{content, content_type, byte_len, final_url, source_ref}`. Strict allowlist: host must be `docs.google.com`; redirects must stay on `*.google.com` / `*.googleusercontent.com`. Audited as `sheet_fetch`. |
 | `GET` | `/api/imports` | list past import runs (filter `?category=...`) |
 | `GET` | `/api/imports/:code` | one run + the affected family/person/address codes |
 

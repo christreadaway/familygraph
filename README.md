@@ -217,6 +217,33 @@ parsed and discarded; only the identity columns produce database rows.
 The category + tags survive on the source-record so the operator can
 audit the provenance later. Money lives in MissionIQ, not here.
 
+### Importing from a Google Sheets link
+
+The Import wizard has a "Pull from a Google Sheets URL" panel. Paste a
+link of the form `https://docs.google.com/spreadsheets/d/<ID>/edit?gid=<GID>`,
+click **Fetch**, and the published-CSV content is pulled into the paste
+box. Then preview / run as normal.
+
+Requirements:
+
+- The sheet must be shared as **"Anyone with the link can view"**.
+  Private sheets cannot be ingested through this path in v1
+  (OAuth-backed access is a v2 evolution).
+- Family Graph parses the URL strictly: the host must be exactly
+  `docs.google.com`, the path must look like
+  `/spreadsheets/d/<id>(/<sub>)?`. We construct the export URL
+  ourselves rather than blindly fetching whatever you paste.
+- Redirects from Google's export endpoint are followed for up to five
+  hops, and every hop must end up on `*.google.com` or
+  `*.googleusercontent.com`. Anything else aborts with a clear error.
+- Body is capped at 10 MB. Total request timeout is 30 s.
+- Every fetch is logged in the audit trail (`sheet_fetch` action) with
+  the sheet ID, the gid, the final URL, and the byte length — no body
+  content.
+
+If you'd rather paste a CSV downloaded from Sheets manually, the
+existing **paste / file-upload** path still works exactly the same.
+
 ---
 
 ## API (summary)

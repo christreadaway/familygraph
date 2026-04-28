@@ -2,6 +2,7 @@
 
 const express = require('express');
 const sources = require('../sources');
+const sheetsUrl = require('../sources/sheets-url');
 const importPipeline = require('../identity/import');
 const audit = require('../audit');
 const profiles = require('../identity/profiles');
@@ -74,6 +75,51 @@ function build({ db, secrets, thresholds }) {
         persons: r.persons.map(p => ({ code: p.code, action: p.action, score: p.score })),
       })),
     });
+  });
+
+  // POST /api/import/fetch-sheet
+  // Body: { url }
+  // Returns: { content, content_type, byte_len, final_url, source_ref }
+  // The caller can then feed `content` straight into POST /api/import/run
+  // (or POST /api/import/preview) along with their preferred category/tags.
+  // Each fetch is recorded in the audit log: action 'sheet_fetch', actor =
+  // the calling app, metadata = { url (host only), final_host, byte_len }.
+  // The full URL is recorded too — operators may want to confirm later
+  // exactly which sheet they pulled.
+  r.post('/fetch-sheet', async (req, res) => {
+    const { url } = req.body || {};
+    if (!url) return res.status(400).json({ error: 'url required' });
+    let parsed;
+    try { parsed = sheetsUrl.parseSheetUrl(url); }
+    catch (e) { return res.status(400).json({ error: String(e.message || e) }); }
+    try {
+      const r2 = await sheetsUrl.fetchSheetCsv(url);
+      audit.record(db, {
+        action: 'sheet_fetch',
+        actor: req.auth?.actor || 'operator',
+        metadata: {
+          sheet_id: parsed.id,
+          gid: parsed.gid,
+          final_url: r2.finalUrl,
+          byte_len: r2.byteLen,
+          content_type: r2.contentType,
+        },
+      });
+      res.json({
+        content: r2.content,
+        content_type: r2.contentType,
+        byte_len: r2.byteLen,
+        final_url: r2.finalUrl,
+        source_ref: `sheet:${parsed.id}${parsed.gid ? `?gid=${parsed.gid}` : ''}`,
+      });
+    } catch (e) {
+      audit.record(db, {
+        action: 'sheet_fetch_failed',
+        actor: req.auth?.actor || 'operator',
+        metadata: { sheet_id: parsed.id, gid: parsed.gid, error: String(e.message || e) },
+      });
+      res.status(502).json({ error: String(e.message || e) });
+    }
   });
 
   return r;

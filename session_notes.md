@@ -917,4 +917,72 @@ folder-watch summary writer to match.
 
 ---
 
+## Google Sheets URL ingestion (Claude Code, 2026-04-28, continued)
+
+Operator changed their mind on the previously-skipped point (2): they
+do want Sheets URL ingestion. Built it carefully because pulling
+arbitrary URLs from a server is the classic SSRF foot-gun.
+
+### What landed
+
+- `server/sources/sheets-url.js`:
+  - `parseSheetUrl(url)` strict: requires `https`, host exactly
+    `docs.google.com`, path matching
+    `^/spreadsheets/d/<id>(/<subpath>)?/?$`. We construct the
+    `/export?format=csv` URL ourselves rather than fetching the user's
+    URL directly. `gid` is read from `?gid=` or `#gid=`.
+  - `fetchSheetCsv(url)`: manual redirect handling up to 5 hops; each
+    hop must be `https` to `docs.google.com`, `*.google.com`, or
+    `*.googleusercontent.com`. IP-literal hosts are rejected. 30 s
+    request timeout. 10 MB body cap. Non-CSV `content-type` is
+    rejected with a clear "make the sheet shared with anyone with the
+    link" message — Google returns HTML on auth-walled access.
+- `POST /api/import/fetch-sheet` — Bearer + `import` scope. Returns
+  `{ content, content_type, byte_len, final_url, source_ref }` so the
+  operator can feed the same content into the existing
+  `/api/import/run` flow without changing that endpoint's contract.
+  Each fetch (success or failure) writes one `audit_events` row with
+  `sheet_id`, `gid`, `final_url`, and `byte_len`. Body content never
+  appears in the audit log.
+- Dashboard Import wizard now has a "Pull from a Google Sheets URL"
+  panel above the paste box. Paste link → click Fetch → the CSV
+  populates the box and the source/source_ref fields. Then preview /
+  run as before.
+
+### Tests
+
+177 / 177 pass (17 new):
+
+- Parser accepts `/edit`, `/edit?gid=`, `/edit#gid=`, `/export?format=csv`.
+- Parser rejects non-`docs.google.com` hosts (including
+  `docs.google.com.evil.com`, `www.docs.google.com`, `google.com`,
+  `docs.google.co`), `http`, `javascript:`, `file:`, non-sheet
+  paths, and `format=xlsx`.
+- `_hostAllowedForRedirect` accepts `*.google.com` and
+  `*.googleusercontent.com`, rejects IP literals + arbitrary hosts +
+  case is normalised.
+- Mocked `https.request`: 200 returns CSV body; 302 to allowlisted
+  host follows; 302 to `attacker.example.com` aborts with
+  "disallowed host"; 302 to http downgrades aborts with "non-https";
+  401/403 yields the actionable share-access message; HTML response
+  body (auth wall) yields "did not return CSV"; >5 redirects aborts.
+- API integration: `POST /api/import/fetch-sheet` happy-path
+  (returns CSV + audits sheet_fetch); rejects non-google URL with
+  400; end-to-end fetch → run produces an `import_run` with the
+  expected totals.
+
+### Posture notes
+
+- Sheet must be shared "Anyone with the link can view" for v1. OAuth
+  flow is the planned v2 path. Private-org sheets work today via the
+  existing manual download → paste path.
+- The audit log records the sheet ID and final URL but not the
+  pulled body. If an operator wants to know exactly what was
+  ingested, they can re-fetch the same URL.
+- The fetch happens with `User-Agent: family-graph/1.0`. No cookies,
+  no auth headers, no referrer. Family Graph's identity is plain in
+  the request.
+
+---
+
 *End of session notes*

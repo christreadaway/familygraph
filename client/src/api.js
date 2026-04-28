@@ -106,6 +106,7 @@ export const api = {
 
   importPreview: body => request('POST', '/api/import/preview', body),
   importRun: body => request('POST', '/api/import/run', body),
+  fetchSheet: url => request('POST', '/api/import/fetch-sheet', { url }),
   listImports: params => {
     const qs = new URLSearchParams(params || {}).toString();
     return request('GET', `/api/imports${qs ? `?${qs}` : ''}`);
