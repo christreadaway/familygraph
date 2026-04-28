@@ -1,0 +1,21 @@
+node_modules/
+client/dist/
+client/node_modules/
+.DS_Store
+*.log
+*.pid
+.env
+.env.*
+coverage/
+.tmp/
+
+# Local Custos data and secrets must never be committed.
+.custos/
+data/
+secrets/
+secret.key
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.custos-backup
