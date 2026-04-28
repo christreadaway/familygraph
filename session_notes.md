@@ -985,4 +985,36 @@ arbitrary URLs from a server is the classic SSRF foot-gun.
 
 ---
 
+## Doc sync (Claude Code, 2026-04-28, continued)
+
+Audit of all five `.md` files at the end of the session.
+
+- **README.md**: brought up to speed. Added the `X-Family-Graph-Actor`
+  header convention + the `reason`-code vocabulary in the API summary.
+  Sheets-URL section, source-tagging section, imports-log section,
+  Postmark section, Windows runbook, logging section all already
+  current.
+- **product_spec.md**: full route table includes
+  `/api/import/fetch-sheet`, `/api/imports`, `/api/imports/:code`,
+  `/api/conflicts/assign`, `/api/notifications/*`, `/api/keys`. Logging
+  section + cross-platform notes + env-var table all current.
+- **business_spec.md**: branded as Family Graph; no stale Sanctus or
+  Custos references. The "Family Graph does NOT do donor analysis"
+  posture remains accurate — we ingest donation files identity-only,
+  no amounts persisted.
+- **session_notes.md**: ten dated entries from v1 build through this
+  doc sync; each entry covers what was added, what bug was caught by
+  the tests, and what was deferred.
+- **ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md**: rewrote the
+  Authentication section. The original said "per-app scoped keys are
+  out of scope for v1" — but we shipped them. New section documents
+  the master-vs-scoped token shapes, the
+  `X-Family-Graph-Actor` header contract, the `reason` vocabulary
+  (consuming apps can branch on it), and the v2 evolutions
+  (OS-keychain storage + per-record-group capability tokens).
+
+No code or test changes in this pass. 177/177 tests still pass.
+
+---
+
 *End of session notes*
