@@ -73,7 +73,7 @@ test('api ext > export PII without consent flag is rejected', async t => {
 
 test('api ext > export PII with consent records tier-2 audit event', async t => {
   const { port, secrets, db } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-custos-actor': 'dashboard' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-family-graph-actor': 'dashboard' };
   await req(port, { method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'Smith' } });
   const r = await req(port, {
     method: 'POST', path: '/api/export', headers: auth,

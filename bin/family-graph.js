@@ -14,7 +14,7 @@ switch (cmd) {
     const secret = require('../server/crypto/secret');
     const next = secret.rotate(config.secretPath);
     // eslint-disable-next-line no-console
-    console.log(`[custos] rotated master token (length=${next.master.length}). Apps must restart to re-fetch.`);
+    console.log(`[family-graph] rotated master token (length=${next.master.length}). Apps must restart to re-fetch.`);
     break;
   }
   case 'backup': {
@@ -26,7 +26,7 @@ switch (cmd) {
       .hotBackup(db, config.backupsDir, { passphrase: process.argv[3] || null })
       .then(p => {
         // eslint-disable-next-line no-console
-        console.log(`[custos] backup written to ${p}`);
+        console.log(`[family-graph] backup written to ${p}`);
         db.close();
       });
     break;
@@ -37,13 +37,13 @@ switch (cmd) {
     const dest = process.argv[5];
     if (!src || !dest) {
       // eslint-disable-next-line no-console
-      console.error('usage: custos restore <passphrase> <backup-file> <db-out>');
+      console.error('usage: family-graph restore <passphrase> <backup-file> <db-out>');
       process.exit(2);
     }
     const backup = require('../server/backup');
     backup.decryptedRestore(src, dest, passphrase);
     // eslint-disable-next-line no-console
-    console.log(`[custos] restored to ${dest}`);
+    console.log(`[family-graph] restored to ${dest}`);
     break;
   }
   case 'show-token': {
@@ -62,7 +62,7 @@ switch (cmd) {
     if (!fs.existsSync(dir)) { console.log('(no backups directory)'); break; }
     const items = fs
       .readdirSync(dir)
-      .filter(n => /\.(sqlite|custos-backup)$/i.test(n))
+      .filter(n => /\.(sqlite|family-graph-backup)$/i.test(n))
       .map(n => {
         const st = fs.statSync(path.join(dir, n));
         return { name: n, size: st.size, mtime: st.mtime.toISOString() };
@@ -84,13 +84,13 @@ switch (cmd) {
     if (!fs.existsSync(dir)) { console.log('(no backups directory)'); break; }
     const items = fs
       .readdirSync(dir)
-      .filter(n => /\.(sqlite|custos-backup)$/i.test(n))
+      .filter(n => /\.(sqlite|family-graph-backup)$/i.test(n))
       .map(n => ({ name: n, mtime: fs.statSync(path.join(dir, n)).mtime }))
       .sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
     const toDelete = items.slice(keep);
     for (const it of toDelete) fs.unlinkSync(path.join(dir, it.name));
     // eslint-disable-next-line no-console
-    console.log(`[custos] kept ${Math.min(items.length, keep)} of ${items.length} backups; deleted ${toDelete.length}`);
+    console.log(`[family-graph] kept ${Math.min(items.length, keep)} of ${items.length} backups; deleted ${toDelete.length}`);
     break;
   }
   case 'status': {
@@ -100,7 +100,7 @@ switch (cmd) {
     const fs = require('fs');
     const path = require('path');
     if (!fs.existsSync(config.dbPath)) {
-      console.log(`[custos] no database at ${config.dbPath}; run 'custos start' once.`);
+      console.log(`[family-graph] no database at ${config.dbPath}; run 'family-graph start' once.`);
       break;
     }
     const db = dbm.init(config.dbPath);
@@ -111,12 +111,12 @@ switch (cmd) {
     const apiKeys = db.prepare("SELECT COUNT(*) AS c FROM api_keys WHERE revoked_at IS NULL").get().c;
     const active = profiles.active(db);
     const backups = fs.existsSync(config.backupsDir)
-      ? fs.readdirSync(config.backupsDir).filter(n => /\.(sqlite|custos-backup)$/i.test(n)).length
+      ? fs.readdirSync(config.backupsDir).filter(n => /\.(sqlite|family-graph-backup)$/i.test(n)).length
       : 0;
     const schema = db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v;
     db.close();
     // eslint-disable-next-line no-console
-    console.log(`Custos status
+    console.log(`Family Graph status
   home:           ${config.home}
   db:             ${config.dbPath}
   schema version: ${schema}

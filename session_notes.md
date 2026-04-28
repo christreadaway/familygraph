@@ -1,4 +1,4 @@
-# Custos — Session Notes
+# Family Graph — Session Notes
 
 **Working journal. Decisions made, paths abandoned, reasoning preserved.**
 
@@ -98,7 +98,7 @@ That single sentence flipped the architecture. The identity store became the spi
 
 Followed by: "I want to be clear that missionIQ and parentpoint MAY expose the PII inside those apps. those should be settings in those apps specifically. this code should expose BOTH PII and fully anonymized information but the app pulls what it needs."
 
-**What changed.** Custos was repositioned. It's now the family registry, full stop. Anonymization is one consumer of the registry. MissionIQ and ParentPoint are downstream consumers. Family management is being extracted *out* of those apps and *into* Custos.
+**What changed.** Family Graph was repositioned. It's now the family registry, full stop. Anonymization is one consumer of the registry. MissionIQ and ParentPoint are downstream consumers. Family management is being extracted *out* of those apps and *into* Family Graph.
 
 The API got a dual surface: PII endpoints (require Bearer token from OS keychain) and pseudonym endpoints (`/safe` suffix, loopback only). Two-tier audit logging: the registry logs its own events; consuming apps log external-export consent events back to the registry.
 
@@ -109,7 +109,7 @@ Person codes became first-class permanent identifiers. Family-membership history
 **What we got right.** Everything. v6 is the spec.
 
 **What still needs to be settled in the build.**
-- Final repo name (Custos is the working name; user said "I don't really care")
+- Final repo name (Family Graph is the working name; user said "I don't really care")
 - Ministry Platform header signatures (need a real export to design auto-detection)
 - Quasi-identifier detection aggressiveness
 - Conflict queue SLA
@@ -153,12 +153,12 @@ A few principles were present from the first conversation and never wavered:
 
 | Topic | Considered | Rejected because |
 |---|---|---|
-| Building a generic person registry as the headline | Spent meaningful conversation on this | User clarified the registration data comes from existing systems; Custos consumes, doesn't create |
-| Time-aware logic (grade rollover, age computation, alumni transitions) | Almost speced into v5 | The systems Custos consumes from already do this; Custos shouldn't duplicate |
+| Building a generic person registry as the headline | Spent meaningful conversation on this | User clarified the registration data comes from existing systems; Family Graph consumes, doesn't create |
+| Time-aware logic (grade rollover, age computation, alumni transitions) | Almost speced into v5 | The systems Family Graph consumes from already do this; Family Graph shouldn't duplicate |
 | Sacrament eligibility windows | Considered as a registry feature | Same reason; sacramental register is the system of record |
 | Bitemporal event sourcing | Almost adopted in v5 | Overkill for the actual use case; family-membership history is enough |
 | Point-in-time queries ("who was in grade 5 in 2024") | Considered as v1 feature | Same; out of scope |
-| Custos as MissionIQ's database backend | Briefly considered | Tight coupling; failures cascade; chose API contract instead |
+| Family Graph as MissionIQ's database backend | Briefly considered | Tight coupling; failures cascade; chose API contract instead |
 | Per-app scoped API keys | Discussed | Overkill for single-operator desktop; v2 evolution if threat model expands |
 
 ---
@@ -183,13 +183,13 @@ The product is small enough to build well and ambitious enough to be foundationa
 
 5. **ParentPoint migration PRD.** Same phased pattern. Less work because ParentPoint's family management is less mature.
 
-6. **Future apps.** Build on Custos from day one. No new app should re-implement family resolution.
+6. **Future apps.** Build on Family Graph from day one. No new app should re-implement family resolution.
 
 ---
 
 ## Things to remember when this comes back up
 
-- Custos is the registry. Anonymization is a feature, not the headline.
+- Family Graph is the registry. Anonymization is a feature, not the headline.
 - PII vs pseudonym is a posture, not just a technical surface. Every consuming app must respect it.
 - Person codes are stable across family changes. Family-membership history is queryable, not just an audit-log entry.
 - Pseudonyms are non-semantic hex. They leak nothing.
@@ -197,7 +197,7 @@ The product is small enough to build well and ambitious enough to be foundationa
 - The audit log captures both internal events (Tier 1) and external-export consent events from consuming apps (Tier 2).
 - Bearer token auth is shared local secret in v1. Per-app scoped keys are a known v2 evolution.
 - Ministry Platform is the parish system to support, not ParishSOFT. Different segment.
-- Custos is closed source for v1. The decision to open-source comes after field experience.
+- Family Graph is closed source for v1. The decision to open-source comes after field experience.
 - Claude Code, not me, builds this. The PRD is detailed enough that Claude Code can execute against it.
 
 ---
@@ -251,14 +251,14 @@ session is the code currently in this repo plus the new `product_spec.md`.
     AES-256-GCM + gzip wrapper with PBKDF2(200k iterations) from a
     passphrase. Wrong-passphrase rejection is verified.
 12. **API.** Express, JSON-only, separate routers for safe vs PII surface.
-    `X-Custos-Actor` header carries the consuming-app name into the audit
+    `X-Family-Graph-Actor` header carries the consuming-app name into the audit
     log. Aliases are followed transparently — `GET /api/families/:loser`
     returns the survivor.
 13. **Operator dashboard.** Vite + React 18. Routes for families, people,
     conflicts, import (preview + run), sanitize/desanitize round-trip,
     audit log. Bearer token kept in `localStorage`. Safe + PII surfaces are
     distinct in the UI as well as the API.
-14. **CLI.** `bin/custos.js` wraps `start`, `rotate-secret`, `backup`,
+14. **CLI.** `bin/family-graph.js` wraps `start`, `rotate-secret`, `backup`,
     `restore`, `show-token`.
 
 ### Bugs found and fixed during the test pass
@@ -304,7 +304,7 @@ client.
   it.
 - The folder-watch sidecar format is `<stem>.import-summary.json` for
   imports and `<stem>.token-set.json` for sanitization output.
-- The Bearer token is regenerated by `custos rotate-secret` without
+- The Bearer token is regenerated by `family-graph rotate-secret` without
   touching the data key, so existing ciphertext keeps decrypting after a
   rotation.
 - Conflict-queue actions are: `merge` (with `winner_code`), `reject` (the
@@ -408,9 +408,9 @@ manage day to day.
    every 15s. Open conflicts surface as a numeric badge next to the
    "Conflict queue" navigation item, and the sidebar footer shows
    active counts and folder-watch status.
-4. **Backup CLI improvements.** `custos list-backups` lists files in
-   `~/.custos/backups/` newest first; `custos prune-backups [keep=10]`
-   keeps the most recent N and deletes older. `custos status` prints
+4. **Backup CLI improvements.** `family-graph list-backups` lists files in
+   `~/.family-graph/backups/` newest first; `family-graph prune-backups [keep=10]`
+   keeps the most recent N and deletes older. `family-graph status` prints
    schema version, paths, counts, and backup-file count in one place.
 5. **Audit log CSV export.** `GET /api/audit/export` produces a CSV
    suitable for compliance review or board reporting. Filterable by
@@ -420,9 +420,9 @@ manage day to day.
    subsequent `Run import` call sends that mapping verbatim, so an
    operator with non-standard column names can fix them in place
    without leaving the dashboard.
-7. **Folder-watch process-existing flag.** `CUSTOS_WATCH_PROCESS_EXISTING=1`
+7. **Folder-watch process-existing flag.** `FAMILY_GRAPH_WATCH_PROCESS_EXISTING=1`
    processes whatever is already in the watch dir at startup. Useful
-   when files were dropped while Custos was down. Off by default so a
+   when files were dropped while Family Graph was down. Off by default so a
    fresh boot doesn't accidentally re-import older files.
 8. **Audit recorder robustness.** The redactor now detects circular
    structures and replaces them with `[circular]`. The serializer
@@ -547,12 +547,12 @@ Postmark.
 - **Postmark transport.** `server/notify/transports/postmark.js` posts
   directly to `https://api.postmarkapp.com/email` via Node's built-in
   HTTPS — no SDK dependency. Token comes from
-  `CUSTOS_POSTMARK_TOKEN` (env var; never stored in the database). The
+  `FAMILY_GRAPH_POSTMARK_TOKEN` (env var; never stored in the database). The
   `From:` address and message stream live in settings. 4xx (except 429)
   is treated as non-retryable; 429 and 5xx are retryable with
   exponential backoff (30s → 2m → 10m → 1h → 6h, capped at 5 attempts).
 - **Log transport.** Default until Postmark is configured. Appends a
-  JSONL line per message to `~/.custos/notifications.jsonl` so the
+  JSONL line per message to `~/.family-graph/notifications.jsonl` so the
   operator can preview what *would* go out before flipping the
   transport to `postmark`.
 - **Templates.** Plaintext + HTML for `assign`, `reminder`, `expired`.
@@ -571,7 +571,7 @@ Postmark.
   never reminded twice.
 - **Dispatcher.** A 60-second `setInterval` plus a one-shot at boot
   picks up `pending` rows whose `next_attempt_at` has elapsed and
-  delivers them. Disabled with `CUSTOS_DISABLE_NOTIFY=1`. When
+  delivers them. Disabled with `FAMILY_GRAPH_DISABLE_NOTIFY=1`. When
   `notifications.enabled=false` in settings the dispatcher returns
   `{ skipped: true }` so the queue continues to accumulate harmlessly.
 - **API.** `GET /api/notifications` (filterable by status/kind, returns
@@ -579,7 +579,7 @@ Postmark.
   `POST /:code/retry`, `POST /:code/cancel`.
 - **Dashboard.** New `/notifications` page shows the configuration
   banner ("Postmark token: configured / missing — set
-  CUSTOS_POSTMARK_TOKEN"), a test-send form, status filters, and the
+  FAMILY_GRAPH_POSTMARK_TOKEN"), a test-send form, status filters, and the
   full audit trail with per-row retry/cancel.
 - **Settings.** Added six allow-listed keys: `notifications.enabled`,
   `notifications.transport`, `notifications.reminder_hours`,
@@ -613,8 +613,8 @@ Postmark.
 
 Operator workflow on first boot:
 1. Settings → set `dashboard_url`, `postmark.from`, `postmark.message_stream`.
-2. Set `CUSTOS_POSTMARK_TOKEN=...` in the environment / launchd plist
-   / systemd unit and restart Custos.
+2. Set `FAMILY_GRAPH_POSTMARK_TOKEN=...` in the environment / launchd plist
+   / systemd unit and restart Family Graph.
 3. Settings → flip `notifications.enabled` to `true` and
    `notifications.transport` to `postmark`.
 4. Notifications page → "Send a test" to verify Postmark accepts the
@@ -623,44 +623,44 @@ Operator workflow on first boot:
 
 ---
 
-## Rename: Sanctus → Custos (Claude Code, 2026-04-28, continued)
+## Rename: Sanctus → Family Graph (Claude Code, 2026-04-28, continued)
 
-The product is no longer called Sanctus. It is **Custos**. Clean break,
+The product is no longer called Sanctus. It is **Family Graph**. Clean break,
 no backward-compat aliases — the product is pre-production and has no
 external integrations yet, so a hard rename is cheaper than a
 deprecation period.
 
 ### Surface area touched
 
-- **CLI:** `bin/sanctus.js` → `bin/custos.js`. `package.json#bin` now
-  publishes `custos`. The catch-all `npm` aliases in `package.json`
+- **CLI:** `bin/sanctus.js` → `bin/family-graph.js`. `package.json#bin` now
+  publishes `family-graph`. The catch-all `npm` aliases in `package.json`
   (`rotate-secret`, `backup`, `restore`) were repointed at
-  `bin/custos.js` since the original separate `bin/rotate-secret.js`
+  `bin/family-graph.js` since the original separate `bin/rotate-secret.js`
   / `bin/backup.js` / `bin/restore.js` files never existed; a `status`
   alias was added.
-- **Environment variables:** `SANCTUS_*` → `CUSTOS_*` across the
+- **Environment variables:** `SANCTUS_*` → `FAMILY_GRAPH_*` across the
   server, the CLI, the README, and tests:
-    `CUSTOS_HOME`, `CUSTOS_DB`, `CUSTOS_SECRET`, `CUSTOS_PORT`,
-    `CUSTOS_BIND`, `CUSTOS_WATCH_DIR`, `CUSTOS_OUT_DIR`,
-    `CUSTOS_AUTO_MERGE`, `CUSTOS_REVIEW`, `CUSTOS_DISABLE_WATCH`,
-    `CUSTOS_WATCH_PROCESS_EXISTING`, `CUSTOS_DISABLE_NOTIFY`,
-    `CUSTOS_POSTMARK_TOKEN`, `CUSTOS_ENV`.
-- **Default filesystem paths:** `~/.sanctus/` → `~/.custos/`. The
-  default DB filename is now `custos.sqlite`. The encrypted backup
-  extension is now `.custos-backup` (magic header bytes
-  `CUSTOS1`). Existing `.sanctus-backup` files would no longer
+    `FAMILY_GRAPH_HOME`, `FAMILY_GRAPH_DB`, `FAMILY_GRAPH_SECRET`, `FAMILY_GRAPH_PORT`,
+    `FAMILY_GRAPH_BIND`, `FAMILY_GRAPH_WATCH_DIR`, `FAMILY_GRAPH_OUT_DIR`,
+    `FAMILY_GRAPH_AUTO_MERGE`, `FAMILY_GRAPH_REVIEW`, `FAMILY_GRAPH_DISABLE_WATCH`,
+    `FAMILY_GRAPH_WATCH_PROCESS_EXISTING`, `FAMILY_GRAPH_DISABLE_NOTIFY`,
+    `FAMILY_GRAPH_POSTMARK_TOKEN`, `FAMILY_GRAPH_ENV`.
+- **Default filesystem paths:** `~/.sanctus/` → `~/.family-graph/`. The
+  default DB filename is now `family-graph.sqlite`. The encrypted backup
+  extension is now `.family-graph-backup` (magic header bytes
+  `FGRAPH01`). Existing `.sanctus-backup` files would no longer
   decrypt — fine, since none have been issued in production.
-- **HTTP header:** `X-Sanctus-Actor` → `X-Custos-Actor`. Apps that
+- **HTTP header:** `X-Sanctus-Actor` → `X-Family-Graph-Actor`. Apps that
   identify themselves to the audit log set the new header.
-- **Email subjects:** `[Sanctus]` → `[Custos]`. Body signature line
+- **Email subjects:** `[Sanctus]` → `[Family Graph]`. Body signature line
   updated. The deep link in templates points to `dashboard_url` as
   before; only the brand text changes.
-- **Dashboard:** sidebar `<h1>Custos</h1>`, `<title>Custos</title>`,
+- **Dashboard:** sidebar `<h1>Family Graph</h1>`, `<title>Family Graph</title>`,
   token-banner copy, and the "X is running" splash all updated.
 - **Documentation:** README, `business_spec.md`, `product_spec.md`,
   `session_notes.md`, and `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md`
-  now read "Custos" throughout.
-- **Source comments:** every `// Custos …` and SQL header comment
+  now read "Family Graph" throughout.
+- **Source comments:** every `// Family Graph …` and SQL header comment
   swapped. Audit-log header comment swapped.
 - **Lock files:** both `package-lock.json` and
   `client/package-lock.json` regenerated so the package name in
@@ -669,9 +669,9 @@ deprecation period.
 ### Verification
 
 - 139 / 139 `node:test` cases still pass after the rename.
-- End-to-end smoke: `npm start`, `node bin/custos.js status`, `health`
+- End-to-end smoke: `npm start`, `node bin/family-graph.js status`, `health`
   endpoint, scoped-token issuance, queued notification (subject
-  `[Custos] Test notification`), and the `X-Custos-Actor` header all
+  `[Family Graph] Test notification`), and the `X-Family-Graph-Actor` header all
   exercise cleanly.
 - `grep -rIl --exclude-dir=node_modules --exclude-dir=.git
   --exclude-dir=dist 'sanctus\|Sanctus\|SANCTUS' .` returns zero
@@ -692,11 +692,11 @@ no-op on Windows; v2 OS-keychain integration closes the gap).
 One real Windows incompatibility found and fixed:
 
 - **`package.json` `dev` script.** Was
-  `"CUSTOS_ENV=development node server/index.js"`, which is
+  `"FAMILY_GRAPH_ENV=development node server/index.js"`, which is
   bash-only — fails on cmd and PowerShell because `VAR=value cmd` is
   not valid syntax outside POSIX shells. Replaced with
   `"node -r ./scripts/dev-env.js server/index.js"` (a tiny preload
-  module sets `process.env.CUSTOS_ENV` before the server boots). Now
+  module sets `process.env.FAMILY_GRAPH_ENV` before the server boots). Now
   identical behaviour across bash, zsh, cmd, PowerShell 5.1, and
   PowerShell 7.
 
@@ -704,6 +704,116 @@ One real Windows incompatibility found and fixed:
 path handling, file-mode behaviour, and the dev-env shim.
 
 The 139-case `node:test` suite continues to pass after these changes.
+
+---
+
+## Rename: Custos → Family Graph + structured logging (Claude Code, 2026-04-28, continued)
+
+Operator renamed the product. Clean break, same as the Sanctus → Custos
+swap before it. Also added structured logging because the operator hit
+an unfixable-from-the-UI auth issue (stale token in browser localStorage
+masking a fresh paste) and we couldn't see why from the server side.
+
+### Rename surface
+
+- CLI: `bin/custos.js` → `bin/family-graph.js`. `package.json#bin`
+  publishes `family-graph`.
+- Env vars: every `CUSTOS_*` → `FAMILY_GRAPH_*` plus two new ones for
+  logging (`_LOG_LEVEL`, `_LOG_FILE`).
+- Default home: `~/.custos` → `~/.family-graph`.
+- DB filename: `custos.sqlite` → `family-graph.sqlite`.
+- Backup magic: `CUSTOS1` → `FGRAPH01`.
+- HTTP header: `X-Custos-Actor` → `X-Family-Graph-Actor`.
+- Email subjects: `[Custos]` → `[Family Graph]`.
+- Dashboard: `<title>`, sidebar `<h1>`, token banner.
+- localStorage key: `custos.bearer` → `family-graph.bearer` — which
+  conveniently fixed the operator's stuck-on-stale-token issue, since
+  the browser starts fresh under the new key.
+- Docs: README, business_spec, product_spec, session_notes,
+  ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.
+- The git-clone URL in the README still points at
+  `github.com/christreadaway/custos.git` because the GitHub repo wasn't
+  renamed; we clone it into a `family-graph` working copy.
+
+Two sed artifacts cleaned up after the bulk replace:
+
+- `X-Custos-Actor` had become `X-Family Graph-Actor` (broken hyphen +
+  space). Restored to `X-Family-Graph-Actor`.
+- `nssm install Custos …` had become `nssm install Family Graph …` —
+  service name with a space breaks NSSM's argument parsing. Switched
+  to `family-graph` (kebab) for the service name.
+
+### Structured logging
+
+New `server/log/index.js` plus `server/log/middleware.js`:
+
+- **Output:** JSON-lines, one object per call. Stderr always; file
+  copy to `$FAMILY_GRAPH_HOME/logs/server.log` by default
+  (`FAMILY_GRAPH_LOG_FILE` overrides). `appendFileSync` rather than a
+  write stream so tail-readers and tests see output without buffering
+  latency.
+- **Levels:** `debug` / `info` / `warn` / `error` / `silent`, filtered
+  by `FAMILY_GRAPH_LOG_LEVEL` (default `info`).
+- **Redaction:** values for keys named `authorization`, `token`,
+  `master`, `secret`, `password`, plus the standard PII columns
+  (`name`, `first_name`, `email`, …) are replaced with `[redacted]`
+  before serialisation. Circular structures get a `[circular]`
+  sentinel. JSON.stringify failures fall back to a sentinel object
+  rather than crashing.
+- **Request middleware** wraps `res.once('finish')` to log `method`,
+  `path`, `status`, `ms`, `actor`, `ip`. 4xx logged at warn, 5xx at
+  error.
+- **Auth middleware** rewritten to log structured `auth.reject` /
+  `auth.ok` lines with a `reason` code and (for mismatched tokens) a
+  non-reversing 8-character SHA-256 fingerprint. The same `reason` is
+  now returned in the JSON response body so the dashboard can show it
+  to the operator.
+- **Error middleware** records the stack of any unhandled exception
+  before the generic 500 response is sent.
+
+### Dashboard auth UX
+
+`client/src/api.js`:
+
+- Any 401/403 fires a `family-graph:auth-failed` `CustomEvent` carrying
+  the server's `reason`/`detail`.
+- New `validateToken()` helper that hits `/api/families` purely to
+  prove the saved token actually works.
+
+`client/src/App.jsx`:
+
+- Listens for `family-graph:auth-failed`, clears the saved token, and
+  re-shows the banner.
+- The banner save handler validates the pasted token before treating
+  it as valid; a bad paste no longer silently sticks.
+- The banner shows a human-readable hint per `reason` code
+  (e.g., `token_mismatch` → "the token saved in this browser doesn't
+  match the server. Run `node bin/family-graph.js show-token` …").
+- "Verifying…" state on the Save button while the round-trip happens.
+
+### Tests
+
+151 / 151 pass. Added:
+
+- `tests/log.test.js` (6 cases): JSON shape, level filtering, redaction
+  including arrays + nested + circular, file-mirror output.
+- `tests/auth-reasons.test.js` (6 cases): every rejection path returns
+  the right `reason` code; master token still works clean;
+  `tokenFingerprint` is stable + non-reversing.
+
+### Bugs found and fixed in this pass
+
+- **Auth response disagreed with the auth log.** The middleware logged
+  `unknown_or_revoked_scoped_token` for `sk_*` tokens not found in
+  `api_keys`, but the response body always returned
+  `reason: 'token_mismatch'` because of an unconditional fall-through.
+  The test caught it. Split the scoped-token branch so the response
+  matches what the log says.
+- **Log file was buffered behind a write stream.** Tests reading the
+  file straight after emitting saw nothing, because the stream
+  flushes asynchronously. Switched to `appendFileSync` per line —
+  simpler, observable immediately, well within budget at our log
+  volume.
 
 ---
 

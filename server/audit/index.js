@@ -3,9 +3,9 @@
 const { newCode } = require('../crypto/identifiers');
 
 // Two-tier audit log:
-//   Tier 1: internal Custos events (read_pii, write, merge, sanitize, etc.)
+//   Tier 1: internal Family Graph events (read_pii, write, merge, sanitize, etc.)
 //   Tier 2: external-export consent events posted by consuming apps.
-// Metadata is JSON. Custos PII redactor strips obvious value strings before
+// Metadata is JSON. Family Graph PII redactor strips obvious value strings before
 // write so the audit log itself is safe to share.
 
 const PII_KEYS = new Set([

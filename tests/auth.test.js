@@ -20,7 +20,7 @@ function resMock() {
 
 test('auth > bearer matches in constant time', () => {
   const mw = auth.bearerAuth({ master: 'abc123abc123' });
-  const req = reqMock({ authorization: 'Bearer abc123abc123', 'x-custos-actor': 'mq' }, '127.0.0.1');
+  const req = reqMock({ authorization: 'Bearer abc123abc123', 'x-family-graph-actor': 'mq' }, '127.0.0.1');
   const res = resMock();
   let nextCalled = false;
   mw(req, res, () => { nextCalled = true; });

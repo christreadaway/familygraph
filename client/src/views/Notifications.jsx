@@ -39,12 +39,12 @@ export default function Notifications() {
           <dt>Transport</dt><dd><code>{cfg.transport}</code></dd>
           <dt>Dashboard URL</dt><dd><code>{cfg.dashboardUrl}</code></dd>
           <dt>From address</dt><dd>{cfg.postmark?.from ? <code>{cfg.postmark.from}</code> : <span className="muted">(not set in Settings → postmark.from)</span>}</dd>
-          <dt>Postmark token</dt><dd>{cfg.postmark?.token_configured ? <span className="tag action">configured</span> : <span className="tag warn">missing — set CUSTOS_POSTMARK_TOKEN env var</span>}</dd>
+          <dt>Postmark token</dt><dd>{cfg.postmark?.token_configured ? <span className="tag action">configured</span> : <span className="tag warn">missing — set FAMILY_GRAPH_POSTMARK_TOKEN env var</span>}</dd>
           <dt>Reminder lead-time</dt><dd>{cfg.reminderHours} hour(s) before expiry</dd>
         </dl>
         {!ready && cfg.enabled && cfg.transport === 'postmark' && (
           <div className="panel error" style={{ marginTop: 12, marginBottom: 0 }}>
-            Postmark is selected but missing a server token (env var <code>CUSTOS_POSTMARK_TOKEN</code>) or a verified sender (<code>postmark.from</code>). Notifications will queue but not deliver until that's fixed.
+            Postmark is selected but missing a server token (env var <code>FAMILY_GRAPH_POSTMARK_TOKEN</code>) or a verified sender (<code>postmark.from</code>). Notifications will queue but not deliver until that's fixed.
           </div>
         )}
       </div>

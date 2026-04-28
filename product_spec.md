@@ -1,6 +1,6 @@
-# Custos — Product Specification (v1)
+# Family Graph — Product Specification (v1)
 
-**The "how." Implementation contract for the Custos family registry.**
+**The "how." Implementation contract for the Family Graph family registry.**
 
 ---
 
@@ -18,7 +18,7 @@
 - `server/`            — Express HTTP API, identity store, sanitize/desanitize, folder-watch agent, audit log, backup/restore
 - `client/`            — React 18 dashboard (Vite-built). Served from the same Express process.
 - `tests/`             — `node:test` suites covering crypto, identity, resolver, sources, sanitize, audit, auth, API, folder watch, backup
-- `bin/custos.js`     — operator CLI (`start`, `rotate-secret`, `backup`, `restore`, `show-token`)
+- `bin/family-graph.js`     — operator CLI (`start`, `rotate-secret`, `backup`, `restore`, `show-token`)
 
 ---
 
@@ -29,7 +29,7 @@ npm install                # installs server deps
 npm run client:install     # installs client deps
 npm run client:build       # builds the dashboard
 npm start                  # http://127.0.0.1:3500
-node bin/custos.js show-token   # paste into the dashboard the first time
+node bin/family-graph.js show-token   # paste into the dashboard the first time
 ```
 
 Other CLI entry points: `status`, `rotate-secret`, `backup [passphrase]`,
@@ -39,24 +39,43 @@ Environment overrides:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CUSTOS_HOME` | `~/.custos` | Root directory for keys, db, watch/out, backups |
-| `CUSTOS_DB` | `$CUSTOS_HOME/data/custos.sqlite` | SQLite database path |
-| `CUSTOS_SECRET` | `$CUSTOS_HOME/secret.key` | Master/data/HMAC key file (mode 0600) |
-| `CUSTOS_WATCH_DIR` | `$CUSTOS_HOME/watch` | Folder-watch input |
-| `CUSTOS_OUT_DIR` | `$CUSTOS_HOME/out` | Folder-watch output |
-| `CUSTOS_PORT` | `3500` | TCP port |
-| `CUSTOS_BIND` | `127.0.0.1` | Bind address (loopback by default) |
-| `CUSTOS_AUTO_MERGE` | `0.92` | Auto-merge threshold for the resolver |
-| `CUSTOS_REVIEW` | `0.7` | Conflict-queue threshold for the resolver |
-| `CUSTOS_DISABLE_WATCH` | unset | Set to `1` to disable the folder-watch agent |
-| `CUSTOS_WATCH_PROCESS_EXISTING` | unset | Set to `1` to drain whatever is already in the watch dir at startup |
-| `CUSTOS_DISABLE_NOTIFY` | unset | Set to `1` to disable the notification dispatcher loop |
-| `CUSTOS_POSTMARK_TOKEN` | unset | Postmark server token for outbound email; never stored in the database |
+| `FAMILY_GRAPH_HOME` | `~/.family-graph` | Root directory for keys, db, watch/out, backups |
+| `FAMILY_GRAPH_DB` | `$FAMILY_GRAPH_HOME/data/family-graph.sqlite` | SQLite database path |
+| `FAMILY_GRAPH_SECRET` | `$FAMILY_GRAPH_HOME/secret.key` | Master/data/HMAC key file (mode 0600) |
+| `FAMILY_GRAPH_WATCH_DIR` | `$FAMILY_GRAPH_HOME/watch` | Folder-watch input |
+| `FAMILY_GRAPH_OUT_DIR` | `$FAMILY_GRAPH_HOME/out` | Folder-watch output |
+| `FAMILY_GRAPH_PORT` | `3500` | TCP port |
+| `FAMILY_GRAPH_BIND` | `127.0.0.1` | Bind address (loopback by default) |
+| `FAMILY_GRAPH_AUTO_MERGE` | `0.92` | Auto-merge threshold for the resolver |
+| `FAMILY_GRAPH_REVIEW` | `0.7` | Conflict-queue threshold for the resolver |
+| `FAMILY_GRAPH_DISABLE_WATCH` | unset | Set to `1` to disable the folder-watch agent |
+| `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | Set to `1` to drain whatever is already in the watch dir at startup |
+| `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | Set to `1` to disable the notification dispatcher loop |
+| `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email; never stored in the database |
+| `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |
+| `FAMILY_GRAPH_LOG_FILE` | `$FAMILY_GRAPH_HOME/logs/server.log` | JSON-lines log file (mirrored to stderr) |
+
+### Logging
+
+Structured JSON logs (one object per line). Every HTTP response is
+recorded with method, path, status, latency, actor, and IP. Auth failures
+include a stable `reason` code (`no_bearer`, `token_mismatch`,
+`unknown_or_revoked_scoped_token`, `missing_scope`, `non_loopback_origin`)
+and, for mismatched tokens, a non-reversing 8-character SHA-256
+fingerprint so repeated bad-token retries are correlatable. Unhandled
+errors include the stack. The same `reason` field is returned to the
+client in the JSON response body so the dashboard can show the operator
+exactly which check rejected their token.
+
+The redactor scrubs values for any field whose key matches a known
+sensitive name (`authorization`, `token`, PII columns, etc.) before the
+line is written, so logs are safe to share with collaborators or
+auditors.
 
 ### Cross-platform notes
 
 - Paths use `path.join` everywhere; macOS/Linux and Windows behave the
-  same. On Windows, `~/.custos` resolves to `%USERPROFILE%\.custos`.
+  same. On Windows, `~/.family-graph` resolves to `%USERPROFILE%\.family-graph`.
 - `fs.mkdirSync(p, { mode: 0o700 })` and `fs.writeFileSync(p, … { mode: 0o600 })`
   are honoured on POSIX and silently ignored on Windows. On Windows the
   secret key file inherits the user-profile NTFS ACL — acceptable on a
@@ -68,7 +87,7 @@ Environment overrides:
   of the bash-only `VAR=value cmd` form, so it works in cmd and
   PowerShell as well as bash.
 - Folder-watch (`chokidar`) uses native file events on Windows; keep
-  `CUSTOS_WATCH_DIR` on a local disk for reliability.
+  `FAMILY_GRAPH_WATCH_DIR` on a local disk for reliability.
 
 ---
 
@@ -123,14 +142,14 @@ startup.
 
 ## Cryptographic posture
 
-- **Key file** at `$CUSTOS_HOME/secret.key`, mode 0600, written by the server on first boot.
+- **Key file** at `$FAMILY_GRAPH_HOME/secret.key`, mode 0600, written by the server on first boot.
   - `master`  — Bearer token for the PII surface
   - `dataKey` — AES-256-GCM key for PII-column ciphertext
   - `hmacKey` — HMAC-SHA256 key for searchable hashes
 - **PII at rest:** every `_ct` column is `[version:1][iv:12][tag:16][cipher: variable]`. Null inputs pass through unchanged.
 - **Searchable equality:** name lookups use `HMAC-SHA256(hmacKey, normalize(input))`. Email/phone/address dedup by `norm_hash`.
-- **Token rotation:** `node bin/custos.js rotate-secret` regenerates the master Bearer token without touching `dataKey` or `hmacKey`. Apps re-fetch on next startup.
-- **Backups:** `bin/custos.js backup [passphrase]` produces either a hot copy of the SQLite file (mode 0600) or, if a passphrase is given, an encrypted `.custos-backup` (gzip + AES-256-GCM with PBKDF2-derived key, 200k iterations).
+- **Token rotation:** `node bin/family-graph.js rotate-secret` regenerates the master Bearer token without touching `dataKey` or `hmacKey`. Apps re-fetch on next startup.
+- **Backups:** `bin/family-graph.js backup [passphrase]` produces either a hot copy of the SQLite file (mode 0600) or, if a passphrase is given, an encrypted `.family-graph-backup` (gzip + AES-256-GCM with PBKDF2-derived key, 200k iterations).
 - **Threat model (v1):** trusted single-operator desktop; any process that can read the secret file can read PII. Per-app scoped keys are a known v2 evolution.
 
 > SQLCipher was deliberately not used. Application-layer column encryption gives
@@ -143,7 +162,7 @@ startup.
 ## API contract
 
 All routes are JSON. PII routes require `Authorization: Bearer <master>`. Safe
-routes are loopback-only, no token. The `X-Custos-Actor` header identifies the
+routes are loopback-only, no token. The `X-Family-Graph-Actor` header identifies the
 calling app for audit purposes (defaults to `unknown_app`).
 
 ### Open
@@ -255,7 +274,7 @@ Auto-detection is by header heuristic; the user can pin a source via
 
 ## Folder-watch agent
 
-`server/folder-watch/index.js` watches `$CUSTOS_WATCH_DIR` (chokidar,
+`server/folder-watch/index.js` watches `$FAMILY_GRAPH_WATCH_DIR` (chokidar,
 non-recursive, with `awaitWriteFinish`). On a settled file:
 
 - `*.csv | *.tsv` → parsed via `sources.load`, run through the import

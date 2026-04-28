@@ -1,5 +1,5 @@
 {
-  "name": "custos",
+  "name": "family-graph",
   "version": "0.1.0",
   "private": true,
   "description": "Local family registry. Source of truth for who is who in a Catholic institution.",
@@ -7,7 +7,7 @@
   "type": "commonjs",
   "main": "server/index.js",
   "bin": {
-    "custos": "./bin/custos.js"
+    "family-graph": "./bin/family-graph.js"
   },
   "scripts": {
     "start": "node server/index.js",
@@ -17,10 +17,10 @@
     "client:install": "cd client && npm install",
     "client:dev": "cd client && npm run dev",
     "client:build": "cd client && npm run build",
-    "rotate-secret": "node bin/custos.js rotate-secret",
-    "backup": "node bin/custos.js backup",
-    "restore": "node bin/custos.js restore",
-    "status": "node bin/custos.js status"
+    "rotate-secret": "node bin/family-graph.js rotate-secret",
+    "backup": "node bin/family-graph.js backup",
+    "restore": "node bin/family-graph.js restore",
+    "status": "node bin/family-graph.js status"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",

@@ -1,8 +1,8 @@
-# Custos
+# Family Graph
 
 **Local family registry for Catholic institutions.** Closed source for v1.
 
-Custos is the source of truth for family identity in an institution's data
+Family Graph is the source of truth for family identity in an institution's data
 ecosystem. It accepts files from existing systems (FACTS, RenWeb, Ministry
 Platform, Google Sheets, Excel, generic CSV), reconciles them against a
 persistent ledger, and exposes that ledger to the institution's other tools
@@ -27,15 +27,15 @@ npm run client:build
 npm start
 ```
 
-Custos listens on `http://127.0.0.1:3500` and serves the React dashboard at
-`/`. On first boot it creates `~/.custos/` (mode 0700), writes
+Family Graph listens on `http://127.0.0.1:3500` and serves the React dashboard at
+`/`. On first boot it creates `~/.family-graph/` (mode 0700), writes
 `secret.key` (mode 0600), initialises the SQLite database, seeds the
-built-in profiles, and starts the folder-watch agent on `~/.custos/watch`.
+built-in profiles, and starts the folder-watch agent on `~/.family-graph/watch`.
 
 Print the master Bearer token (paste into the dashboard the first time):
 
 ```sh
-node bin/custos.js show-token
+node bin/family-graph.js show-token
 ```
 
 ---
@@ -76,22 +76,22 @@ shipped with Windows) also works.
 ### Clone and start
 
 ```powershell
-git clone https://github.com/christreadaway/custos.git
-cd custos
+git clone https://github.com/christreadaway/custos.git family-graph
+cd family-graph
 npm install
 npm run client:install
 npm run client:build
 npm start
 ```
 
-The first boot creates `$HOME\.custos\` (i.e. `C:\Users\<you>\.custos\`)
+The first boot creates `$HOME\.family-graph\` (i.e. `C:\Users\<you>\.family-graph\`)
 with `secret.key`, the SQLite database, the watch and backups
 directories, and seeds the built-in profiles. Open
 <http://127.0.0.1:3500> in a browser. To get the Bearer token to paste
 into the dashboard:
 
 ```powershell
-node bin/custos.js show-token
+node bin/family-graph.js show-token
 ```
 
 Stop the server with `Ctrl+C` in the PowerShell window.
@@ -101,15 +101,15 @@ Stop the server with `Ctrl+C` in the PowerShell window.
 Per-session (only affects the current PowerShell window):
 
 ```powershell
-$env:CUSTOS_POSTMARK_TOKEN = "your-server-token-here"
-$env:CUSTOS_HOME           = "D:\custos-data"   # if you don't want it under your profile
+$env:FAMILY_GRAPH_POSTMARK_TOKEN = "your-server-token-here"
+$env:FAMILY_GRAPH_HOME           = "D:\family-graph-data"   # if you don't want it under your profile
 npm start
 ```
 
 Persistent (user-level, applies to every new PowerShell window from now on):
 
 ```powershell
-[Environment]::SetEnvironmentVariable('CUSTOS_POSTMARK_TOKEN', 'your-server-token-here', 'User')
+[Environment]::SetEnvironmentVariable('FAMILY_GRAPH_POSTMARK_TOKEN', 'your-server-token-here', 'User')
 ```
 
 Reopen PowerShell after running that command for the new value to be
@@ -123,16 +123,16 @@ Service Manager):
 ```powershell
 winget install NSSM.NSSM
 # In an *Administrator* PowerShell:
-nssm install Custos "C:\Program Files\nodejs\node.exe" "$PWD\server\index.js"
-nssm set     Custos AppDirectory "$PWD"
-nssm set     Custos AppEnvironmentExtra "CUSTOS_POSTMARK_TOKEN=your-token"
-nssm start   Custos
-# To stop:    nssm stop Custos
-# To remove:  nssm remove Custos confirm
+nssm install family-graph "C:\Program Files\nodejs\node.exe" "$PWD\server\index.js"
+nssm set     family-graph AppDirectory "$PWD"
+nssm set     family-graph AppEnvironmentExtra "FAMILY_GRAPH_POSTMARK_TOKEN=your-token"
+nssm start   family-graph
+# To stop:    nssm stop family-graph
+# To remove:  nssm remove family-graph confirm
 ```
 
 Alternatively, register a Scheduled Task that runs at logon with
-`At log on of <user>` triggering `pwsh.exe -Command "cd C:\path\to\custos; npm start"`.
+`At log on of <user>` triggering `pwsh.exe -Command "cd C:\path\to\family-graph; npm start"`.
 
 ### Windows-specific caveats
 
@@ -140,21 +140,21 @@ Alternatively, register a Scheduled Task that runs at logon with
   `fs.writeFileSync(p, data, { mode: 0o600 })` are silently ignored on
   Windows; the secret key file inherits the user-profile NTFS ACL.
   That's acceptable on a single-operator workstation. Treat
-  `$HOME\.custos\` as you would any folder containing credentials —
+  `$HOME\.family-graph\` as you would any folder containing credentials —
   don't share it. v2 will move the master/data/HMAC keys to the
   Windows Credential Manager.
-- **Long paths.** If `$env:CUSTOS_HOME` is on a deeply nested path,
+- **Long paths.** If `$env:FAMILY_GRAPH_HOME` is on a deeply nested path,
   enable Windows long-path support (`Group Policy → Computer
   Configuration → Administrative Templates → System → Filesystem →
   Enable Win32 long paths`) before installing — otherwise some
   `node_modules` extraction may fail.
 - **Antivirus.** SQLite write-ahead-log files (`*.sqlite-wal`,
   `*.sqlite-shm`) are excluded from Defender by Microsoft's standard
-  exclusions. If you use a third-party AV, exclude `$HOME\.custos\`
+  exclusions. If you use a third-party AV, exclude `$HOME\.family-graph\`
   to avoid intermittent locks.
 - **Folder watch.** `chokidar` uses Windows native file events, which
   is reliable on local drives but can be flaky on network shares.
-  Keep `$env:CUSTOS_WATCH_DIR` on a local disk.
+  Keep `$env:FAMILY_GRAPH_WATCH_DIR` on a local disk.
 
 ---
 
@@ -162,14 +162,14 @@ Alternatively, register a Scheduled Task that runs at logon with
 
 | Command | What it does |
 |---|---|
-| `node bin/custos.js start` | Default. Runs the API server + folder-watch agent. |
-| `node bin/custos.js status` | Prints schema version, profile, audit count, backup count, key + watch dir paths. |
-| `node bin/custos.js show-token` | Prints the master Bearer token. |
-| `node bin/custos.js rotate-secret` | Regenerates the master Bearer token. The data + HMAC keys are preserved so existing ciphertext keeps decrypting. |
-| `node bin/custos.js backup [passphrase]` | Hot snapshot. Encrypted with PBKDF2 + AES-256-GCM if a passphrase is given. |
-| `node bin/custos.js list-backups` | Lists files in the backups directory. |
-| `node bin/custos.js prune-backups [keep=10]` | Keeps the most recent N backups, deletes older. |
-| `node bin/custos.js restore <passphrase> <src> <dest>` | Restores an encrypted backup to a new sqlite path. |
+| `node bin/family-graph.js start` | Default. Runs the API server + folder-watch agent. |
+| `node bin/family-graph.js status` | Prints schema version, profile, audit count, backup count, key + watch dir paths. |
+| `node bin/family-graph.js show-token` | Prints the master Bearer token. |
+| `node bin/family-graph.js rotate-secret` | Regenerates the master Bearer token. The data + HMAC keys are preserved so existing ciphertext keeps decrypting. |
+| `node bin/family-graph.js backup [passphrase]` | Hot snapshot. Encrypted with PBKDF2 + AES-256-GCM if a passphrase is given. |
+| `node bin/family-graph.js list-backups` | Lists files in the backups directory. |
+| `node bin/family-graph.js prune-backups [keep=10]` | Keeps the most recent N backups, deletes older. |
+| `node bin/family-graph.js restore <passphrase> <src> <dest>` | Restores an encrypted backup to a new sqlite path. |
 
 `npm run start`, `npm run dev`, `npm run status`, `npm run backup`,
 `npm run rotate-secret`, and `npm test` are equivalent shortcuts and
@@ -179,16 +179,16 @@ work identically on macOS, Linux, and Windows PowerShell.
 
 ## Folder-watch agent
 
-Drop a file in `~/.custos/watch`:
+Drop a file in `~/.family-graph/watch`:
 
-| Extension | Behaviour | Output in `~/.custos/out` |
+| Extension | Behaviour | Output in `~/.family-graph/out` |
 |---|---|---|
 | `.csv`, `.tsv` | Source-handler import | `<file>.import-summary.json`, source moved to `processed/` |
 | `.xlsx`, `.xls`, `.xlsm` | Excel import (first sheet) | same |
 | `.txt`, `.md`, `.eml`, `.json` | Text sanitization | `<stem>.sanitized.<ext>` + `<stem>.token-set.json` |
 | anything else | Error | moved to `errors/` with a `.error.txt` sidecar |
 
-Set `CUSTOS_WATCH_PROCESS_EXISTING=1` to process whatever is already in the
+Set `FAMILY_GRAPH_WATCH_PROCESS_EXISTING=1` to process whatever is already in the
 watch dir at startup (default: only new files are picked up).
 
 ---
@@ -212,22 +212,69 @@ The full route table is in [`product_spec.md`](./product_spec.md#api-contract).
 
 | Variable | Default | Notes |
 |---|---|---|
-| `CUSTOS_HOME` | `~/.custos` | Root for data, secrets, backups, watch dirs |
-| `CUSTOS_DB` | `$CUSTOS_HOME/data/custos.sqlite` | |
-| `CUSTOS_SECRET` | `$CUSTOS_HOME/secret.key` | mode 0600, holds master/data/HMAC keys |
-| `CUSTOS_WATCH_DIR` | `$CUSTOS_HOME/watch` | folder-watch input |
-| `CUSTOS_OUT_DIR` | `$CUSTOS_HOME/out` | folder-watch output |
-| `CUSTOS_PORT` | `3500` | |
-| `CUSTOS_BIND` | `127.0.0.1` | loopback by default |
-| `CUSTOS_AUTO_MERGE` | `0.92` | resolver auto-merge threshold |
-| `CUSTOS_REVIEW` | `0.7` | resolver conflict-queue threshold |
-| `CUSTOS_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
-| `CUSTOS_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
-| `CUSTOS_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
-| `CUSTOS_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
+| `FAMILY_GRAPH_HOME` | `~/.family-graph` | Root for data, secrets, backups, watch dirs |
+| `FAMILY_GRAPH_DB` | `$FAMILY_GRAPH_HOME/data/family-graph.sqlite` | |
+| `FAMILY_GRAPH_SECRET` | `$FAMILY_GRAPH_HOME/secret.key` | mode 0600, holds master/data/HMAC keys |
+| `FAMILY_GRAPH_WATCH_DIR` | `$FAMILY_GRAPH_HOME/watch` | folder-watch input |
+| `FAMILY_GRAPH_OUT_DIR` | `$FAMILY_GRAPH_HOME/out` | folder-watch output |
+| `FAMILY_GRAPH_PORT` | `3500` | |
+| `FAMILY_GRAPH_BIND` | `127.0.0.1` | loopback by default |
+| `FAMILY_GRAPH_AUTO_MERGE` | `0.92` | resolver auto-merge threshold |
+| `FAMILY_GRAPH_REVIEW` | `0.7` | resolver conflict-queue threshold |
+| `FAMILY_GRAPH_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
+| `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
+| `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
+| `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
+| `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |
+| `FAMILY_GRAPH_LOG_FILE` | `$FAMILY_GRAPH_HOME/logs/server.log` | JSON-lines log destination (mirrored to stderr) |
 
-The active profile (Dashboard → Profiles) overrides `CUSTOS_AUTO_MERGE` /
-`CUSTOS_REVIEW` for imports.
+The active profile (Dashboard → Profiles) overrides `FAMILY_GRAPH_AUTO_MERGE` /
+`FAMILY_GRAPH_REVIEW` for imports.
+
+---
+
+## Logging
+
+Every line in the log is one JSON object. Stderr always receives a copy; a
+file copy goes to `$FAMILY_GRAPH_HOME/logs/server.log` by default
+(override with `FAMILY_GRAPH_LOG_FILE`).
+
+What's logged:
+
+- `boot` / `listening` — startup events.
+- `http` — one line per HTTP response with `method`, `path`, `status`,
+  `ms`, `actor`, `ip`. `4xx` is logged at `warn`, `5xx` at `error`.
+- `auth.reject` — every auth failure with a structured `reason` field:
+  `no_bearer`, `token_mismatch`, `unknown_or_revoked_scoped_token`,
+  `missing_scope`, or `non_loopback_origin`. For mismatched tokens the
+  log includes a non-reversing 8-character `token_fp` fingerprint so you
+  can tell whether the same wrong value is being retried versus a new
+  one each time.
+- `auth.ok` — debug-level success (drop `FAMILY_GRAPH_LOG_LEVEL=debug`
+  to see).
+- `unhandled` — any unhandled exception with `stack`.
+- `notify.dispatch_failed`, `folder_watch.start_failed`, etc.
+
+Every emitted line is run through a redactor that replaces values for
+keys named `authorization`, `token`, `master`, `secret`, `password`,
+`name`, `first_name`, `last_name`, `given_name`, `family_name`,
+`email`, `phone`, `address`, `line1`, `line2`, `dob`, `date_of_birth`,
+`plaintext`, or `value` with `[redacted]`. Logs are therefore safe to
+share when debugging.
+
+Tail it live:
+
+```sh
+tail -f ~/.family-graph/logs/server.log | jq .
+```
+
+```powershell
+Get-Content $HOME\.family-graph\logs\server.log -Wait
+```
+
+When the dashboard says "Error: unauthorized", grep the log for the
+matching `auth.reject` line — the `reason` field tells you exactly
+which middleware refused the call and why.
 
 ---
 

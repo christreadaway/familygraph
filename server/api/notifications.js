@@ -51,8 +51,8 @@ function build({ db }) {
     const { to } = req.body || {};
     if (!to) return res.status(400).json({ error: 'to required' });
     const cfg = notify.effectiveConfig(db);
-    const subject = '[Custos] Test notification';
-    const text = `Hi,\n\nThis is a test notification from Custos to confirm your Postmark configuration is working.\n\nDashboard: ${cfg.dashboardUrl}\n\n— Custos`;
+    const subject = '[Family Graph] Test notification';
+    const text = `Hi,\n\nThis is a test notification from Family Graph to confirm your Postmark configuration is working.\n\nDashboard: ${cfg.dashboardUrl}\n\n— Family Graph`;
     const code = notify.enqueue(db, { kind: 'test', to, subject, text });
     res.status(201).json({ code });
   });

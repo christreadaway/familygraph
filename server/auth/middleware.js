@@ -2,6 +2,16 @@
 
 const crypto = require('crypto');
 const apiKeys = require('./api-keys');
+const log = require('../log');
+
+// Compact fingerprint we can log to identify a token without revealing it.
+// First 8 chars of sha256(token). Even if the log file leaks, you cannot
+// reverse this back to the token, but you can see "this same fingerprint
+// appeared at line A and line B".
+function tokenFingerprint(t) {
+  if (!t) return null;
+  return crypto.createHash('sha256').update(String(t)).digest('hex').slice(0, 8);
+}
 
 // Loopback addresses we accept. IPv6 mapping of IPv4 must be normalized.
 const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -43,24 +53,42 @@ function bearerAuth(secrets, opts = {}) {
   const db = opts.db || null;
   return function bearerAuthMw(req, res, next) {
     const token = extractBearer(req);
+    const ctx = { path: req.path, method: req.method, scope: required };
     if (!token) {
-      return res.status(401).json({ error: 'unauthorized', detail: 'PII surface requires Bearer token' });
+      log.warn('auth.reject', { ...ctx, reason: 'no_bearer' });
+      return res.status(401).json({
+        error: 'unauthorized',
+        detail: 'PII surface requires Bearer token',
+        reason: 'no_bearer',
+      });
     }
     if (tokensEqual(token, secrets.master)) {
       req.auth = {
         kind: 'master',
         scopes: ['*'],
-        actor: req.get('x-custos-actor') || 'master_app',
+        actor: req.get('x-family-graph-actor') || 'master_app',
       };
+      log.debug('auth.ok', { ...ctx, kind: 'master', actor: req.auth.actor });
       return next();
     }
     if (db && token.startsWith('sk_')) {
       const key = apiKeys.lookupByToken(db, token);
       if (key) {
         if (required && !apiKeys.authorizes(key.scopes, required)) {
+          log.warn('auth.reject', {
+            ...ctx,
+            reason: 'missing_scope',
+            actor: key.name,
+            key_code: key.code,
+            scopes: key.scopes,
+          });
           return res
             .status(403)
-            .json({ error: 'forbidden', detail: `missing scope: ${Array.isArray(required) ? required.join(',') : required}` });
+            .json({
+              error: 'forbidden',
+              detail: `missing scope: ${Array.isArray(required) ? required.join(',') : required}`,
+              reason: 'missing_scope',
+            });
         }
         apiKeys.recordUse(db, key.code);
         req.auth = {
@@ -69,23 +97,54 @@ function bearerAuth(secrets, opts = {}) {
           actor: key.name,
           key_code: key.code,
         };
+        log.debug('auth.ok', { ...ctx, kind: 'scoped', actor: key.name, key_code: key.code });
         return next();
       }
+      // sk_-prefixed but unknown to the api_keys table: revoked or never issued.
+      log.warn('auth.reject', {
+        ...ctx,
+        reason: 'unknown_or_revoked_scoped_token',
+        token_fp: tokenFingerprint(token),
+      });
+      return res.status(401).json({
+        error: 'unauthorized',
+        detail: 'invalid or revoked token',
+        reason: 'unknown_or_revoked_scoped_token',
+      });
     }
-    return res
-      .status(401)
-      .json({ error: 'unauthorized', detail: 'invalid or revoked token' });
+    // Some other bearer string that didn't match the master token.
+    log.warn('auth.reject', {
+      ...ctx,
+      reason: 'token_mismatch',
+      token_fp: tokenFingerprint(token),
+      token_len: token.length,
+    });
+    return res.status(401).json({
+      error: 'unauthorized',
+      detail: 'invalid or revoked token',
+      reason: 'token_mismatch',
+    });
   };
 }
 
 function loopbackOnly() {
   return function loopbackOnlyMw(req, res, next) {
     if (!isLoopback(req)) {
+      log.warn('auth.reject', {
+        path: req.path,
+        method: req.method,
+        reason: 'non_loopback_origin',
+        ip: req.socket && req.socket.remoteAddress,
+      });
       return res
         .status(403)
-        .json({ error: 'forbidden', detail: 'safe surface is loopback-only' });
+        .json({
+          error: 'forbidden',
+          detail: 'safe surface is loopback-only',
+          reason: 'non_loopback_origin',
+        });
     }
-    req.auth = req.auth || { kind: 'loopback', actor: req.get('x-custos-actor') || 'local' };
+    req.auth = req.auth || { kind: 'loopback', actor: req.get('x-family-graph-actor') || 'local' };
     next();
   };
 }
@@ -95,4 +154,5 @@ module.exports = {
   loopbackOnly,
   isLoopback,
   tokensEqual,
+  tokenFingerprint,
 };

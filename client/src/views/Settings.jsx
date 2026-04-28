@@ -5,7 +5,7 @@ const KNOWN = [
   { key: 'institution_name', label: 'Institution name', placeholder: 'St. Theresa Catholic School' },
   { key: 'operator_name', label: 'Operator name', placeholder: 'Jane Doe' },
   { key: 'audit_retention_days', label: 'Audit retention (days, tier 1 only)', placeholder: '365', kind: 'number' },
-  { key: 'dashboard_url', label: 'Dashboard URL (used in outgoing emails)', placeholder: 'https://custos.example.org' },
+  { key: 'dashboard_url', label: 'Dashboard URL (used in outgoing emails)', placeholder: 'https://family-graph.example.org' },
   { key: 'notifications.enabled', label: 'Notifications enabled (true/false)', placeholder: 'false', kind: 'bool' },
   { key: 'notifications.transport', label: 'Transport (postmark | log)', placeholder: 'postmark' },
   { key: 'notifications.reminder_hours', label: 'Reminder lead-time (hours before expiry)', placeholder: '1', kind: 'number' },
