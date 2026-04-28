@@ -249,6 +249,7 @@ CREATE TABLE IF NOT EXISTS conflicts (
   assigned_to            TEXT,
   assigned_at            TEXT,
   assignment_expires_at  TEXT,
+  reminder_sent_at       TEXT,
   created_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   CHECK (kind IN ('family','person')),
   CHECK (status IN ('open','merged','rejected','dismissed'))
@@ -348,3 +349,35 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 CREATE INDEX IF NOT EXISTS api_keys_name_idx ON api_keys (name);
+
+-------------------------------------------------------------------------------
+-- Notifications queue (v1.x)
+-------------------------------------------------------------------------------
+-- Outbound messages to operators / colleagues. Persisted so a transient
+-- transport failure (Postmark 5xx, network blip) doesn't lose the message;
+-- a periodic dispatcher picks `pending` rows up and sends. After 5 attempts
+-- the row goes to `failed` and the operator can retry from the dashboard.
+
+CREATE TABLE IF NOT EXISTS notifications (
+  code              TEXT PRIMARY KEY,
+  kind              TEXT NOT NULL,           -- assign | reminder | expired | test
+  to_email          TEXT NOT NULL,
+  subject           TEXT NOT NULL,
+  body_text         TEXT NOT NULL,
+  body_html         TEXT,
+  related_codes     TEXT,                    -- JSON array of conflict codes (or other)
+  status            TEXT NOT NULL DEFAULT 'pending', -- pending | sent | failed | cancelled
+  attempts          INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at   TEXT,                    -- exponential backoff target
+  last_error        TEXT,
+  transport         TEXT,                    -- postmark | log
+  provider_message_id TEXT,                  -- e.g., Postmark MessageID
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  sent_at           TEXT,
+  CHECK (status IN ('pending','sent','failed','cancelled'))
+);
+
+CREATE INDEX IF NOT EXISTS notifications_status_idx          ON notifications (status);
+CREATE INDEX IF NOT EXISTS notifications_kind_idx            ON notifications (kind);
+CREATE INDEX IF NOT EXISTS notifications_next_attempt_idx    ON notifications (status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS notifications_to_email_idx        ON notifications (to_email);

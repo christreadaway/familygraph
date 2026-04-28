@@ -62,6 +62,14 @@ export const api = {
   assignConflicts: body => request('POST', '/api/conflicts/assign', body),
   assignConflict: (code, body) => request('POST', `/api/conflicts/${code}/assign`, body),
   unassignConflict: code => request('DELETE', `/api/conflicts/${code}/assignment`),
+  listNotifications: params => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/notifications${qs ? `?${qs}` : ''}`);
+  },
+  dispatchNotifications: () => request('POST', '/api/notifications/dispatch'),
+  retryNotification: code => request('POST', `/api/notifications/${code}/retry`),
+  cancelNotification: code => request('POST', `/api/notifications/${code}/cancel`),
+  testNotification: to => request('POST', '/api/notifications/test', { to }),
 
   audit: params => {
     const qs = new URLSearchParams(params || {}).toString();

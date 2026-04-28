@@ -8,6 +8,13 @@ const ALLOWED_KEYS = new Set([
   'review_threshold',
   'institution_name',
   'operator_name',
+  // Notifications
+  'notifications.enabled',
+  'notifications.transport',        // 'postmark' | 'log'
+  'notifications.reminder_hours',   // number, default 1
+  'dashboard_url',                  // base URL the recipient clicks back to
+  'postmark.from',                  // verified sender address
+  'postmark.message_stream',        // default 'outbound'
 ]);
 
 function build({ db }) {

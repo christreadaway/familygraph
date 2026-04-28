@@ -5,6 +5,12 @@ const KNOWN = [
   { key: 'institution_name', label: 'Institution name', placeholder: 'St. Theresa Catholic School' },
   { key: 'operator_name', label: 'Operator name', placeholder: 'Jane Doe' },
   { key: 'audit_retention_days', label: 'Audit retention (days, tier 1 only)', placeholder: '365', kind: 'number' },
+  { key: 'dashboard_url', label: 'Dashboard URL (used in outgoing emails)', placeholder: 'https://sanctus.example.org' },
+  { key: 'notifications.enabled', label: 'Notifications enabled (true/false)', placeholder: 'false', kind: 'bool' },
+  { key: 'notifications.transport', label: 'Transport (postmark | log)', placeholder: 'postmark' },
+  { key: 'notifications.reminder_hours', label: 'Reminder lead-time (hours before expiry)', placeholder: '1', kind: 'number' },
+  { key: 'postmark.from', label: 'Postmark verified sender (From: address)', placeholder: 'no-reply@yourdomain.org' },
+  { key: 'postmark.message_stream', label: 'Postmark message stream', placeholder: 'outbound' },
 ];
 
 export default function Settings() {
@@ -26,6 +32,7 @@ export default function Settings() {
     let v = vals[k];
     const def = KNOWN.find(x => x.key === k);
     if (def?.kind === 'number') v = Number(v);
+    if (def?.kind === 'bool') v = String(v).toLowerCase() === 'true';
     await api.putSetting(k, v);
     load();
   }

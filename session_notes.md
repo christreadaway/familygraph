@@ -529,4 +529,98 @@ silently hide a conflict forever.
 
 ---
 
+## Postmark email notifications (Claude Code, 2026-04-28, continued)
+
+Field-driven addition: when an operator assigns conflicts to a
+colleague, the colleague should receive an email telling them to log in
+and resolve, with the time-remaining and deadline. Operator picked
+Postmark.
+
+### What was added
+
+- **Schema v4.** `notifications` queue table (code, kind, to_email,
+  subject, body_text, body_html, related_codes, status, attempts,
+  next_attempt_at, last_error, transport, provider_message_id,
+  created_at, sent_at). `conflicts.reminder_sent_at` for de-duped
+  reminder emails. Migration `0004_notifications.js` is idempotent for
+  fresh and existing installs.
+- **Postmark transport.** `server/notify/transports/postmark.js` posts
+  directly to `https://api.postmarkapp.com/email` via Node's built-in
+  HTTPS — no SDK dependency. Token comes from
+  `SANCTUS_POSTMARK_TOKEN` (env var; never stored in the database). The
+  `From:` address and message stream live in settings. 4xx (except 429)
+  is treated as non-retryable; 429 and 5xx are retryable with
+  exponential backoff (30s → 2m → 10m → 1h → 6h, capped at 5 attempts).
+- **Log transport.** Default until Postmark is configured. Appends a
+  JSONL line per message to `~/.sanctus/notifications.jsonl` so the
+  operator can preview what *would* go out before flipping the
+  transport to `postmark`.
+- **Templates.** Plaintext + HTML for `assign`, `reminder`, `expired`.
+  Subject + body include the count, the TTL, the human-readable time
+  remaining, the hard deadline (UTC string), and a deep link to the
+  recipient's filtered queue
+  (`<dashboard>/conflicts?assigned_to=<email>`). **No PII**: family
+  display names and person names never appear in the email — those
+  remain behind the Bearer-protected dashboard.
+- **Lifecycle hooks.** `assign()` enqueues an `assign` notification on
+  every successful assignment. `sweepExpiredAssignments()` enqueues
+  one `expired` notification per affected assignee (batched, not one
+  per conflict). `sendDueReminders()` enqueues a single `reminder`
+  notification per assignee whose batch has < `notifications.reminder_hours`
+  remaining and stamps `reminder_sent_at` so the same assignment is
+  never reminded twice.
+- **Dispatcher.** A 60-second `setInterval` plus a one-shot at boot
+  picks up `pending` rows whose `next_attempt_at` has elapsed and
+  delivers them. Disabled with `SANCTUS_DISABLE_NOTIFY=1`. When
+  `notifications.enabled=false` in settings the dispatcher returns
+  `{ skipped: true }` so the queue continues to accumulate harmlessly.
+- **API.** `GET /api/notifications` (filterable by status/kind, returns
+  the effective config minus the token), `POST /dispatch`, `POST /test`,
+  `POST /:code/retry`, `POST /:code/cancel`.
+- **Dashboard.** New `/notifications` page shows the configuration
+  banner ("Postmark token: configured / missing — set
+  SANCTUS_POSTMARK_TOKEN"), a test-send form, status filters, and the
+  full audit trail with per-row retry/cancel.
+- **Settings.** Added six allow-listed keys: `notifications.enabled`,
+  `notifications.transport`, `notifications.reminder_hours`,
+  `dashboard_url`, `postmark.from`, `postmark.message_stream`.
+
+### Tests
+
+139 / 139 pass. Fifteen new cases covering:
+- Subject, body, and link in `assign` template (TTL, time-remaining,
+  encoded `assigned_to`).
+- Reminder + expired template shapes.
+- Enqueue inserts a pending row + audit event.
+- Calling `assign()` enqueues a notification with the correct count
+  and TTL in the subject.
+- `sweepExpiredAssignments()` enqueues one `expired` per assignee
+  (batched).
+- `sendDueReminders()` is idempotent: re-running doesn't re-remind a
+  conflict that's already had `reminder_sent_at` stamped.
+- Log transport writes a JSONL line and stamps `sent_at`.
+- Dispatch is a no-op when `notifications.enabled=false`.
+- A retryable failure increments `attempts` and sets `next_attempt_at`;
+  retry resets the row to pending; cancel only works on pending.
+- Postmark transport: outbound HTTPS request shape verified by
+  hot-patching `https.request` (host, path, headers, payload). 5xx
+  marks the error retryable; 4xx (non-429) does not; 429 does.
+- Settings round trip for `notifications.*` keys.
+- Privacy: assert that no `f_…` or `p_…` codes appear in the rendered
+  email body.
+
+### Configuration
+
+Operator workflow on first boot:
+1. Settings → set `dashboard_url`, `postmark.from`, `postmark.message_stream`.
+2. Set `SANCTUS_POSTMARK_TOKEN=...` in the environment / launchd plist
+   / systemd unit and restart Sanctus.
+3. Settings → flip `notifications.enabled` to `true` and
+   `notifications.transport` to `postmark`.
+4. Notifications page → "Send a test" to verify Postmark accepts the
+   request.
+5. Conflicts page → assign workflow now triggers email automatically.
+
+---
+
 *End of session notes*

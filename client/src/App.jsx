@@ -15,6 +15,7 @@ import Profiles from './views/Profiles.jsx';
 import Settings from './views/Settings.jsx';
 import Search from './views/Search.jsx';
 import ExportView from './views/Export.jsx';
+import Notifications from './views/Notifications.jsx';
 
 function TokenBanner({ ok, onSetToken }) {
   const [val, setVal] = useState('');
@@ -78,6 +79,7 @@ export default function App() {
           <NavLink to="/export">Export</NavLink>
           <NavLink to="/sanitize">Sanitize / desanitize</NavLink>
           <NavLink to="/audit">Audit log</NavLink>
+          <NavLink to="/notifications">Notifications</NavLink>
           <NavLink to="/profiles">Profiles</NavLink>
           <NavLink to="/keys">API keys</NavLink>
           <NavLink to="/settings">Settings</NavLink>
@@ -119,6 +121,7 @@ export default function App() {
           <Route path="/export" element={<ExportView />} />
           <Route path="/sanitize" element={<SanitizeView />} />
           <Route path="/audit" element={<AuditLog />} />
+          <Route path="/notifications" element={<Notifications />} />
           <Route path="/profiles" element={<Profiles />} />
           <Route path="/keys" element={<Keys />} />
           <Route path="/settings" element={<Settings />} />

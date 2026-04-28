@@ -164,6 +164,11 @@ calling app for audit purposes (defaults to `unknown_app`).
 | `POST` | `/api/conflicts/:code/assign` | per-conflict assign. Body: `{assignee, ttl_hours}` |
 | `DELETE` | `/api/conflicts/:code/assignment` | clear an assignment |
 | `GET` | `/api/conflicts?assigned_to=…` | filter by assignee email; also `?assigned=unassigned\|assigned` |
+| `GET` | `/api/notifications` | list outbound notifications (filter `?status` / `?kind`) plus the effective config |
+| `POST` | `/api/notifications/dispatch` | force a dispatcher pass (otherwise runs every 60s) |
+| `POST` | `/api/notifications/test` | enqueue a test message to a given email |
+| `POST` | `/api/notifications/:code/retry` | requeue a failed notification |
+| `POST` | `/api/notifications/:code/cancel` | cancel a pending notification |
 | `POST` | `/api/sanitize` | replace names/emails/phones with codes; returns token-set code |
 | `POST` | `/api/desanitize` | restore PII from a token set |
 | `GET` | `/api/audit` | tier-1 + tier-2 events |

@@ -4,6 +4,8 @@ const aliases = require('./aliases');
 const people = require('./people');
 const families = require('./families');
 const audit = require('../audit');
+const notify = require('../notify');
+const templates = require('../notify/templates');
 
 // Assignment TTL is restricted to the operator-spec values. Anything else is
 // rejected at the API and helper boundaries so that auditors and the sweeper
@@ -128,7 +130,7 @@ function assign(db, { codes = [], allOpen = false, assignee, ttlHours, actor = '
   if (rows.length === 0) return { assigned: 0, expires_at: expiresAt };
 
   const update = db.prepare(
-    `UPDATE conflicts SET assigned_to = ?, assigned_at = ?, assignment_expires_at = ? WHERE code = ?`
+    `UPDATE conflicts SET assigned_to = ?, assigned_at = ?, assignment_expires_at = ?, reminder_sent_at = NULL WHERE code = ?`
   );
   const tx = db.transaction(() => {
     for (const r of rows) update.run(email, nowIso, expiresAt, r.code);
@@ -139,6 +141,38 @@ function assign(db, { codes = [], allOpen = false, assignee, ttlHours, actor = '
     actor,
     metadata: { count: rows.length, assignee: email, ttl_hours: ttl, expires_at: expiresAt },
   });
+
+  // Enqueue an "assigned" notification. Subject + body include the count, the
+  // TTL, and a deep-link to the recipient's filtered queue. Body never
+  // contains family/person PII.
+  try {
+    const cfg = notify.effectiveConfig(db);
+    const tpl = templates.assignTemplate({
+      count: rows.length,
+      expiresAt,
+      dashboardUrl: cfg.dashboardUrl,
+      assignee: email,
+      ttlHours: ttl,
+      institution: cfg.institution,
+    });
+    notify.enqueue(db, {
+      kind: 'assign',
+      to: email,
+      subject: tpl.subject,
+      text: tpl.text,
+      html: tpl.html,
+      related: rows.map(r => r.code),
+    });
+  } catch (e) {
+    // Notification enqueue is best-effort. The assignment itself succeeded;
+    // we surface the failure in the audit log but do not roll back.
+    audit.record(db, {
+      action: 'notification_enqueue_failed',
+      actor: 'system',
+      metadata: { error: String(e.message || e), kind: 'assign', assignee: email },
+    });
+  }
+
   return { assigned: rows.length, expires_at: expiresAt, assignee: email };
 }
 
@@ -159,7 +193,8 @@ function unassign(db, code, { actor = 'operator' } = {}) {
 }
 
 // Sweep expired assignments. Returns the codes that were just cleared so the
-// caller can audit them or surface them in a UI banner.
+// caller can audit them or surface them in a UI banner. Also enqueues an
+// "expired" notification per affected assignee.
 function sweepExpiredAssignments(db) {
   const nowIso = new Date().toISOString();
   const expired = db
@@ -170,8 +205,13 @@ function sweepExpiredAssignments(db) {
     )
     .all(nowIso);
   if (expired.length === 0) return [];
+  const byEmail = new Map();
+  for (const r of expired) {
+    if (!byEmail.has(r.assigned_to)) byEmail.set(r.assigned_to, []);
+    byEmail.get(r.assigned_to).push(r.code);
+  }
   const update = db.prepare(
-    `UPDATE conflicts SET assigned_to = NULL, assigned_at = NULL, assignment_expires_at = NULL WHERE code = ?`
+    `UPDATE conflicts SET assigned_to = NULL, assigned_at = NULL, assignment_expires_at = NULL, reminder_sent_at = NULL WHERE code = ?`
   );
   const tx = db.transaction(() => {
     for (const r of expired) update.run(r.code);
@@ -182,7 +222,82 @@ function sweepExpiredAssignments(db) {
     actor: 'system',
     metadata: { count: expired.length, codes: expired.map(r => r.code) },
   });
+  // One email per affected assignee, batched.
+  for (const [email, codes] of byEmail) {
+    try {
+      const cfg = notify.effectiveConfig(db);
+      const tpl = templates.expiredTemplate({
+        count: codes.length,
+        dashboardUrl: cfg.dashboardUrl,
+        assignee: email,
+        institution: cfg.institution,
+      });
+      notify.enqueue(db, { kind: 'expired', to: email, subject: tpl.subject, text: tpl.text, html: tpl.html, related: codes });
+    } catch (e) {
+      audit.record(db, {
+        action: 'notification_enqueue_failed',
+        actor: 'system',
+        metadata: { error: String(e.message || e), kind: 'expired', assignee: email },
+      });
+    }
+  }
   return expired.map(r => r.code);
+}
+
+// Reminder pass. For each assignment whose remaining time is at or below
+// `reminderHours` and that hasn't been reminded yet, enqueue a reminder
+// email and stamp `reminder_sent_at`. Idempotent: a row marked reminded is
+// not re-touched.
+function sendDueReminders(db, { reminderHours = null } = {}) {
+  const cfg = notify.effectiveConfig(db);
+  const hours = Number(reminderHours != null ? reminderHours : cfg.reminderHours);
+  if (!Number.isFinite(hours) || hours <= 0) return [];
+  const cutoffIso = new Date(Date.now() + hours * 3_600_000).toISOString();
+  const due = db
+    .prepare(
+      `SELECT code, assigned_to, assignment_expires_at FROM conflicts
+        WHERE assigned_to IS NOT NULL
+          AND assignment_expires_at IS NOT NULL
+          AND assignment_expires_at <= ?
+          AND assignment_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND reminder_sent_at IS NULL`
+    )
+    .all(cutoffIso);
+  if (due.length === 0) return [];
+  const byEmail = new Map();
+  for (const r of due) {
+    if (!byEmail.has(r.assigned_to)) byEmail.set(r.assigned_to, { codes: [], expiresAt: r.assignment_expires_at });
+    byEmail.get(r.assigned_to).codes.push(r.code);
+    // Use the earliest expiry across the batch.
+    const cur = byEmail.get(r.assigned_to);
+    if (new Date(r.assignment_expires_at) < new Date(cur.expiresAt)) cur.expiresAt = r.assignment_expires_at;
+  }
+  const stamp = db.prepare(
+    `UPDATE conflicts SET reminder_sent_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+  );
+  const tx = db.transaction(() => {
+    for (const r of due) stamp.run(r.code);
+  });
+  tx();
+  for (const [email, batch] of byEmail) {
+    try {
+      const tpl = templates.reminderTemplate({
+        count: batch.codes.length,
+        expiresAt: batch.expiresAt,
+        dashboardUrl: cfg.dashboardUrl,
+        assignee: email,
+        institution: cfg.institution,
+      });
+      notify.enqueue(db, { kind: 'reminder', to: email, subject: tpl.subject, text: tpl.text, html: tpl.html, related: batch.codes });
+    } catch (e) {
+      audit.record(db, {
+        action: 'notification_enqueue_failed',
+        actor: 'system',
+        metadata: { error: String(e.message || e), kind: 'reminder', assignee: email },
+      });
+    }
+  }
+  return due.map(r => r.code);
 }
 
 module.exports = {
@@ -194,5 +309,6 @@ module.exports = {
   assign,
   unassign,
   sweepExpiredAssignments,
+  sendDueReminders,
   ALLOWED_TTL_HOURS,
 };

@@ -101,6 +101,8 @@ The full route table is in [`product_spec.md`](./product_spec.md#api-contract).
 | `SANCTUS_REVIEW` | `0.7` | resolver conflict-queue threshold |
 | `SANCTUS_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
 | `SANCTUS_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
+| `SANCTUS_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
+| `SANCTUS_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 
 The active profile (Dashboard → Profiles) overrides `SANCTUS_AUTO_MERGE` /
 `SANCTUS_REVIEW` for imports.

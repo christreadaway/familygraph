@@ -28,6 +28,7 @@ const buildProfiles = require('./api/profiles');
 const buildSettings = require('./api/settings');
 const buildExport = require('./api/export');
 const buildRelationships = require('./api/relationships');
+const buildNotifications = require('./api/notifications');
 
 // method2scope: chooses one of two scoped middlewares depending on the HTTP
 // method. GET/HEAD use the read middleware; everything else uses the write
@@ -82,6 +83,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/profiles', bearerRulesWrite, buildProfiles({ db }));
   app.use('/api/settings', bearerMaster, buildSettings({ db }));
   app.use('/api/export', bearerRead, buildExport({ db, secrets }));
+  app.use('/api/notifications', bearerMaster, buildNotifications({ db }));
 
   // Static client (built React UI).
   const clientDir = path.join(__dirname, '..', 'client', 'dist');
@@ -148,10 +150,29 @@ function start() {
   // visible until the first interval fires.
   const conflictsMod = require('./identity/conflicts');
   try { conflictsMod.sweepExpiredAssignments(db); } catch (_) { /* ok at boot */ }
+  try { conflictsMod.sendDueReminders(db); } catch (_) { /* ok at boot */ }
   const assignSweep = setInterval(() => {
     try { conflictsMod.sweepExpiredAssignments(db); } catch (_) { /* ignore */ }
+    try { conflictsMod.sendDueReminders(db); } catch (_) { /* ignore */ }
   }, 15 * 60 * 1000);
   assignSweep.unref();
+
+  // Notification dispatcher. Picks up `pending` rows whose `next_attempt_at`
+  // has elapsed and sends them via the configured transport. A 60s cadence is
+  // tight enough for "near-real-time" delivery and loose enough that a
+  // misconfigured Postmark token doesn't hammer the API.
+  const notify = require('./notify');
+  const dispatchOnce = () => {
+    notify.dispatchPending(db).catch(e => {
+      // eslint-disable-next-line no-console
+      console.error('[sanctus] notification dispatch failed:', e.message);
+    });
+  };
+  if (process.env.SANCTUS_DISABLE_NOTIFY !== '1') {
+    dispatchOnce();
+    const notifyInterval = setInterval(dispatchOnce, 60 * 1000);
+    notifyInterval.unref();
+  }
 
   let watcher = null;
   if (process.env.SANCTUS_DISABLE_WATCH !== '1') {
