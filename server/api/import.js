@@ -6,6 +6,17 @@ const importPipeline = require('../identity/import');
 const audit = require('../audit');
 const profiles = require('../identity/profiles');
 
+const VALID_CATEGORIES = new Set(['church', 'school', 'other']);
+
+function _normalizeTags(input) {
+  if (input == null || input === '') return null;
+  if (Array.isArray(input)) return input.map(t => String(t).trim()).filter(Boolean);
+  if (typeof input === 'string') {
+    return input.split(',').map(t => t.trim()).filter(Boolean);
+  }
+  return null;
+}
+
 function build({ db, secrets, thresholds }) {
   const effective = () => profiles.thresholdsFor(db, thresholds);
   const r = express.Router();
@@ -25,23 +36,40 @@ function build({ db, secrets, thresholds }) {
   });
 
   r.post('/run', (req, res) => {
-    const { content, mapping = null, source = null, source_ref = 'inline' } = req.body || {};
+    const {
+      content, mapping = null, source = null, source_ref = 'inline',
+      category = null, tags = null,
+    } = req.body || {};
     if (!content) return res.status(400).json({ error: 'content required' });
+    if (category != null && category !== '' && !VALID_CATEGORIES.has(category)) {
+      return res.status(400).json({ error: `category must be one of ${[...VALID_CATEGORIES].join(', ')}` });
+    }
     const handler = (source && sources.HANDLERS[source]) || sources.csv;
     const out = handler.loadString(content, { mapping });
-    const results = importPipeline.importBatch(db, secrets, effective(), out.canonical, {
+    const normTags = _normalizeTags(tags);
+    const result = importPipeline.importBatch(db, secrets, effective(), out.canonical, {
       source: out.source || source || 'csv',
       sourceRef: source_ref,
       actor: req.auth?.actor || 'operator',
+      category: category || null,
+      tags: normTags,
     });
     audit.record(db, {
       action: 'bulk_import',
       actor: req.auth?.actor || 'operator',
-      metadata: { rows: out.canonical.length, source: out.source || source || 'csv' },
+      metadata: {
+        rows: out.canonical.length,
+        source: out.source || source || 'csv',
+        category: category || null,
+        tags: normTags,
+        import_run: result.importRunCode,
+      },
     });
     res.status(201).json({
+      import_run: result.importRunCode,
       rows: out.canonical.length,
-      results: results.map(r => ({
+      totals: result.totals,
+      results: result.results.map(r => ({
         family: r.family ? { code: r.family.code, action: r.family.action } : null,
         persons: r.persons.map(p => ({ code: p.code, action: p.action, score: p.score })),
       })),
@@ -52,3 +80,4 @@ function build({ db, secrets, thresholds }) {
 }
 
 module.exports = build;
+module.exports.VALID_CATEGORIES = VALID_CATEGORIES;

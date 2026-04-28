@@ -22,6 +22,7 @@ const buildAuditList = auditMod.buildList;
 const buildAuditExport = auditMod.buildExternalExport;
 const buildConflicts = require('./api/conflicts');
 const buildImport = require('./api/import');
+const buildImports = require('./api/imports');
 const buildRules = require('./api/rules');
 const buildApiKeys = require('./api/api-keys');
 const buildSearch = require('./api/search');
@@ -81,6 +82,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/audit/external-export', bearerAuditWrite, buildAuditExport({ db }));
   app.use('/api/audit', bearerAuditRead, buildAuditList({ db }));
   app.use('/api/import', bearerImport, buildImport({ db, secrets, thresholds }));
+  app.use('/api/imports', bearerRead, buildImports({ db }));
   app.use('/api/sanitize', bearerSanitize, buildSanitize({ db, secrets }));
   app.use('/api/desanitize', bearerSanitize, buildDesanitize({ db, secrets }));
   app.use('/api/rules', bearerRulesWrite, buildRules({ db }));

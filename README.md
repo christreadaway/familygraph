@@ -193,6 +193,32 @@ watch dir at startup (default: only new files are picked up).
 
 ---
 
+## Imports & source tagging
+
+Every file you bring in (via the dashboard, the `/api/import/run` endpoint,
+or the folder-watch agent) writes one `import_runs` row that records the
+totals: families created vs. attached, persons created vs. attached vs.
+enqueued, conflicts opened, addresses/emails/phones attached. The
+dashboard's **Imports log** lists every run; click into one to see
+exactly which families and people that file produced.
+
+Each file is also tagged. At import time the operator picks:
+
+- a **category** (`church` / `school` / `other`) — the only short label
+  Family Graph asks for, useful so a directory entry can later be traced
+  back to "this came from our church donor list" vs. "from the school
+  enrollment system";
+- any number of **free-form tags** (e.g., `q1-2026`, `donor-list`,
+  `fr-mike-onboarded`) for finer slicing.
+
+Family Graph deliberately does not store financial facts. If a donation
+file contains date/amount/payment-method columns, those columns are
+parsed and discarded; only the identity columns produce database rows.
+The category + tags survive on the source-record so the operator can
+audit the provenance later. Money lives in MissionIQ, not here.
+
+---
+
 ## API (summary)
 
 - `GET /api/health` — open. Returns schema version, watch state, audit count, etc.

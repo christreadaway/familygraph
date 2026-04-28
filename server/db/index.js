@@ -12,7 +12,8 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //   2 — api_keys table.
 //   3 — conflicts.assigned_to + assigned_at + assignment_expires_at.
 //   4 — notifications queue + conflicts.reminder_sent_at.
-const SCHEMA_VERSION = 4;
+//   5 — source_records.category/tags/import_run_code + import_runs table.
+const SCHEMA_VERSION = 5;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

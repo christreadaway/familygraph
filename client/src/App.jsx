@@ -7,6 +7,7 @@ import People from './views/People.jsx';
 import PersonDetail from './views/PersonDetail.jsx';
 import Conflicts from './views/Conflicts.jsx';
 import ImportView from './views/Import.jsx';
+import { ImportsList, ImportDetail } from './views/Imports.jsx';
 import AuditLog from './views/AuditLog.jsx';
 import SanitizeView from './views/Sanitize.jsx';
 import Rules from './views/Rules.jsx';
@@ -151,6 +152,7 @@ export default function App() {
           </NavLink>
           <NavLink to="/rules">Resolution rules</NavLink>
           <NavLink to="/import">Import</NavLink>
+          <NavLink to="/imports">Imports log</NavLink>
           <NavLink to="/export">Export</NavLink>
           <NavLink to="/sanitize">Sanitize / desanitize</NavLink>
           <NavLink to="/audit">Audit log</NavLink>
@@ -199,6 +201,8 @@ export default function App() {
           <Route path="/conflicts" element={<Conflicts />} />
           <Route path="/rules" element={<Rules />} />
           <Route path="/import" element={<ImportView />} />
+          <Route path="/imports" element={<ImportsList />} />
+          <Route path="/imports/:code" element={<ImportDetail />} />
           <Route path="/export" element={<ExportView />} />
           <Route path="/sanitize" element={<SanitizeView />} />
           <Route path="/audit" element={<AuditLog />} />
