@@ -9,6 +9,8 @@ const dbModule = require('./db');
 const secretModule = require('./crypto/secret');
 const auth = require('./auth/middleware');
 const folderWatch = require('./folder-watch');
+const log = require('./log');
+const { requestLogger, errorLogger } = require('./log/middleware');
 
 const buildHealth = require('./api/health');
 const buildFamilies = require('./api/families');
@@ -45,6 +47,11 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.disable('x-powered-by');
   app.set('trust proxy', false);
   app.use(express.json({ limit: '20mb' }));
+
+  // Structured request log: every response writes one JSON line to stderr (or
+  // FAMILY_GRAPH_LOG_FILE) with method, path, status, latency, actor, IP.
+  // Auth failures and unhandled errors get their own log lines.
+  app.use(requestLogger());
 
   // Inject auth context onto every request: PII routes require Bearer; safe
   // routes require loopback. Scoped Bearer middlewares enforce per-app scopes
@@ -95,16 +102,16 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   } else {
     app.get('/', (req, res) => {
       res.type('text/plain').send(
-        'Custos is running. Build the React client with `npm run client:build` to enable the dashboard.'
+        'Family Graph is running. Build the React client with `npm run client:build` to enable the dashboard.'
       );
     });
   }
 
   // 404 + error handlers (always JSON for /api).
   app.use('/api', (req, res) => res.status(404).json({ error: 'not found' }));
+  app.use(errorLogger());
   app.use((err, req, res, _next) => {
-    // eslint-disable-next-line no-console
-    console.error('[custos] unhandled', err);
+    // The structured logger has already recorded the stack via errorLogger().
     if (res.headersSent) return;
     res.status(500).json({ error: 'internal error' });
   });
@@ -113,6 +120,16 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
 }
 
 function start() {
+  // Initialise the logger from env first so any pre-boot diagnostics land
+  // in the configured destination.
+  log.autoConfigureFromEnv();
+  // Default log file under $FAMILY_GRAPH_HOME/logs/server.log when no
+  // explicit FAMILY_GRAPH_LOG_FILE was set. Stderr remains a copy.
+  if (!process.env.FAMILY_GRAPH_LOG_FILE) {
+    log.configure({ file: path.join(config.home, 'logs', 'server.log') });
+  }
+  log.info('boot', { home: config.home, port: config.port, bind: config.bind });
+
   const secrets = secretModule.load(config.secretPath);
   const db = dbModule.init(config.dbPath);
   const thresholds = config.resolverThresholds;
@@ -133,7 +150,7 @@ function start() {
   const app = buildApp({ db, secrets, thresholds, watchState });
   const server = app.listen(config.port, config.bind, () => {
     // eslint-disable-next-line no-console
-    console.log(`[custos] listening on http://${config.bind}:${config.port}`);
+    log.info('listening', { url: `http://${config.bind}:${config.port}` });
   });
 
   // Daily audit sweep. Tier-2 events are never deleted; tier-1 events expire
@@ -165,31 +182,31 @@ function start() {
   const dispatchOnce = () => {
     notify.dispatchPending(db).catch(e => {
       // eslint-disable-next-line no-console
-      console.error('[custos] notification dispatch failed:', e.message);
+      log.error('notify.dispatch_failed', { message: String(e.message || e), stack: e && e.stack });
     });
   };
-  if (process.env.CUSTOS_DISABLE_NOTIFY !== '1') {
+  if (process.env.FAMILY_GRAPH_DISABLE_NOTIFY !== '1') {
     dispatchOnce();
     const notifyInterval = setInterval(dispatchOnce, 60 * 1000);
     notifyInterval.unref();
   }
 
   let watcher = null;
-  if (process.env.CUSTOS_DISABLE_WATCH !== '1') {
+  if (process.env.FAMILY_GRAPH_DISABLE_WATCH !== '1') {
     try {
       const wd = folderWatch.start(db, secrets, thresholds, {
         watchDir: config.watchDir,
         outDir: config.outDir,
-        processExisting: process.env.CUSTOS_WATCH_PROCESS_EXISTING === '1',
+        processExisting: process.env.FAMILY_GRAPH_WATCH_PROCESS_EXISTING === '1',
         onProcessed: () => { watcherRef.processedSinceBoot += 1; },
       });
       watcher = wd.watcher;
       watcherRef.value = watcher;
       // eslint-disable-next-line no-console
-      console.log(`[custos] folder-watch on ${config.watchDir} -> ${config.outDir}`);
+      log.info('folder_watch.started', { watch_dir: config.watchDir, out_dir: config.outDir });
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error('[custos] folder-watch failed to start:', e.message);
+      log.error('folder_watch.start_failed', { message: e.message, stack: e.stack });
     }
   }
 

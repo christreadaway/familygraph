@@ -27,7 +27,7 @@ const BUILTIN_PROFILES = [
   {
     name: 'parish_donor',
     config: {
-      description: 'A parish development office. Donor giving history attaches by Custos codes; resolver tolerates more variance because donor records are messier.',
+      description: 'A parish development office. Donor giving history attaches by Family Graph codes; resolver tolerates more variance because donor records are messier.',
       thresholds: { autoMerge: 0.94, review: 0.65 },
       custody: { default: 'unspecified' },
     },

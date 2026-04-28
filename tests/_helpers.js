@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const dbModule = require('../server/db');
 
 function tmpDir() {
-  const d = path.join(os.tmpdir(), `custos-test-${crypto.randomBytes(6).toString('hex')}`);
+  const d = path.join(os.tmpdir(), `family-graph-test-${crypto.randomBytes(6).toString('hex')}`);
   fs.mkdirSync(d, { recursive: true, mode: 0o700 });
   return d;
 }

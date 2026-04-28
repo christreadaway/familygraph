@@ -5,7 +5,7 @@ const os = require('os');
 const fs = require('fs');
 
 const HOME = os.homedir();
-const CUSTOS_HOME = process.env.CUSTOS_HOME || path.join(HOME, '.custos');
+const FAMILY_GRAPH_HOME = process.env.FAMILY_GRAPH_HOME || path.join(HOME, '.family-graph');
 
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true, mode: 0o700 });
@@ -13,19 +13,19 @@ function ensureDir(p) {
 }
 
 const config = {
-  env: process.env.CUSTOS_ENV || 'production',
-  home: CUSTOS_HOME,
-  dataDir: ensureDir(path.join(CUSTOS_HOME, 'data')),
-  watchDir: process.env.CUSTOS_WATCH_DIR || path.join(CUSTOS_HOME, 'watch'),
-  outDir: process.env.CUSTOS_OUT_DIR || path.join(CUSTOS_HOME, 'out'),
-  backupsDir: ensureDir(path.join(CUSTOS_HOME, 'backups')),
-  dbPath: process.env.CUSTOS_DB || path.join(CUSTOS_HOME, 'data', 'custos.sqlite'),
-  secretPath: process.env.CUSTOS_SECRET || path.join(CUSTOS_HOME, 'secret.key'),
-  port: Number(process.env.CUSTOS_PORT || 3500),
-  bind: process.env.CUSTOS_BIND || '127.0.0.1',
+  env: process.env.FAMILY_GRAPH_ENV || 'production',
+  home: FAMILY_GRAPH_HOME,
+  dataDir: ensureDir(path.join(FAMILY_GRAPH_HOME, 'data')),
+  watchDir: process.env.FAMILY_GRAPH_WATCH_DIR || path.join(FAMILY_GRAPH_HOME, 'watch'),
+  outDir: process.env.FAMILY_GRAPH_OUT_DIR || path.join(FAMILY_GRAPH_HOME, 'out'),
+  backupsDir: ensureDir(path.join(FAMILY_GRAPH_HOME, 'backups')),
+  dbPath: process.env.FAMILY_GRAPH_DB || path.join(FAMILY_GRAPH_HOME, 'data', 'family-graph.sqlite'),
+  secretPath: process.env.FAMILY_GRAPH_SECRET || path.join(FAMILY_GRAPH_HOME, 'secret.key'),
+  port: Number(process.env.FAMILY_GRAPH_PORT || 3500),
+  bind: process.env.FAMILY_GRAPH_BIND || '127.0.0.1',
   resolverThresholds: {
-    autoMerge: Number(process.env.CUSTOS_AUTO_MERGE || 0.92),
-    review: Number(process.env.CUSTOS_REVIEW || 0.7),
+    autoMerge: Number(process.env.FAMILY_GRAPH_AUTO_MERGE || 0.92),
+    review: Number(process.env.FAMILY_GRAPH_REVIEW || 0.7),
   },
   // When true, the safe API surface is reachable only from loopback.
   enforceLoopbackOnSafe: true,

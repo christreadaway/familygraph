@@ -9,8 +9,8 @@ client/node_modules/
 coverage/
 .tmp/
 
-# Local Custos data and secrets must never be committed.
-.custos/
+# Local Family Graph data and secrets must never be committed.
+.family-graph/
 data/
 secrets/
 secret.key
@@ -18,4 +18,4 @@ secret.key
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
-*.custos-backup
+*.family-graph-backup

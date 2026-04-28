@@ -99,7 +99,7 @@ test('api-keys > revoked key is rejected via the API', async t => {
   assert.equal(r.status, 401);
 });
 
-test('api-keys > X-Custos-Actor reflects key.name not header for scoped tokens', async t => {
+test('api-keys > X-Family-Graph-Actor reflects key.name not header for scoped tokens', async t => {
   const { port, secrets, db } = await makeServer(t);
   const p = await req(port, {
     method: 'POST', path: '/api/keys', headers: { authorization: `Bearer ${secrets.master}` },
@@ -108,7 +108,7 @@ test('api-keys > X-Custos-Actor reflects key.name not header for scoped tokens',
   const tok = p.body.token;
   await req(port, {
     method: 'POST', path: '/api/audit/external-export',
-    headers: { authorization: `Bearer ${tok}`, 'x-custos-actor': 'IGNORED' },
+    headers: { authorization: `Bearer ${tok}`, 'x-family-graph-actor': 'IGNORED' },
     body: { destination: 'x.csv', entity_codes: [] },
   });
   const events = db.prepare('SELECT * FROM audit_events WHERE action = ? ORDER BY created_at DESC').all('export_consent');

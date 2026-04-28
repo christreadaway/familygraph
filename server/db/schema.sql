@@ -1,4 +1,4 @@
--- Custos database schema
+-- Family Graph database schema
 -- Identity ledger: families, persons, contacts, addresses, relationships, history.
 -- All PII columns store AES-256-GCM ciphertext. Plaintext exists only at the
 -- application boundary, never in the file.

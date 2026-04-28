@@ -40,7 +40,7 @@ test('backup > encrypted hot backup round trip', async t => {
   const backupsDir = tmpDir();
   t.after(() => cleanup(backupsDir));
   const out = await backup.hotBackup(db, backupsDir, { passphrase: 'correct-horse-battery' });
-  assert.ok(out.endsWith('.custos-backup'));
+  assert.ok(out.endsWith('.family-graph-backup'));
   const restoreDir = tmpDir();
   t.after(() => cleanup(restoreDir));
   const restorePath = path.join(restoreDir, 'restored.sqlite');
