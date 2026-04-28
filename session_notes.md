@@ -389,4 +389,68 @@ migrates cleanly to version 2.
 
 ---
 
+## Operational polish pass (Claude Code, 2026-04-28)
+
+A third pass focused on operational hygiene rather than new features. The
+goal was to make the system shippable in a way an operator can actually
+manage day to day.
+
+### What was added
+
+1. **README.** Top-level operational doc covering install, CLI commands,
+   folder-watch behaviour, env vars, and the security posture.
+2. **Enriched health endpoint.** `GET /api/health` now reports active
+   counts (families, persons, audit events, active api keys), the
+   number of pending conflicts, the active profile, and the folder-watch
+   state (enabled, dirs, files processed since boot). Both the dashboard
+   sidebar and external monitors can rely on it.
+3. **Sidebar conflict-count badge.** The dashboard polls `/api/health`
+   every 15s. Open conflicts surface as a numeric badge next to the
+   "Conflict queue" navigation item, and the sidebar footer shows
+   active counts and folder-watch status.
+4. **Backup CLI improvements.** `sanctus list-backups` lists files in
+   `~/.sanctus/backups/` newest first; `sanctus prune-backups [keep=10]`
+   keeps the most recent N and deletes older. `sanctus status` prints
+   schema version, paths, counts, and backup-file count in one place.
+5. **Audit log CSV export.** `GET /api/audit/export` produces a CSV
+   suitable for compliance review or board reporting. Filterable by
+   `action`, `actor`, `entity_code`.
+6. **Import wizard mapping override.** The dashboard's preview step now
+   exposes the inferred mapping in an editable JSON textarea; the
+   subsequent `Run import` call sends that mapping verbatim, so an
+   operator with non-standard column names can fix them in place
+   without leaving the dashboard.
+7. **Folder-watch process-existing flag.** `SANCTUS_WATCH_PROCESS_EXISTING=1`
+   processes whatever is already in the watch dir at startup. Useful
+   when files were dropped while Sanctus was down. Off by default so a
+   fresh boot doesn't accidentally re-import older files.
+8. **Audit recorder robustness.** The redactor now detects circular
+   structures and replaces them with `[circular]`. The serializer
+   clamps overlong metadata to 32 KB with a `truncated: true` sentinel.
+   A misbehaving caller can no longer crash the recorder or fill the
+   database with a single multi-MB blob.
+
+### Tests
+
+110 / 110 `node:test` cases pass. Seven new cases added covering:
+- Circular metadata is recorded as `[circular]`, not crashing.
+- Oversized metadata is truncated with a sentinel.
+- The audit CSV export endpoint returns CSV with the expected header.
+- Health reports active profile + counts + folder-watch state.
+- `processExisting=true` consumes both CSV and text files left in the
+  watch dir at startup.
+- Default folder-watch start does NOT touch existing files.
+- The `status` CLI shape compiles end to end.
+
+### What still belongs to v2 explicitly
+
+- OS-keychain-backed secret storage. (File-based with a keychain-compatible
+  format ships in v1.)
+- Multi-party sharing.
+- Bitemporal point-in-time queries.
+
+Everything else the v6 spec described is now in v1 and tested.
+
+---
+
 *End of session notes*

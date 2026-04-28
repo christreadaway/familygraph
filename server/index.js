@@ -39,7 +39,7 @@ function method2scope(readMw, writeMw) {
   };
 }
 
-function buildApp({ db, secrets, thresholds }) {
+function buildApp({ db, secrets, thresholds, watchState = null }) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', false);
@@ -59,7 +59,7 @@ function buildApp({ db, secrets, thresholds }) {
   const loopback = auth.loopbackOnly();
 
   // Health (open).
-  app.use('/api/health', buildHealth({ db }));
+  app.use('/api/health', buildHealth({ db, watchState }));
 
   // Safe surface (loopback only, no PII).
   app.use('/api/safe', loopback, buildSafe({ db, secrets }));
@@ -115,7 +115,20 @@ function start() {
   const db = dbModule.init(config.dbPath);
   const thresholds = config.resolverThresholds;
 
-  const app = buildApp({ db, secrets, thresholds });
+  const watcherRef = {
+    value: null,
+    watchDir: config.watchDir,
+    outDir: config.outDir,
+    processedSinceBoot: 0,
+  };
+  const watchState = () => ({
+    enabled: !!watcherRef.value,
+    watch_dir: watcherRef.watchDir,
+    out_dir: watcherRef.outDir,
+    processed_since_boot: watcherRef.processedSinceBoot,
+  });
+
+  const app = buildApp({ db, secrets, thresholds, watchState });
   const server = app.listen(config.port, config.bind, () => {
     // eslint-disable-next-line no-console
     console.log(`[sanctus] listening on http://${config.bind}:${config.port}`);
@@ -136,8 +149,11 @@ function start() {
       const wd = folderWatch.start(db, secrets, thresholds, {
         watchDir: config.watchDir,
         outDir: config.outDir,
+        processExisting: process.env.SANCTUS_WATCH_PROCESS_EXISTING === '1',
+        onProcessed: () => { watcherRef.processedSinceBoot += 1; },
       });
       watcher = wd.watcher;
+      watcherRef.value = watcher;
       // eslint-disable-next-line no-console
       console.log(`[sanctus] folder-watch on ${config.watchDir} -> ${config.outDir}`);
     } catch (e) {

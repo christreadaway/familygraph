@@ -109,8 +109,26 @@ function processFile(db, secrets, thresholds, filePath, opts = {}) {
 function start(db, secrets, thresholds, opts) {
   const watchDir = opts.watchDir;
   const outDir = opts.outDir;
+  const onProcessed = typeof opts.onProcessed === 'function' ? opts.onProcessed : null;
   fs.mkdirSync(watchDir, { recursive: true, mode: 0o700 });
   fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
+
+  // Optionally process whatever is already in the watch dir at startup. Useful
+  // when files were dropped while Sanctus was down. Off by default — a fresh
+  // boot shouldn't accidentally re-import files left over from prior runs.
+  if (opts.processExisting) {
+    const existing = fs
+      .readdirSync(watchDir)
+      .filter(n => !n.startsWith('.'))
+      .map(n => path.join(watchDir, n))
+      .filter(p => {
+        try { return fs.statSync(p).isFile(); } catch { return false; }
+      });
+    for (const fp of existing) {
+      const r = processFile(db, secrets, thresholds, fp, { outDir, ...opts });
+      if (onProcessed && r && r.ok !== false) onProcessed(r);
+    }
+  }
 
   const watcher = chokidar.watch(watchDir, {
     ignoreInitial: true,
@@ -121,7 +139,8 @@ function start(db, secrets, thresholds, opts) {
   watcher.on('add', filePath => {
     if (path.dirname(filePath) !== watchDir) return;
     if (path.basename(filePath).startsWith('.')) return;
-    processFile(db, secrets, thresholds, filePath, { outDir, ...opts });
+    const r = processFile(db, secrets, thresholds, filePath, { outDir, ...opts });
+    if (onProcessed && r && r.ok !== false) onProcessed(r);
   });
   return { watcher, processFile: fp => processFile(db, secrets, thresholds, fp, { outDir, ...opts }) };
 }

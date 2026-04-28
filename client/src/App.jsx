@@ -43,7 +43,13 @@ export default function App() {
   const [health, setHealth] = useState(null);
 
   useEffect(() => {
-    api.health().then(setHealth).catch(() => {});
+    let alive = true;
+    function poll() {
+      api.health().then(h => { if (alive) setHealth(h); }).catch(() => {});
+    }
+    poll();
+    const int = setInterval(poll, 15_000);
+    return () => { alive = false; clearInterval(int); };
   }, []);
 
   useEffect(() => {
@@ -59,7 +65,14 @@ export default function App() {
           <NavLink to="/search">Search</NavLink>
           <NavLink to="/families">Families</NavLink>
           <NavLink to="/people">People</NavLink>
-          <NavLink to="/conflicts">Conflict queue</NavLink>
+          <NavLink to="/conflicts">
+            Conflict queue
+            {health?.pending_conflicts > 0 && (
+              <span style={{ marginLeft: 6, padding: '1px 8px', borderRadius: 999, background: 'var(--warn)', color: '#1c1300', fontSize: 11 }}>
+                {health.pending_conflicts}
+              </span>
+            )}
+          </NavLink>
           <NavLink to="/rules">Resolution rules</NavLink>
           <NavLink to="/import">Import</NavLink>
           <NavLink to="/export">Export</NavLink>
@@ -70,9 +83,22 @@ export default function App() {
           <NavLink to="/settings">Settings</NavLink>
         </nav>
         <div className="footer">
-          {health
-            ? <>Schema v{health.schema} · {health.status}</>
-            : <span className="error">backend unreachable</span>}
+          {health ? (
+            <>
+              Schema v{health.schema} · {health.status}
+              {health.active_profile && <div>Profile: <code>{health.active_profile}</code></div>}
+              {health.counts && (
+                <div style={{ marginTop: 4 }}>
+                  {health.counts.families} families · {health.counts.persons} persons
+                </div>
+              )}
+              {health.folder_watch && (
+                <div style={{ marginTop: 4 }}>
+                  watch: {health.folder_watch.enabled ? `${health.folder_watch.processed_since_boot} processed` : <span className="error">off</span>}
+                </div>
+              )}
+            </>
+          ) : <span className="error">backend unreachable</span>}
           <div style={{ marginTop: 8 }}>
             <button onClick={() => { setToken(''); setTokenOk(false); }}>Clear token</button>
           </div>

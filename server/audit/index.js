@@ -25,19 +25,42 @@ const PII_KEYS = new Set([
   'plaintext',
 ]);
 
-function redact(meta) {
+function redact(meta, _seen = new WeakSet()) {
   if (!meta) return null;
-  if (Array.isArray(meta)) return meta.map(redact);
   if (typeof meta !== 'object') return meta;
+  if (_seen.has(meta)) return '[circular]';
+  _seen.add(meta);
+  if (Array.isArray(meta)) return meta.map(v => redact(v, _seen));
   const out = {};
   for (const [k, v] of Object.entries(meta)) {
     if (PII_KEYS.has(k.toLowerCase())) {
       out[k] = '[redacted]';
     } else if (v && typeof v === 'object') {
-      out[k] = redact(v);
+      out[k] = redact(v, _seen);
     } else {
       out[k] = v;
     }
+  }
+  return out;
+}
+
+// Stringify metadata defensively. Circular structures or oversized strings
+// are clamped so a misbehaving caller cannot crash the audit recorder or
+// fill the database with a single multi-MB blob.
+const MAX_METADATA_BYTES = 32 * 1024;
+function _safeStringify(obj) {
+  const seen = new WeakSet();
+  const out = JSON.stringify(obj, (_k, v) => {
+    if (typeof v === 'bigint') return v.toString();
+    if (v && typeof v === 'object') {
+      if (seen.has(v)) return '[circular]';
+      seen.add(v);
+    }
+    return v;
+  });
+  if (typeof out !== 'string') return null;
+  if (out.length > MAX_METADATA_BYTES) {
+    return JSON.stringify({ truncated: true, prefix: out.slice(0, MAX_METADATA_BYTES) });
   }
   return out;
 }
@@ -51,7 +74,14 @@ function record(db, event) {
   const entityCode = event.entityCode || null;
   const entityKind = event.entityKind || null;
   const destination = event.destination || null;
-  const metadata = event.metadata == null ? null : JSON.stringify(redact(event.metadata));
+  let metadata = null;
+  if (event.metadata != null) {
+    try {
+      metadata = _safeStringify(redact(event.metadata));
+    } catch (_) {
+      metadata = JSON.stringify({ unserializable: true });
+    }
+  }
   db.prepare(
     `INSERT INTO audit_events (code, tier, action, actor, entity_code, entity_kind, destination, metadata)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`

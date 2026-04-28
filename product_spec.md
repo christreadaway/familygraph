@@ -26,11 +26,14 @@
 
 ```sh
 npm install                # installs server deps
-cd client && npm install   # installs client deps
-cd .. && npm run client:build
+npm run client:install     # installs client deps
+npm run client:build       # builds the dashboard
 npm start                  # http://127.0.0.1:3500
 node bin/sanctus.js show-token   # paste into the dashboard the first time
 ```
+
+Other CLI entry points: `status`, `rotate-secret`, `backup [passphrase]`,
+`list-backups`, `prune-backups [keep=10]`, `restore <passphrase> <src> <dest>`.
 
 Environment overrides:
 

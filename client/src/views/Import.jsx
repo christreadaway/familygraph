@@ -74,9 +74,21 @@ export default function ImportView() {
       {preview && (
         <div className="panel">
           <h3>Preview · {preview.row_count} rows ({preview.source})</h3>
-          <details>
-            <summary>Detected mapping</summary>
-            <pre className="mono" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(preview.mapping, null, 2)}</pre>
+          <details open>
+            <summary>Detected mapping (edit JSON to override before running import)</summary>
+            <textarea
+              rows={12}
+              style={{ width: '100%', marginTop: 8 }}
+              value={JSON.stringify(preview.mapping, null, 2)}
+              onChange={e => {
+                try {
+                  const parsed = JSON.parse(e.target.value);
+                  setPreview({ ...preview, mapping: parsed });
+                } catch (_) {
+                  // accept the keystroke even if not yet valid; ignore parse error
+                }
+              }}
+            />
           </details>
           <details open>
             <summary>First 10 canonical rows</summary>
