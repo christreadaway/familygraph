@@ -679,4 +679,32 @@ deprecation period.
 
 ---
 
+## Windows / PowerShell runbook (Claude Code, 2026-04-28, continued)
+
+A Windows section was added to `README.md` covering the install path
+(Node 20 LTS via winget, Git, optional VS C++ build tools if the
+prebuilt `better-sqlite3` binary doesn't pick up), per-session and
+persistent env-var setting (`$env:VAR = …` vs
+`[Environment]::SetEnvironmentVariable(…, 'User')`), running as a
+service via NSSM, and the file-permission caveat (Node mode bits are a
+no-op on Windows; v2 OS-keychain integration closes the gap).
+
+One real Windows incompatibility found and fixed:
+
+- **`package.json` `dev` script.** Was
+  `"CUSTOS_ENV=development node server/index.js"`, which is
+  bash-only — fails on cmd and PowerShell because `VAR=value cmd` is
+  not valid syntax outside POSIX shells. Replaced with
+  `"node -r ./scripts/dev-env.js server/index.js"` (a tiny preload
+  module sets `process.env.CUSTOS_ENV` before the server boots). Now
+  identical behaviour across bash, zsh, cmd, PowerShell 5.1, and
+  PowerShell 7.
+
+`product_spec.md` gained a "Cross-platform notes" subsection covering
+path handling, file-mode behaviour, and the dev-env shim.
+
+The 139-case `node:test` suite continues to pass after these changes.
+
+---
+
 *End of session notes*

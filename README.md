@@ -18,7 +18,7 @@ lives in
 
 ---
 
-## Run it
+## Run it (macOS / Linux)
 
 ```sh
 npm install
@@ -40,6 +40,124 @@ node bin/custos.js show-token
 
 ---
 
+## Run it (Windows · PowerShell)
+
+Tested on Windows 11 with PowerShell 7. PowerShell 5.1 (the default
+shipped with Windows) also works.
+
+### One-time setup
+
+1. **Install Node.js 20 LTS or newer.** Either via [nodejs.org](https://nodejs.org)
+   or `winget`:
+   ```powershell
+   winget install OpenJS.NodeJS.LTS
+   ```
+   Close and reopen your terminal so `node` and `npm` are on `PATH`.
+   Verify:
+   ```powershell
+   node --version
+   npm --version
+   ```
+
+2. **Install Git** if you haven't already:
+   ```powershell
+   winget install Git.Git
+   ```
+
+3. **(Probably not needed)** `better-sqlite3` ships prebuilt Windows
+   binaries for Node 20+, so `npm install` should succeed without a C++
+   toolchain. If you ever see a `node-gyp` failure, install the build
+   tools once:
+   ```powershell
+   winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet"
+   winget install Python.Python.3.12
+   ```
+
+### Clone and start
+
+```powershell
+git clone https://github.com/christreadaway/custos.git
+cd custos
+npm install
+npm run client:install
+npm run client:build
+npm start
+```
+
+The first boot creates `$HOME\.custos\` (i.e. `C:\Users\<you>\.custos\`)
+with `secret.key`, the SQLite database, the watch and backups
+directories, and seeds the built-in profiles. Open
+<http://127.0.0.1:3500> in a browser. To get the Bearer token to paste
+into the dashboard:
+
+```powershell
+node bin/custos.js show-token
+```
+
+Stop the server with `Ctrl+C` in the PowerShell window.
+
+### Setting environment variables in PowerShell
+
+Per-session (only affects the current PowerShell window):
+
+```powershell
+$env:CUSTOS_POSTMARK_TOKEN = "your-server-token-here"
+$env:CUSTOS_HOME           = "D:\custos-data"   # if you don't want it under your profile
+npm start
+```
+
+Persistent (user-level, applies to every new PowerShell window from now on):
+
+```powershell
+[Environment]::SetEnvironmentVariable('CUSTOS_POSTMARK_TOKEN', 'your-server-token-here', 'User')
+```
+
+Reopen PowerShell after running that command for the new value to be
+visible.
+
+### Running as a Windows service (optional)
+
+For an always-on deployment, the easiest path is **NSSM** (Non-Sucking
+Service Manager):
+
+```powershell
+winget install NSSM.NSSM
+# In an *Administrator* PowerShell:
+nssm install Custos "C:\Program Files\nodejs\node.exe" "$PWD\server\index.js"
+nssm set     Custos AppDirectory "$PWD"
+nssm set     Custos AppEnvironmentExtra "CUSTOS_POSTMARK_TOKEN=your-token"
+nssm start   Custos
+# To stop:    nssm stop Custos
+# To remove:  nssm remove Custos confirm
+```
+
+Alternatively, register a Scheduled Task that runs at logon with
+`At log on of <user>` triggering `pwsh.exe -Command "cd C:\path\to\custos; npm start"`.
+
+### Windows-specific caveats
+
+- **File permissions.** Node's `fs.mkdirSync(p, { mode: 0o700 })` and
+  `fs.writeFileSync(p, data, { mode: 0o600 })` are silently ignored on
+  Windows; the secret key file inherits the user-profile NTFS ACL.
+  That's acceptable on a single-operator workstation. Treat
+  `$HOME\.custos\` as you would any folder containing credentials —
+  don't share it. v2 will move the master/data/HMAC keys to the
+  Windows Credential Manager.
+- **Long paths.** If `$env:CUSTOS_HOME` is on a deeply nested path,
+  enable Windows long-path support (`Group Policy → Computer
+  Configuration → Administrative Templates → System → Filesystem →
+  Enable Win32 long paths`) before installing — otherwise some
+  `node_modules` extraction may fail.
+- **Antivirus.** SQLite write-ahead-log files (`*.sqlite-wal`,
+  `*.sqlite-shm`) are excluded from Defender by Microsoft's standard
+  exclusions. If you use a third-party AV, exclude `$HOME\.custos\`
+  to avoid intermittent locks.
+- **Folder watch.** `chokidar` uses Windows native file events, which
+  is reliable on local drives but can be flaky on network shares.
+  Keep `$env:CUSTOS_WATCH_DIR` on a local disk.
+
+---
+
 ## CLI
 
 | Command | What it does |
@@ -52,6 +170,10 @@ node bin/custos.js show-token
 | `node bin/custos.js list-backups` | Lists files in the backups directory. |
 | `node bin/custos.js prune-backups [keep=10]` | Keeps the most recent N backups, deletes older. |
 | `node bin/custos.js restore <passphrase> <src> <dest>` | Restores an encrypted backup to a new sqlite path. |
+
+`npm run start`, `npm run dev`, `npm run status`, `npm run backup`,
+`npm run rotate-secret`, and `npm test` are equivalent shortcuts and
+work identically on macOS, Linux, and Windows PowerShell.
 
 ---
 

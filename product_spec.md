@@ -49,6 +49,26 @@ Environment overrides:
 | `CUSTOS_AUTO_MERGE` | `0.92` | Auto-merge threshold for the resolver |
 | `CUSTOS_REVIEW` | `0.7` | Conflict-queue threshold for the resolver |
 | `CUSTOS_DISABLE_WATCH` | unset | Set to `1` to disable the folder-watch agent |
+| `CUSTOS_WATCH_PROCESS_EXISTING` | unset | Set to `1` to drain whatever is already in the watch dir at startup |
+| `CUSTOS_DISABLE_NOTIFY` | unset | Set to `1` to disable the notification dispatcher loop |
+| `CUSTOS_POSTMARK_TOKEN` | unset | Postmark server token for outbound email; never stored in the database |
+
+### Cross-platform notes
+
+- Paths use `path.join` everywhere; macOS/Linux and Windows behave the
+  same. On Windows, `~/.custos` resolves to `%USERPROFILE%\.custos`.
+- `fs.mkdirSync(p, { mode: 0o700 })` and `fs.writeFileSync(p, … { mode: 0o600 })`
+  are honoured on POSIX and silently ignored on Windows. On Windows the
+  secret key file inherits the user-profile NTFS ACL — acceptable on a
+  single-operator workstation; v2 will move keys to the OS keychain
+  (Keychain on macOS, Credential Manager on Windows, libsecret on
+  Linux). The on-disk JSON shape is keychain-compatible so the
+  migration is mechanical.
+- `npm run dev` uses a `node -r ./scripts/dev-env.js …` shim instead
+  of the bash-only `VAR=value cmd` form, so it works in cmd and
+  PowerShell as well as bash.
+- Folder-watch (`chokidar`) uses native file events on Windows; keep
+  `CUSTOS_WATCH_DIR` on a local disk for reliability.
 
 ---
 
