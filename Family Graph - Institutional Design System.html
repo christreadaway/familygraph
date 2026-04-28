@@ -1,0 +1,833 @@
+<!doctype html>
+<html lang="en" data-theme="institutional">
+<head>
+<meta charset="utf-8"/>
+<title>Family Graph — Institutional Design System (Print)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="tokens.css"/>
+<link rel="stylesheet" href="shared.css"/>
+<style>
+  @page { size: Letter landscape; margin: 0.5in; }
+  html, body { background: #fff; color: var(--ink); }
+  body { font-family: var(--font-text); font-size: 11px; line-height: 1.45; }
+  .page {
+    width: 11in; min-height: 8.5in; padding: 0.5in 0.5in 0.6in;
+    margin: 0 auto 24px;
+    background: var(--bg-elev);
+    page-break-after: always;
+    box-sizing: border-box;
+    position: relative;
+    border: 0.5px solid var(--rule);
+  }
+  .page:last-child { page-break-after: auto; }
+  @media print {
+    .page { margin: 0; border: none; box-shadow: none; }
+    body { background: #fff; }
+    .no-print { display: none !important; }
+  }
+  .page-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 0.5px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 18px;
+  }
+  .page-header .brand { font-family: var(--font-display); font-weight: 600; font-size: 14px; }
+  .page-header .meta { font-family: var(--font-mono); font-size: 9px; color: var(--ink-faint); letter-spacing: 0.04em; text-transform: uppercase; }
+  .page-footer {
+    position: absolute; bottom: 0.32in; left: 0.5in; right: 0.5in;
+    display: flex; justify-content: space-between;
+    font-family: var(--font-mono); font-size: 9px; color: var(--ink-faint); letter-spacing: 0.04em; text-transform: uppercase;
+    border-top: 0.5px solid var(--rule); padding-top: 6px;
+  }
+  h1.cover { font-family: var(--font-display); font-size: 60px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.05; margin: 0; max-width: 9in; }
+  h1.cover em { font-style: normal; color: var(--accent); }
+  h2.sec { font-family: var(--font-display); font-size: 24px; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 4px; }
+  .lede { font-size: 13px; color: var(--ink-mute); max-width: 6.8in; line-height: 1.55; }
+  .num-eyebrow { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 6px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; }
+  .spec {
+    border: 0.5px solid var(--rule);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    background: var(--bg-elev);
+  }
+  .spec h3 { font-family: var(--font-display); font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+  .spec .annot { font-family: var(--font-mono); font-size: 9px; color: var(--ink-faint); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 8px; }
+  table.tokens { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 10px; }
+  table.tokens td { padding: 5px 8px; border-bottom: 0.5px solid var(--rule); }
+  table.tokens td.swatch { width: 28px; padding: 0; }
+  table.tokens td.swatch span { display: block; width: 24px; height: 24px; border-radius: 3px; box-shadow: inset 0 0 0 0.5px var(--rule-strong); }
+  table.tokens td.var { color: var(--ink); }
+  table.tokens td.val { color: var(--ink-mute); text-align: right; }
+  pre.code {
+    font-family: var(--font-mono); font-size: 10px;
+    background: var(--bg-sunken); padding: 10px 12px;
+    border-radius: var(--radius-sm); border: 0.5px solid var(--rule);
+    color: var(--ink); white-space: pre-wrap; line-height: 1.5;
+    overflow: hidden;
+  }
+  .preview-frame {
+    border: 0.5px solid var(--rule); border-radius: var(--radius-md);
+    overflow: hidden; background: var(--bg);
+  }
+  .preview-frame .browser-bar { padding: 6px 10px; background: var(--bg-sunken); border-bottom: 0.5px solid var(--rule); display: flex; align-items: center; gap: 6px; }
+  .preview-frame .lights { display: flex; gap: 4px; }
+  .preview-frame .light { width: 8px; height: 8px; border-radius: 50%; }
+  .preview-frame .light.r { background: #ff5f57; }
+  .preview-frame .light.y { background: #febc2e; }
+  .preview-frame .light.g { background: #28c840; }
+  .preview-frame .url { font-family: var(--font-mono); font-size: 9px; color: var(--ink-faint); margin-left: auto; }
+  .preview-frame .url-title { font-family: var(--font-text); font-size: 10px; color: var(--ink-mute); }
+
+  .bullet-list { padding-left: 16px; margin: 8px 0; }
+  .bullet-list li { margin-bottom: 6px; }
+  .toc { columns: 2; column-gap: 28px; }
+  .toc div { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 0.5px solid var(--rule); break-inside: avoid; }
+  .toc .num { font-family: var(--font-mono); font-size: 10px; color: var(--ink-faint); letter-spacing: 0.1em; }
+  .toc .name { font-family: var(--font-display); font-weight: 500; font-size: 13px; }
+  .toc .pg { font-family: var(--font-mono); font-size: 10px; color: var(--ink-mute); }
+
+  .print-cta {
+    position: fixed; top: 16px; right: 16px;
+    background: var(--accent); color: white;
+    padding: 10px 16px; border-radius: 6px;
+    font-family: var(--font-text); font-weight: 500; font-size: 13px;
+    border: none; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+    z-index: 100;
+  }
+</style>
+</head>
+<body>
+
+<button class="print-cta no-print" onclick="window.print()">Print → Save as PDF</button>
+
+<!-- ─────────── COVER ─────────── -->
+<div class="page" style="display:flex; flex-direction:column; justify-content:space-between;">
+  <div class="page-header">
+    <span class="brand">Family Graph</span>
+    <span class="meta">Design System · v1 · Institutional</span>
+  </div>
+
+  <div style="flex:1; display:flex; flex-direction:column; justify-content:center; max-width:9in;">
+    <div class="num-eyebrow" style="margin-bottom:14px;">FAMILY GRAPH · DESIGN SYSTEM v1</div>
+    <h1 class="cover">A vocabulary of <em>trust</em><br/>for a local-first<br/>family registry.</h1>
+    <p class="lede" style="margin-top:24px; font-size:14px; max-width:7.5in;">
+      Three things govern every screen: the <b style="color:var(--ink)">posture</b> (loopback, encrypted, pseudonymized, audited), the <b style="color:var(--ink)">identifier</b> (typed, opaque, permanent), and the <b style="color:var(--ink)">provenance</b> (which file, which run, which actor). The system makes those visible at every scale — from a 6px dot on a row to the rail across the top of every page.
+    </p>
+    <div style="display:flex; gap:32px; margin-top:36px;">
+      <div>
+        <div class="num-eyebrow">CONTEXT</div>
+        <div style="font-family:var(--font-display); font-size:15px; font-weight:500;">Local desktop service</div>
+        <div style="font-size:11px; color:var(--ink-mute);">Loopback HTTP API · 127.0.0.1:3500</div>
+      </div>
+      <div>
+        <div class="num-eyebrow">OPERATOR</div>
+        <div style="font-family:var(--font-display); font-size:15px; font-weight:500;">Single-user, no IT</div>
+        <div style="font-size:11px; color:var(--ink-mute);">Catholic school / parish business manager</div>
+      </div>
+      <div>
+        <div class="num-eyebrow">POSTURE</div>
+        <div style="font-family:var(--font-display); font-size:15px; font-weight:500;">PII vs pseudonym</div>
+        <div style="font-size:11px; color:var(--ink-mute);">Architectural, not just visual</div>
+      </div>
+      <div>
+        <div class="num-eyebrow">PARITY</div>
+        <div style="font-family:var(--font-display); font-size:15px; font-weight:500;">macOS &amp; Windows</div>
+        <div style="font-size:11px; color:var(--ink-mute);">Native chrome · identical content</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Family Graph · Institutional</span>
+    <span>St. Theresa Catholic School &amp; Parish</span>
+    <span>Cover · 01</span>
+  </div>
+</div>
+
+<!-- ─────────── TOC ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">Contents</span></div>
+  <div class="num-eyebrow">CONTENTS</div>
+  <h2 class="sec">Twelve pages, three layers.</h2>
+  <p class="lede" style="margin-top:8px; max-width:7in;">Foundations (color, type, identifiers, posture) define the language. Components express it. Screens prove it works in context. Implementation translates it for engineering.</p>
+  <div class="toc" style="margin-top:28px;">
+    <div><span><span class="num">01 ·</span> <span class="name">Cover</span></span><span class="pg">1</span></div>
+    <div><span><span class="num">02 ·</span> <span class="name">Contents</span></span><span class="pg">2</span></div>
+    <div><span><span class="num">03 ·</span> <span class="name">Posture vocabulary</span></span><span class="pg">3</span></div>
+    <div><span><span class="num">04 ·</span> <span class="name">Color tokens</span></span><span class="pg">4</span></div>
+    <div><span><span class="num">05 ·</span> <span class="name">Typography</span></span><span class="pg">5</span></div>
+    <div><span><span class="num">06 ·</span> <span class="name">Identifier system</span></span><span class="pg">6</span></div>
+    <div><span><span class="num">07 ·</span> <span class="name">Spacing &amp; layout</span></span><span class="pg">7</span></div>
+    <div><span><span class="num">08 ·</span> <span class="name">Components I — atoms</span></span><span class="pg">8</span></div>
+    <div><span><span class="num">09 ·</span> <span class="name">Components II — composites</span></span><span class="pg">9</span></div>
+    <div><span><span class="num">10 ·</span> <span class="name">Screen — Home / Overview</span></span><span class="pg">10</span></div>
+    <div><span><span class="num">11 ·</span> <span class="name">Cross-platform parity</span></span><span class="pg">11</span></div>
+    <div><span><span class="num">12 ·</span> <span class="name">Implementation handoff</span></span><span class="pg">12</span></div>
+  </div>
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Contents</span><span>02</span></div>
+</div>
+
+<!-- ─────────── 03 POSTURE ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">03 · Posture vocabulary</span></div>
+  <div class="num-eyebrow">03 · FOUNDATIONS</div>
+  <h2 class="sec">Posture vocabulary.</h2>
+  <p class="lede" style="margin-top:6px;">Five states a piece of family data can be in. Every one has a pill, a hue, and a rule for when it appears. The operator never has to ask <em>"is this safe to share."</em></p>
+
+  <div style="margin-top:18px;">
+    <div style="display:grid; grid-template-columns: 130px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule);"><span class="fg-pill loopback">LOOPBACK</span><div>Bind is 127.0.0.1 — nothing reaches the network.</div><div class="mono" style="color:var(--ink-faint); font-size:10px;">Status rail · health endpoint · /api/safe/*</div></div>
+    <div style="display:grid; grid-template-columns: 130px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule);"><span class="fg-pill encrypted">ENCRYPTED</span><div>Column ciphertext at rest (AES-256-GCM).</div><div class="mono" style="color:var(--ink-faint); font-size:10px;">Field-level sigil · backups · keyfile mode</div></div>
+    <div style="display:grid; grid-template-columns: 130px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule);"><span class="fg-pill pseudonym">PSEUDONYM</span><div>Identifiers in place of names. AI-safe by construction.</div><div class="mono" style="color:var(--ink-faint); font-size:10px;">Sanitize output · safe API · pseudonym view</div></div>
+    <div style="display:grid; grid-template-columns: 130px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule);"><span class="fg-pill pii">PII</span><div>Real names visible. Operator session only.</div><div class="mono" style="color:var(--ink-faint); font-size:10px;">Dashboard · /api/families/:code · audit</div></div>
+    <div style="display:grid; grid-template-columns: 130px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule);"><span class="fg-pill consented">CONSENTED</span><div>PII left the machine — explicit consent + tier-2 audit.</div><div class="mono" style="color:var(--ink-faint); font-size:10px;">Exports · external-export endpoint</div></div>
+  </div>
+
+  <div class="grid-2" style="margin-top:24px;">
+    <div class="spec">
+      <h3>Where posture appears</h3>
+      <div class="annot">ambient signals</div>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li><b>Status rail</b> — pinned at top of every screen. Never collapsed, never hidden.</li>
+        <li><b>Field-level sigil</b> — 5px dot beside any sensitive value.</li>
+        <li><b>Pill</b> — at the row level (audit row, conflict row, export row).</li>
+        <li><b>Header toggle</b> — PII ↔ Pseudonym view. Affects the whole page.</li>
+      </ul>
+    </div>
+    <div class="spec">
+      <h3>Hue policy</h3>
+      <div class="annot">oklch · matched chroma</div>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li><b>loopback</b> · hue 142 (green) — your machine only</li>
+        <li><b>encrypted</b> · hue 200 (cyan) — ciphertext at rest</li>
+        <li><b>pseudonym</b> · hue 250 (indigo) — AI-safe</li>
+        <li><b>pii</b> · hue 30 (amber) — real names visible</li>
+        <li><b>consented</b> · hue 350 (rose) — left the machine</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Posture vocabulary</span><span>03</span></div>
+</div>
+
+<!-- ─────────── 04 COLOR ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">04 · Color tokens</span></div>
+  <div class="num-eyebrow">04 · FOUNDATIONS</div>
+  <h2 class="sec">Color tokens.</h2>
+  <p class="lede" style="margin-top:6px;">Institutional palette: cool neutrals with an indigo accent. Three surface layers, three ink weights, two accent shades, five posture hues. All values are defined in <code class="mono">oklch()</code>; copy the resolved hex in the rightmost column for tools that don't support oklch.</p>
+
+  <div class="grid-3" style="margin-top:18px;">
+    <div class="spec">
+      <h3>Surfaces</h3>
+      <div class="annot">three layers</div>
+      <table class="tokens">
+        <tr><td class="swatch"><span style="background:var(--bg-sunken)"></span></td><td class="var">--bg-sunken</td><td class="val">oklch(97% 0.004 250)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--bg)"></span></td><td class="var">--bg</td><td class="val">oklch(99% 0.002 250)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--bg-elev)"></span></td><td class="var">--bg-elev</td><td class="val">oklch(100% 0 0)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--rule)"></span></td><td class="var">--rule</td><td class="val">oklch(92% 0.006 250)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--rule-strong)"></span></td><td class="var">--rule-strong</td><td class="val">oklch(85% 0.008 250)</td></tr>
+      </table>
+    </div>
+    <div class="spec">
+      <h3>Ink</h3>
+      <div class="annot">three weights</div>
+      <table class="tokens">
+        <tr><td class="swatch"><span style="background:var(--ink)"></span></td><td class="var">--ink</td><td class="val">oklch(18% 0.01 250)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--ink-mute)"></span></td><td class="var">--ink-mute</td><td class="val">oklch(46% 0.01 250)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--ink-faint)"></span></td><td class="var">--ink-faint</td><td class="val">oklch(68% 0.008 250)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--accent)"></span></td><td class="var">--accent</td><td class="val">oklch(48% 0.14 250)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--accent-soft)"></span></td><td class="var">--accent-soft</td><td class="val">oklch(95% 0.025 250)</td></tr>
+      </table>
+    </div>
+    <div class="spec">
+      <h3>Posture</h3>
+      <div class="annot">resolved per theme</div>
+      <table class="tokens">
+        <tr><td class="swatch"><span style="background:var(--c-loopback)"></span></td><td class="var">--c-loopback</td><td class="val">oklch(45% 0.13 142)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--c-encrypted)"></span></td><td class="var">--c-encrypted</td><td class="val">oklch(48% 0.12 200)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--c-pseudonym)"></span></td><td class="var">--c-pseudonym</td><td class="val">oklch(50% 0.14 250)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--c-pii)"></span></td><td class="var">--c-pii</td><td class="val">oklch(55% 0.14 30)</td></tr>
+        <tr><td class="swatch"><span style="background:var(--c-consented)"></span></td><td class="var">--c-consented</td><td class="val">oklch(52% 0.16 350)</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div style="margin-top:18px;" class="spec">
+    <h3>Posture · paired backgrounds</h3>
+    <div class="annot">use --c-{state}-bg for filled pills, --c-{state} for text + dot</div>
+    <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:10px; margin-top:10px;">
+      <div><div style="height:38px; background:var(--c-loopback-bg); border-radius:3px; border:0.5px solid var(--rule);"></div><div style="margin-top:6px;"><span class="fg-pill loopback">LOOPBACK</span></div></div>
+      <div><div style="height:38px; background:var(--c-encrypted-bg); border-radius:3px; border:0.5px solid var(--rule);"></div><div style="margin-top:6px;"><span class="fg-pill encrypted">ENCRYPTED</span></div></div>
+      <div><div style="height:38px; background:var(--c-pseudonym-bg); border-radius:3px; border:0.5px solid var(--rule);"></div><div style="margin-top:6px;"><span class="fg-pill pseudonym">PSEUDONYM</span></div></div>
+      <div><div style="height:38px; background:var(--c-pii-bg); border-radius:3px; border:0.5px solid var(--rule);"></div><div style="margin-top:6px;"><span class="fg-pill pii">PII</span></div></div>
+      <div><div style="height:38px; background:var(--c-consented-bg); border-radius:3px; border:0.5px solid var(--rule);"></div><div style="margin-top:6px;"><span class="fg-pill consented">CONSENTED</span></div></div>
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Color tokens</span><span>04</span></div>
+</div>
+
+<!-- ─────────── 05 TYPE ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">05 · Typography</span></div>
+  <div class="num-eyebrow">05 · FOUNDATIONS</div>
+  <h2 class="sec">Typography.</h2>
+  <p class="lede" style="margin-top:6px; max-width:7in;">Three roles — <b style="color:var(--ink)">Display</b> for institution names &amp; section titles, <b style="color:var(--ink)">Text</b> for body and forms, <b style="color:var(--ink)">Mono</b> for everything that's truly data — identifiers, hashes, paths, env vars, log lines. The mono lane is non-negotiable; an operator must always know "this is a literal string the system cares about."</p>
+
+  <div style="margin-top:14px;">
+    <div style="display:grid; grid-template-columns: 130px 1fr auto; gap:18px; align-items:baseline; padding:14px 0; border-bottom:0.5px solid var(--rule);">
+      <div><div class="num-eyebrow">DISPLAY</div><div class="mono" style="font-size:10px; color:var(--ink-faint); margin-top:2px;">Inter Tight 500 · 44/48</div></div>
+      <div style="font-family: var(--font-display); font-size: 44px; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em;">St. Theresa Catholic School &amp; Parish</div>
+      <div class="mono" style="font-size:10px; color:var(--ink-faint);">--t-display</div>
+    </div>
+    <div style="display:grid; grid-template-columns: 130px 1fr auto; gap:18px; align-items:baseline; padding:14px 0; border-bottom:0.5px solid var(--rule);">
+      <div><div class="num-eyebrow">HEAD 1</div><div class="mono" style="font-size:10px; color:var(--ink-faint); margin-top:2px;">Inter Tight 600 · 26/30</div></div>
+      <div style="font-family: var(--font-display); font-size: 26px; font-weight: 600; line-height: 1.15; letter-spacing: -0.015em;">5 conflicts open</div>
+      <div class="mono" style="font-size:10px; color:var(--ink-faint);">--t-h1</div>
+    </div>
+    <div style="display:grid; grid-template-columns: 130px 1fr auto; gap:18px; align-items:baseline; padding:14px 0; border-bottom:0.5px solid var(--rule);">
+      <div><div class="num-eyebrow">HEAD 2</div><div class="mono" style="font-size:10px; color:var(--ink-faint); margin-top:2px;">Inter Tight 600 · 20/26</div></div>
+      <div style="font-family: var(--font-display); font-size: 20px; font-weight: 600; line-height: 1.3; letter-spacing: -0.01em;">Recent imports</div>
+      <div class="mono" style="font-size:10px; color:var(--ink-faint);">--t-h2</div>
+    </div>
+    <div style="display:grid; grid-template-columns: 130px 1fr auto; gap:18px; align-items:baseline; padding:14px 0; border-bottom:0.5px solid var(--rule);">
+      <div><div class="num-eyebrow">BODY</div><div class="mono" style="font-size:10px; color:var(--ink-faint); margin-top:2px;">Inter 400 · 14/21</div></div>
+      <div style="font-family: var(--font-text); font-size: 14px; line-height: 1.5;">Drop a CSV in the watch folder, or paste rows from FACTS. Every file is parsed, reconciled against the ledger, and tagged with category + free-form tags so the operator can audit provenance later.</div>
+      <div class="mono" style="font-size:10px; color:var(--ink-faint);">--t-body</div>
+    </div>
+    <div style="display:grid; grid-template-columns: 130px 1fr auto; gap:18px; align-items:baseline; padding:14px 0; border-bottom:0.5px solid var(--rule);">
+      <div><div class="num-eyebrow">MONO DATA</div><div class="mono" style="font-size:10px; color:var(--ink-faint); margin-top:2px;">JetBrains Mono 500 · 13/19</div></div>
+      <div style="font-family: var(--font-mono); font-size: 13px; font-weight: 500;">p_e4d2f8a1 · facts_q1_2026.csv · imp_2026_04_28a</div>
+      <div class="mono" style="font-size:10px; color:var(--ink-faint);">--t-mono-data</div>
+    </div>
+    <div style="display:grid; grid-template-columns: 130px 1fr auto; gap:18px; align-items:baseline; padding:14px 0; border-bottom:0.5px solid var(--rule);">
+      <div><div class="num-eyebrow">MICRO</div><div class="mono" style="font-size:10px; color:var(--ink-faint); margin-top:2px;">JetBrains Mono 500 · 11/14</div></div>
+      <div style="font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.02em;">LOOPBACK · 127.0.0.1:3500 · ENCRYPTED · AES-256-GCM</div>
+      <div class="mono" style="font-size:10px; color:var(--ink-faint);">--t-micro</div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:18px;">
+    <div class="spec">
+      <h3>Family stacks</h3>
+      <pre class="code">--font-display: "Inter Tight", "Inter",
+                -apple-system, system-ui, sans-serif;
+--font-text:    "Inter", -apple-system,
+                system-ui, sans-serif;
+--font-mono:    "JetBrains Mono", ui-monospace,
+                "SF Mono", "Cascadia Mono",
+                Consolas, monospace;</pre>
+    </div>
+    <div class="spec">
+      <h3>Tabular numbers</h3>
+      <div class="annot">always on for data</div>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li>Mono: <code class="mono">font-variant-numeric: tabular-nums</code> by default — counters, sparklines, audit timestamps stay aligned.</li>
+        <li>Display + Text: tabular only on numbers used for comparison (counter cards, totals).</li>
+        <li>Use <code class="mono">font-feature-settings: "ss01"</code> on Inter for the alternate single-story <code>a</code> in code contexts.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Typography</span><span>05</span></div>
+</div>
+
+<!-- ─────────── 06 IDENTIFIERS ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">06 · Identifier system</span></div>
+  <div class="num-eyebrow">06 · FOUNDATIONS</div>
+  <h2 class="sec">Identifier system.</h2>
+  <p class="lede" style="margin-top:6px;">Every entity has a typed prefix, a non-semantic 8-hex code, and a permanent slot in the ledger. <b style="color:var(--ink)">Hue is consistent</b>: family is always indigo, person always cyan, address always green. The operator builds spatial muscle memory: <em>"I'm looking at a person."</em></p>
+
+  <div style="margin-top:18px;">
+    <div style="display:grid; grid-template-columns: 200px 110px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule); align-items:center;">
+      <span class="fg-code family" style="font-size:15px;">f_a7b3c91d</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">^f_[0-9a-f]{8}$</span>
+      <span>Family · the household envelope</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">permanent · alias on merge · transitively followed</span>
+    </div>
+    <div style="display:grid; grid-template-columns: 200px 110px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule); align-items:center;">
+      <span class="fg-code person" style="font-size:15px;">p_e4d2f8a1</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">^p_[0-9a-f]{8}$</span>
+      <span>Person · stable across family changes</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">a child emancipating gets a new family, not a new person</span>
+    </div>
+    <div style="display:grid; grid-template-columns: 200px 110px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule); align-items:center;">
+      <span class="fg-code address" style="font-size:15px;">addr_4c7f2a91</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">^addr_[0-9a-f]{8}$</span>
+      <span>Address · dedup'd by HMAC</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">street normalized → HMAC-SHA256 → equality</span>
+    </div>
+    <div style="display:grid; grid-template-columns: 200px 110px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule); align-items:center;">
+      <span class="fg-code email" style="font-size:15px;">e_b91c4f23</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">^e_[0-9a-f]{8}$</span>
+      <span>Email · ciphertext + HMAC</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">no substring search; equality only</span>
+    </div>
+    <div style="display:grid; grid-template-columns: 200px 110px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule); align-items:center;">
+      <span class="fg-code phone" style="font-size:15px;">ph_2d8a5e91</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">^ph_[0-9a-f]{8}$</span>
+      <span>Phone · ciphertext + HMAC</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">E.164 normalized before hash</span>
+    </div>
+    <div style="display:grid; grid-template-columns: 200px 110px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule); align-items:center;">
+      <span class="mono" style="font-size:15px;">conf_b1c2d3e4</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">conf_</span>
+      <span>Conflict · resolution queue row</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">open · merged · rejected · dismissed</span>
+    </div>
+    <div style="display:grid; grid-template-columns: 200px 110px 1fr 1fr; gap:14px; padding:10px 0; border-bottom:0.5px solid var(--rule); align-items:center;">
+      <span class="mono" style="font-size:15px;">tk_a1b2c3d4</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">tk_</span>
+      <span>Token set · sanitize round-trip</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">mappings_ct encrypted at rest</span>
+    </div>
+    <div style="display:grid; grid-template-columns: 200px 110px 1fr 1fr; gap:14px; padding:10px 0; align-items:center;">
+      <span class="mono" style="font-size:15px;">au_aabbccdd</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">au_</span>
+      <span>Audit row · tier-1 or tier-2</span>
+      <span class="mono" style="font-size:10px; color:var(--ink-faint);">tier-1 sweepable · tier-2 forever</span>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:18px;">
+    <div class="spec">
+      <h3>Permanence rules</h3>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li>Codes are assigned once. Never reused, never reissued.</li>
+        <li>On merge, loser's code becomes a permanent alias of the winner.</li>
+        <li>Person codes are stable across family-membership changes.</li>
+        <li>Family codes do not change when household composition changes.</li>
+      </ul>
+    </div>
+    <div class="spec">
+      <h3>Display rule</h3>
+      <pre class="code">.fg-code.family   { color: oklch(58% 0.12 250); }
+.fg-code.person   { color: oklch(58% 0.12 200); }
+.fg-code.address  { color: oklch(58% 0.12 142); }
+.fg-code.email    { color: oklch(58% 0.12 90); }
+.fg-code.phone    { color: oklch(58% 0.12 30); }</pre>
+      <div class="mono" style="font-size:10px; color:var(--ink-faint); margin-top:6px;">always JetBrains Mono · no underline · no link unless hover</div>
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Identifier system</span><span>06</span></div>
+</div>
+
+<!-- ─────────── 07 SPACING ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">07 · Spacing &amp; layout</span></div>
+  <div class="num-eyebrow">07 · FOUNDATIONS</div>
+  <h2 class="sec">Spacing &amp; layout.</h2>
+  <p class="lede" style="margin-top:6px;">A 4-pt base scale. The dashboard is built on a 1440-wide stage with a 28px page gutter. Card padding is 14×16 (compact rows) or 16×18 (overview cards). Row height is 40-48px depending on density.</p>
+
+  <div class="grid-2" style="margin-top:18px;">
+    <div class="spec">
+      <h3>Spacing scale</h3>
+      <div class="annot">4 / 8 / 12 / 16 / 20 / 24 / 32 / 40</div>
+      <div style="display:flex; gap:6px; align-items:flex-end; margin-top:14px;">
+        <div style="background:var(--accent-soft); height:24px; width:4px;"></div>
+        <div style="background:var(--accent-soft); height:24px; width:8px;"></div>
+        <div style="background:var(--accent-soft); height:24px; width:12px;"></div>
+        <div style="background:var(--accent-soft); height:24px; width:16px;"></div>
+        <div style="background:var(--accent-soft); height:24px; width:20px;"></div>
+        <div style="background:var(--accent-soft); height:24px; width:24px;"></div>
+        <div style="background:var(--accent-soft); height:24px; width:32px;"></div>
+        <div style="background:var(--accent-soft); height:24px; width:40px;"></div>
+      </div>
+      <div style="display:flex; gap:6px; margin-top:4px; font-family:var(--font-mono); font-size:9px; color:var(--ink-faint);">
+        <span style="width:4px; text-align:center;">4</span>
+        <span style="width:8px; text-align:center;">8</span>
+        <span style="width:12px; text-align:center;">12</span>
+        <span style="width:16px; text-align:center;">16</span>
+        <span style="width:20px; text-align:center;">20</span>
+        <span style="width:24px; text-align:center;">24</span>
+        <span style="width:32px; text-align:center;">32</span>
+        <span style="width:40px; text-align:center;">40</span>
+      </div>
+    </div>
+    <div class="spec">
+      <h3>Radius scale</h3>
+      <div class="annot">institutional theme</div>
+      <div style="display:flex; gap:14px; margin-top:14px; align-items:flex-end;">
+        <div><div style="width:48px; height:48px; background:var(--accent-soft); border-radius:4px; border:0.5px solid var(--rule);"></div><div style="font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); margin-top:6px;">--radius-sm 4px</div></div>
+        <div><div style="width:48px; height:48px; background:var(--accent-soft); border-radius:6px; border:0.5px solid var(--rule);"></div><div style="font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); margin-top:6px;">--radius-md 6px</div></div>
+        <div><div style="width:48px; height:48px; background:var(--accent-soft); border-radius:10px; border:0.5px solid var(--rule);"></div><div style="font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); margin-top:6px;">--radius-lg 10px</div></div>
+        <div><div style="width:48px; height:48px; background:var(--accent-soft); border-radius:999px; border:0.5px solid var(--rule);"></div><div style="font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); margin-top:6px;">pill 999px</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:14px;">
+    <div class="spec">
+      <h3>Page grid</h3>
+      <pre class="code">.stage { width: 1440px; margin: 0 auto; }
+.page  { padding: 20px 28px; }
+.main + sidebar:
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 20px;</pre>
+    </div>
+    <div class="spec">
+      <h3>Card density</h3>
+      <pre class="code">.card.compact { padding: 14px 16px; }
+.card.regular { padding: 16px 18px; }
+.row          { padding: 10px 14px; line-height: 1.4; }
+.row.dense    { padding:  6px 12px; line-height: 1.3; }</pre>
+    </div>
+  </div>
+
+  <div class="spec" style="margin-top:14px;">
+    <h3>Shadows &amp; rules</h3>
+    <pre class="code">--shadow-card: 0 1px 2px oklch(80% 0.01 250 / 0.4), 0 0 0 0.5px oklch(88% 0.008 250);
+border-color uses --rule (.5px) for cell separators, --rule-strong (1px) for emphasis.
+Forensic theme uses inset rings, not shadows. Archival uses a 0.5px border, no shadow.</pre>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Spacing &amp; layout</span><span>07</span></div>
+</div>
+
+<!-- ─────────── 08 ATOMS ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">08 · Components I — atoms</span></div>
+  <div class="num-eyebrow">08 · COMPONENTS</div>
+  <h2 class="sec">Atoms.</h2>
+  <p class="lede" style="margin-top:6px;">The smallest reusable pieces. Each one is a single CSS class and zero JavaScript. Composing them builds every screen.</p>
+
+  <div class="grid-2" style="margin-top:18px;">
+    <div class="spec">
+      <h3>Posture pill</h3>
+      <div class="annot">.fg-pill.&lt;state&gt;</div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        <span class="fg-pill loopback">LOOPBACK</span>
+        <span class="fg-pill encrypted">ENCRYPTED</span>
+        <span class="fg-pill pseudonym">PSEUDONYM</span>
+        <span class="fg-pill pii">PII</span>
+        <span class="fg-pill consented">CONSENTED</span>
+        <span class="fg-pill muted">unassigned</span>
+      </div>
+      <pre class="code" style="margin-top:10px;">&lt;span class="fg-pill loopback"&gt;LOOPBACK&lt;/span&gt;</pre>
+    </div>
+    <div class="spec">
+      <h3>Buttons</h3>
+      <div class="annot">.fg-btn · .primary · .ghost</div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="fg-btn primary">Run import</button>
+        <button class="fg-btn">Preview</button>
+        <button class="fg-btn ghost">Cancel</button>
+      </div>
+      <pre class="code" style="margin-top:10px;">&lt;button class="fg-btn primary"&gt;Run import&lt;/button&gt;</pre>
+    </div>
+    <div class="spec">
+      <h3>Identifier code</h3>
+      <div class="annot">.fg-code.&lt;type&gt;</div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <span class="fg-code family">f_a7b3c91d</span>
+        <span class="fg-code person">p_e4d2f8a1</span>
+        <span class="fg-code address">addr_4c7f2a91</span>
+        <span class="fg-code email">e_b91c4f23</span>
+        <span class="fg-code phone">ph_2d8a5e91</span>
+      </div>
+    </div>
+    <div class="spec">
+      <h3>Provenance dot</h3>
+      <div class="annot">.fg-prov.&lt;source&gt;</div>
+      <div style="display:flex; flex-direction:column; gap:6px; font-family:var(--font-mono); font-size:11px;">
+        <div><span class="fg-prov facts"></span> facts_q1_2026.csv <span style="color:var(--ink-faint);">· FACTS</span></div>
+        <div><span class="fg-prov renweb"></span> renweb_apr.xlsx <span style="color:var(--ink-faint);">· RenWeb</span></div>
+        <div><span class="fg-prov mp"></span> ministryplatform.csv <span style="color:var(--ink-faint);">· Ministry Platform</span></div>
+        <div><span class="fg-prov sheets"></span> donor-list-mar.xlsx <span style="color:var(--ink-faint);">· Excel / Sheets</span></div>
+      </div>
+    </div>
+    <div class="spec" style="grid-column: span 2;">
+      <h3>Status rail</h3>
+      <div class="annot">pinned · top of every screen · never collapsed</div>
+      <div class="fg-rail" style="border-radius:4px;">
+        <span class="fg-rail-item"><span class="dot" style="background:var(--c-loopback)"></span><span style="color:var(--c-loopback)">LOOPBACK</span><span>127.0.0.1:3500</span></span>
+        <span style="color:var(--rule-strong)">│</span>
+        <span class="fg-rail-item"><span class="dot" style="background:var(--c-encrypted)"></span><span style="color:var(--c-encrypted)">ENCRYPTED</span><span>AES-256-GCM</span></span>
+        <span style="color:var(--rule-strong)">│</span>
+        <span class="fg-rail-item"><span class="dot" style="background:var(--c-pseudonym)"></span><span style="color:var(--c-pseudonym)">AUDIT LIVE</span><span>actor=operator</span></span>
+        <span style="margin-left:auto;" class="fg-rail-item"><span>schema 17</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Atoms</span><span>08</span></div>
+</div>
+
+<!-- ─────────── 09 COMPOSITES ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">09 · Components II — composites</span></div>
+  <div class="num-eyebrow">09 · COMPONENTS</div>
+  <h2 class="sec">Composites.</h2>
+  <p class="lede" style="margin-top:6px;">Recurring patterns assembled from atoms. Use these as-is across screens — every list view, every detail page, every audit trail follows the same skeleton.</p>
+
+  <div class="grid-2" style="margin-top:14px;">
+    <div class="spec">
+      <h3>Counter card</h3>
+      <div class="annot">eyebrow · big number · sparkline · delta</div>
+      <div class="fg-card" style="padding:14px 16px;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span class="fg-eyebrow">FAMILIES</span>
+          <span class="mono" style="font-size:10px; color:var(--ink-faint);">+14 · 30d</span>
+        </div>
+        <div style="display:flex; align-items:flex-end; justify-content:space-between; margin-top:8px;">
+          <div class="mono" style="font-size:28px; font-weight:500; letter-spacing:-0.02em; line-height:1;">1,284</div>
+          <svg viewBox="0 0 120 32" style="width:110px; height:32px;"><path fill="var(--accent)" fill-opacity="0.18" d="M0,24 L20,22 L40,18 L60,16 L80,12 L100,8 L120,5 L120,32 L0,32 Z"/><path stroke="var(--accent)" stroke-width="1.25" fill="none" d="M0,24 L20,22 L40,18 L60,16 L80,12 L100,8 L120,5"/></svg>
+        </div>
+        <div class="mono" style="font-size:10px; color:var(--ink-faint); margin-top:4px;">active</div>
+      </div>
+    </div>
+    <div class="spec">
+      <h3>Conflict row</h3>
+      <div class="annot">identifier-pair · narrative · status · 3-key actions</div>
+      <div class="fg-card" style="padding:0;">
+        <div style="display:grid; grid-template-columns: auto 1fr auto auto; gap:14px; padding:10px 14px; border-bottom:0.5px solid var(--rule); align-items:center;">
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <span class="fg-code person">p_e4d2f8a1</span>
+            <span class="mono" style="font-size:10px; color:var(--ink-faint); margin-left:14px;">↕ vs</span>
+            <span class="fg-code person">p_9a3b1c7d</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:3px; padding-left:8px;">
+            <div style="font-size:13px;">name + dob within 0.86</div>
+            <div class="mono" style="font-size:10px; color:var(--ink-faint);">from facts_q1_2026.csv · 2h ago</div>
+          </div>
+          <span class="fg-pill muted">unassigned</span>
+          <div style="display:flex; gap:4px;"><button class="fg-btn ghost">←</button><button class="fg-btn ghost">→</button><button class="fg-btn ghost">✕</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="spec">
+      <h3>Audit feed item</h3>
+      <div class="annot">timestamp · action pill · actor → target · note</div>
+      <div style="display:grid; grid-template-columns: auto auto 1fr; gap:12px; padding:8px 0; align-items:center;">
+        <span class="mono" style="font-size:10px; color:var(--ink-faint);">09:30:15</span>
+        <span class="fg-pill consented">external_export</span>
+        <div>
+          <div class="mono" style="font-size:13px;"><span style="color:var(--ink-mute);">operator →</span> 9 families</div>
+          <div class="mono" style="font-size:10px; color:var(--ink-faint);">→ board-report.csv (PII consented) <span class="fg-pill consented" style="margin-left:6px;">tier-2</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="spec">
+      <h3>Import row</h3>
+      <div class="annot">prov-dot · file · category · totals · status</div>
+      <div style="display:grid; grid-template-columns: 1fr auto auto auto; gap:14px; padding:8px 0; align-items:center;">
+        <div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="fg-prov facts"></span>
+            <span class="mono" style="font-size:13px;">facts_q1_2026.csv</span>
+            <span class="fg-pill muted">school</span>
+          </div>
+          <div class="mono" style="font-size:10px; color:var(--ink-faint); margin-left:14px;">FACTS · today 09:14 · by operator</div>
+        </div>
+        <div class="mono" style="font-size:13px; text-align:right;">
+          <div>312 rows</div>
+          <div style="font-size:10px; color:var(--ink-faint);">+14 new · 281 attached</div>
+        </div>
+        <span class="fg-pill pii">4 conflicts</span>
+        <button class="fg-btn ghost">→</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Composites</span><span>09</span></div>
+</div>
+
+<!-- ─────────── 10 SCREEN ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">10 · Screen — Home / Overview</span></div>
+  <div class="num-eyebrow">10 · SCREENS</div>
+  <h2 class="sec">Home / Overview.</h2>
+  <p class="lede" style="margin-top:6px;">The operator's morning-coffee dashboard. Posture-as-ambient-signal is the through-line: status rail at top, posture summary in sidebar, pseudonym toggle in header. Every counter, row, and audit event reinforces "you can see the state of your data without opening it."</p>
+
+  <div style="margin-top:14px; transform: scale(0.62); transform-origin: top left; width: 161%; height: 5.5in; overflow: hidden;">
+    <div class="preview-frame" style="width:1440px;">
+      <div class="browser-bar">
+        <div class="lights"><span class="light r"></span><span class="light y"></span><span class="light g"></span></div>
+        <span class="url-title">Family Graph — St. Theresa Catholic School &amp; Parish</span>
+        <span class="url">http://127.0.0.1:3500/</span>
+      </div>
+      <iframe src="Home Overview.html" style="width:1440px; height:900px; border:none; display:block;"></iframe>
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Home / Overview</span><span>10</span></div>
+</div>
+
+<!-- ─────────── 11 PARITY ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">11 · Cross-platform parity</span></div>
+  <div class="num-eyebrow">11 · IMPLEMENTATION</div>
+  <h2 class="sec">Native chrome. Identical content.</h2>
+  <p class="lede" style="margin-top:6px;">Family Graph runs on macOS and Windows. The <em>window controls</em> defer to the OS — traffic lights on Mac, min/max/close on Windows — so the app feels at home on each. Everything below the title bar — the status rail, the header, every layout, every pill, every glyph — is pixel-identical.</p>
+
+  <!-- Visual diptych: Mac vs Windows chrome -->
+  <div class="grid-2" style="margin-top:18px; gap:16px;">
+    <div>
+      <div class="num-eyebrow" style="margin-bottom:6px;">macOS</div>
+      <div style="border:0.5px solid var(--rule); border-radius:6px; overflow:hidden; background:#fff;">
+        <!-- Mac title bar -->
+        <div style="height:28px; background:linear-gradient(to bottom, #ececec, #d8d8d8); display:flex; align-items:center; padding:0 12px; border-bottom:0.5px solid #b8b8b8;">
+          <div style="display:flex; gap:8px;">
+            <span style="width:12px; height:12px; border-radius:50%; background:#ff5f57;"></span>
+            <span style="width:12px; height:12px; border-radius:50%; background:#febc2e;"></span>
+            <span style="width:12px; height:12px; border-radius:50%; background:#28c840;"></span>
+          </div>
+          <div style="flex:1; text-align:center; font-size:11px; color:#3a3a3a; font-weight:500;">Family Graph</div>
+          <div style="width:54px;"></div>
+        </div>
+        <!-- Status rail (left padding = 84px on mac) -->
+        <div style="height:32px; background:var(--bg-sunken); border-bottom:0.5px solid var(--rule); display:flex; align-items:center; gap:14px; padding:0 14px 0 84px; font-family:var(--font-mono); font-size:10px; color:var(--ink-mute); letter-spacing:0.04em; text-transform:uppercase;">
+          <span style="display:flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:oklch(58% 0.16 142);"></span>LOOPBACK · 127.0.0.1</span>
+          <span style="display:flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:oklch(58% 0.16 200);"></span>ENCRYPTED</span>
+          <span style="display:flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:oklch(58% 0.14 250);"></span>AUDIT LIVE</span>
+        </div>
+        <!-- Content stub -->
+        <div style="height:120px; padding:18px 24px; display:flex; flex-direction:column; gap:8px;">
+          <div style="font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); letter-spacing:0.1em; text-transform:uppercase;">FAMILY GRAPH · LOCAL REGISTRY</div>
+          <div style="font-family:var(--font-display); font-size:20px; font-weight:600;">St. Theresa Catholic School &amp; Parish</div>
+          <div style="font-family:var(--font-mono); font-size:10px; color:var(--ink-mute);">profile=parochial · operator=registrar</div>
+        </div>
+      </div>
+      <div style="font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); margin-top:6px; letter-spacing:0.04em; text-transform:uppercase;">decorations: true · titleBarStyle: transparent · rail padding-left: 84px</div>
+    </div>
+
+    <div>
+      <div class="num-eyebrow" style="margin-bottom:6px;">Windows 11</div>
+      <div style="border:0.5px solid var(--rule); border-radius:6px; overflow:hidden; background:#fff;">
+        <!-- Windows title bar -->
+        <div style="height:32px; background:#f5f6f8; display:flex; align-items:center; padding:0; border-bottom:0.5px solid var(--rule);">
+          <div style="flex:1; padding-left:12px; font-size:11px; color:#3a3a3a; font-weight:500;">Family Graph</div>
+          <div style="display:flex; height:100%;">
+            <div style="width:46px; display:flex; align-items:center; justify-content:center; color:#3a3a3a;"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><line x1="0" y1="5" x2="10" y2="5"/></svg></div>
+            <div style="width:46px; display:flex; align-items:center; justify-content:center; color:#3a3a3a;"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="0.5" width="9" height="9"/></svg></div>
+            <div style="width:46px; display:flex; align-items:center; justify-content:center; color:#3a3a3a;"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><line x1="0" y1="0" x2="10" y2="10"/><line x1="10" y1="0" x2="0" y2="10"/></svg></div>
+          </div>
+        </div>
+        <!-- Status rail (left padding = 14px on windows) -->
+        <div style="height:32px; background:var(--bg-sunken); border-bottom:0.5px solid var(--rule); display:flex; align-items:center; gap:14px; padding:0 14px; font-family:var(--font-mono); font-size:10px; color:var(--ink-mute); letter-spacing:0.04em; text-transform:uppercase;">
+          <span style="display:flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:oklch(58% 0.16 142);"></span>LOOPBACK · 127.0.0.1</span>
+          <span style="display:flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:oklch(58% 0.16 200);"></span>ENCRYPTED</span>
+          <span style="display:flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:oklch(58% 0.14 250);"></span>AUDIT LIVE</span>
+        </div>
+        <!-- Content stub (identical) -->
+        <div style="height:120px; padding:18px 24px; display:flex; flex-direction:column; gap:8px;">
+          <div style="font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); letter-spacing:0.1em; text-transform:uppercase;">FAMILY GRAPH · LOCAL REGISTRY</div>
+          <div style="font-family:var(--font-display); font-size:20px; font-weight:600;">St. Theresa Catholic School &amp; Parish</div>
+          <div style="font-family:var(--font-mono); font-size:10px; color:var(--ink-mute);">profile=parochial · operator=registrar</div>
+        </div>
+      </div>
+      <div style="font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); margin-top:6px; letter-spacing:0.04em; text-transform:uppercase;">decorations: true · captionColor: #f5f6f8 · rail padding-left: 14px</div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:18px;">
+    <div class="spec">
+      <h3>What's native</h3>
+      <div class="annot">defer to the OS</div>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li><b>Title bar &amp; window controls.</b> Set <code class="mono">decorations: true</code> in Tauri. macOS draws traffic lights on the left; Windows draws min/max/close on the right.</li>
+        <li><b>Window dragging.</b> Free — the OS handles it. No <code class="mono">-webkit-app-region: drag</code> needed.</li>
+        <li><b>Snap, fullscreen, mission-control.</b> All native gestures work because we don't override the frame.</li>
+      </ul>
+    </div>
+    <div class="spec">
+      <h3>What's identical</h3>
+      <div class="annot">brand-owned, edge to edge</div>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li><b>Status rail</b> (32px, loopback / encrypted / audit). The first row of pixels inside the window. Same on both OSes.</li>
+        <li><b>All content below it</b> — header, posture pills, identifier hues, provenance dots, conflict rows, audit feed, scrollbars. Pixel-diff and they match within 1px.</li>
+        <li><b>Fonts.</b> Inter, Inter Tight, JetBrains Mono — bundled as WOFF2, never CDN, never system fallback.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:14px;">
+    <div class="spec">
+      <h3>Per-OS refinements</h3>
+      <pre class="code">// macOS — flush the rail under the traffic lights
+#[cfg(target_os = "macos")]
+window.set_title_bar_style(TitleBarStyle::Transparent)?;
+
+// Windows 11 — tint the OS caption bar to match
+#[cfg(target_os = "windows")]
+window.set_decorations_color("#f5f6f8")?;
+
+// CSS — set once at boot
+:root[data-platform="mac"] .fg-rail { padding-left: 84px; }
+:root[data-platform="win"] .fg-rail { padding-left: 14px; }</pre>
+    </div>
+    <div class="spec">
+      <h3>Pixel parity gotchas</h3>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li><b>Windows DPI.</b> Defaults to 100% but renders at 125% / 150% on many displays. Test all three. 0.5px borders may need a 1px fallback at &lt;2× DPI.</li>
+        <li><b>Scrollbars.</b> Force the custom 8px thumb everywhere — Windows default is 17px and breaks rhythm.</li>
+        <li><b>Font smoothing.</b> Set <code class="mono">-webkit-font-smoothing: antialiased</code> + <code class="mono">-moz-osx-font-smoothing: grayscale</code> globally; documents intent on both OSes.</li>
+        <li><b>OKLCH.</b> Chromium 111+ supports it natively (Tauri/Electron are fine). For PDF exports, resolve to hex at build time.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>Cross-platform parity</span><span>11</span></div>
+</div>
+
+<!-- ─────────── 12 HANDOFF ─────────── -->
+<div class="page">
+  <div class="page-header"><span class="brand">Family Graph</span><span class="meta">12 · Implementation handoff</span></div>
+  <div class="num-eyebrow">12 · IMPLEMENTATION</div>
+  <h2 class="sec">Implementation handoff.</h2>
+  <p class="lede" style="margin-top:6px;">Engineering reads <b style="color:var(--ink)">CLAUDE_CODE_HANDOFF.md</b> first. It contains the full token export, file layout, component contracts, and the "do this, not that" rules that won't be obvious from reading the existing dashboard.</p>
+
+  <div class="grid-2" style="margin-top:18px;">
+    <div class="spec">
+      <h3>Files in the handoff package</h3>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li><code class="mono">CLAUDE_CODE_HANDOFF.md</code> — implementation spec (this is where engineering starts)</li>
+        <li><code class="mono">tokens.css</code> — drop into <code>client/src/styles/</code></li>
+        <li><code class="mono">shared.css</code> — component classes (atoms)</li>
+        <li><code class="mono">overview.jsx</code> — reference implementation of Home / Overview screen</li>
+        <li><code class="mono">fg-data.js</code> — fixture data shape (mirrors API responses)</li>
+        <li><code class="mono">Family Graph — Institutional Design System.pdf</code> — this document, for reviewers</li>
+      </ul>
+    </div>
+    <div class="spec">
+      <h3>Migration path from current dashboard</h3>
+      <ul class="bullet-list" style="font-size:11px;">
+        <li><b>Step 1.</b> Add <code class="mono">tokens.css</code> + <code class="mono">shared.css</code> alongside existing styles. Set <code class="mono">data-theme="institutional"</code> on <code class="mono">&lt;html&gt;</code>.</li>
+        <li><b>Step 2.</b> Replace existing route shells with the status rail + header (PII/Pseudonym toggle in app state).</li>
+        <li><b>Step 3.</b> Migrate one route at a time to the new components. Start with <code class="mono">/conflicts</code> (highest ROI).</li>
+        <li><b>Step 4.</b> Configure native chrome — Tauri with <code class="mono">decorations: true</code>, plus per-OS refinements (transparent title bar on macOS, tinted caption on Windows).</li>
+        <li><b>Step 5.</b> Bundle fonts. Remove CDN font links. Verify on Windows + macOS.</li>
+      </ul>
+    </div>
+    <div class="spec" style="grid-column: span 2;">
+      <h3>What the handoff does NOT include — explicit non-goals</h3>
+      <ul class="bullet-list" style="font-size:11px; columns:2; column-gap:24px;">
+        <li>No new API surface. Use the existing <code class="mono">/api/*</code> routes documented in <code>product_spec.md</code>.</li>
+        <li>No new routes. Same dashboard URLs (<code class="mono">/families</code>, <code class="mono">/people</code>, <code class="mono">/conflicts</code>, …).</li>
+        <li>No icon library. Identifiers + sigils + dots replace most icons. If you need one, prefer a single text glyph (←, →, ✕) over an SVG set.</li>
+        <li>No animation framework. CSS transitions only (150ms ease for color, 200ms ease for layout).</li>
+        <li>No dark mode work — that's the Forensic theme, ship it later. Institutional is light-only by design.</li>
+        <li>No icon-driven empty states. Empty states are a single sentence in <code class="mono">--ink-mute</code>, no illustration.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div style="position:absolute; bottom:1in; left:0.5in; right:0.5in; padding:14px 16px; background:var(--accent-soft); border-radius:6px; border:0.5px solid var(--accent);">
+    <div style="font-family:var(--font-display); font-weight:600; font-size:14px; color:var(--accent); margin-bottom:4px;">For engineering — read this once.</div>
+    <div style="font-size:11px; color:var(--ink); line-height:1.5;">
+      The dashboard is a <em>posture indicator</em> first and a CRUD UI second. If a new feature breaks the rule "operator can see PII vs pseudonym vs consented at a glance," push back before merging. Posture is the product.
+    </div>
+  </div>
+
+  <div class="page-footer"><span>Family Graph · Institutional</span><span>End of design system</span><span>12</span></div>
+</div>
+
+</body>
+</html>

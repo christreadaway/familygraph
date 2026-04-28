@@ -1,0 +1,131 @@
+/* Family Graph — design tokens
+   Three aesthetic systems share the same semantic surface.
+   Switch by setting [data-theme] on <html>: archival | institutional | forensic
+*/
+
+:root {
+  /* Posture semantics — shared across themes */
+  --posture-loopback: 142;   /* hue: green; "your machine only" */
+  --posture-encrypted: 200;  /* hue: cyan; "ciphertext at rest" */
+  --posture-pseudonym: 250;  /* hue: indigo; "AI-safe" */
+  --posture-pii: 30;         /* hue: amber; "real names visible" */
+  --posture-consented: 350;  /* hue: rose; "left the machine" */
+
+  /* Code/identifier colors (consistent across themes for muscle memory) */
+  --code-family: oklch(58% 0.12 250);
+  --code-person: oklch(58% 0.12 200);
+  --code-address: oklch(58% 0.12 142);
+  --code-email: oklch(58% 0.12 90);
+  --code-phone: oklch(58% 0.12 30);
+}
+
+/* ─── Archival Ledger ─────────────────────────────────────────────── */
+[data-theme="archival"] {
+  --bg: oklch(97.5% 0.008 80);
+  --bg-elev: oklch(99% 0.005 80);
+  --bg-sunken: oklch(94% 0.012 80);
+  --ink: oklch(20% 0.015 60);
+  --ink-mute: oklch(45% 0.015 60);
+  --ink-faint: oklch(65% 0.012 60);
+  --rule: oklch(85% 0.012 60);
+  --rule-strong: oklch(72% 0.015 60);
+  --accent: oklch(38% 0.08 30);     /* oxblood */
+  --accent-soft: oklch(92% 0.04 30);
+
+  --font-display: "IBM Plex Serif", "Iowan Old Style", Georgia, serif;
+  --font-text: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --shadow-card: 0 1px 0 oklch(85% 0.012 60), 0 0 0 0.5px oklch(80% 0.012 60) inset;
+}
+
+/* ─── Modern Institutional ────────────────────────────────────────── */
+[data-theme="institutional"] {
+  --bg: oklch(99% 0.002 250);
+  --bg-elev: oklch(100% 0 0);
+  --bg-sunken: oklch(97% 0.004 250);
+  --ink: oklch(18% 0.01 250);
+  --ink-mute: oklch(46% 0.01 250);
+  --ink-faint: oklch(68% 0.008 250);
+  --rule: oklch(92% 0.006 250);
+  --rule-strong: oklch(85% 0.008 250);
+  --accent: oklch(48% 0.14 250);    /* indigo */
+  --accent-soft: oklch(95% 0.025 250);
+
+  --font-display: "Inter Tight", "Inter", -apple-system, system-ui, sans-serif;
+  --font-text: "Inter", -apple-system, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --shadow-card: 0 1px 2px oklch(80% 0.01 250 / 0.4), 0 0 0 0.5px oklch(88% 0.008 250);
+}
+
+/* ─── Forensic / Terminal ─────────────────────────────────────────── */
+[data-theme="forensic"] {
+  --bg: oklch(14% 0.012 250);
+  --bg-elev: oklch(18% 0.014 250);
+  --bg-sunken: oklch(11% 0.01 250);
+  --ink: oklch(92% 0.008 200);
+  --ink-mute: oklch(65% 0.012 200);
+  --ink-faint: oklch(45% 0.012 200);
+  --rule: oklch(28% 0.014 250);
+  --rule-strong: oklch(38% 0.014 250);
+  --accent: oklch(78% 0.16 142);    /* terminal green */
+  --accent-soft: oklch(28% 0.06 142);
+
+  --font-display: "JetBrains Mono", ui-monospace, monospace;
+  --font-text: "JetBrains Mono", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-sm: 0px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --shadow-card: 0 0 0 1px oklch(28% 0.014 250) inset;
+}
+
+/* ─── Posture color helpers (resolve once per theme) ─────────────── */
+[data-theme="archival"], [data-theme="institutional"] {
+  --c-loopback: oklch(45% 0.13 var(--posture-loopback));
+  --c-loopback-bg: oklch(95% 0.04 var(--posture-loopback));
+  --c-encrypted: oklch(48% 0.12 var(--posture-encrypted));
+  --c-encrypted-bg: oklch(95% 0.035 var(--posture-encrypted));
+  --c-pseudonym: oklch(50% 0.14 var(--posture-pseudonym));
+  --c-pseudonym-bg: oklch(95% 0.04 var(--posture-pseudonym));
+  --c-pii: oklch(55% 0.14 var(--posture-pii));
+  --c-pii-bg: oklch(95% 0.05 var(--posture-pii));
+  --c-consented: oklch(52% 0.16 var(--posture-consented));
+  --c-consented-bg: oklch(95% 0.04 var(--posture-consented));
+}
+[data-theme="forensic"] {
+  --c-loopback: oklch(78% 0.16 var(--posture-loopback));
+  --c-loopback-bg: oklch(22% 0.05 var(--posture-loopback));
+  --c-encrypted: oklch(78% 0.14 var(--posture-encrypted));
+  --c-encrypted-bg: oklch(22% 0.05 var(--posture-encrypted));
+  --c-pseudonym: oklch(78% 0.14 var(--posture-pseudonym));
+  --c-pseudonym-bg: oklch(22% 0.05 var(--posture-pseudonym));
+  --c-pii: oklch(80% 0.15 var(--posture-pii));
+  --c-pii-bg: oklch(22% 0.06 var(--posture-pii));
+  --c-consented: oklch(78% 0.16 var(--posture-consented));
+  --c-consented-bg: oklch(22% 0.06 var(--posture-consented));
+}
+
+/* ─── Type scale ──────────────────────────────────────────────────── */
+:root {
+  --t-display: clamp(2rem, 1.4rem + 1.6vw, 2.75rem);
+  --t-h1: 1.625rem;
+  --t-h2: 1.25rem;
+  --t-h3: 1rem;
+  --t-body: 0.875rem;
+  --t-small: 0.8125rem;
+  --t-micro: 0.6875rem;
+  --t-mono-data: 0.8125rem;
+
+  --lh-tight: 1.15;
+  --lh-snug: 1.35;
+  --lh-normal: 1.5;
+}

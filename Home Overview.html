@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en" data-theme="institutional">
+<head>
+<meta charset="utf-8"/>
+<title>Family Graph — Home / Overview</title>
+<meta name="viewport" content="width=1480"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="tokens.css"/>
+<link rel="stylesheet" href="shared.css"/>
+<style>
+  html, body { height: 100%; }
+  body { overflow-x: hidden; }
+  /* Frame swap container — keeps the 1440px design width regardless of viewport */
+  .stage {
+    width: 1440px;
+    margin: 0 auto;
+  }
+  /* macOS chrome wrap */
+  .chrome-wrap {
+    padding: 36px 24px;
+    background: var(--bg-sunken);
+    min-height: 100vh;
+  }
+  .chrome-wrap.full { padding: 0; }
+  /* simple chrome wrapper — design-canvas friendly */
+  .mac-frame {
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 0 0 0.5px rgba(0,0,0,0.2), 0 24px 60px rgba(0,0,0,0.18);
+    background: var(--bg);
+  }
+  .mac-frame[data-dark="1"] {
+    box-shadow: 0 0 0 0.5px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.55);
+  }
+  .mac-bar {
+    height: 36px;
+    background: var(--bg-sunken);
+    border-bottom: 0.5px solid var(--rule);
+    display: flex; align-items: center; padding: 0 14px; gap: 8px;
+    font-family: var(--font-text); font-size: 12px; color: var(--ink-mute);
+  }
+  .mac-bar .lights { display: flex; gap: 8px; margin-right: 14px; }
+  .mac-bar .light { width: 12px; height: 12px; border-radius: 50%; }
+  .mac-bar .light.r { background: #ff5f57; }
+  .mac-bar .light.y { background: #febc2e; }
+  .mac-bar .light.g { background: #28c840; }
+  .mac-bar .url { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); margin-left: auto; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <rect width="200" height="200" fill="#1a1f2e"/>
+  <g transform="translate(60,60)" fill="none" stroke="#7dd3a0" stroke-width="2">
+    <circle cx="40" cy="20" r="6"/>
+    <circle cx="10" cy="60" r="6"/>
+    <circle cx="70" cy="60" r="6"/>
+    <line x1="40" y1="26" x2="10" y2="54"/>
+    <line x1="40" y1="26" x2="70" y2="54"/>
+  </g>
+  <text x="100" y="160" font-family="monospace" font-size="14" fill="#7dd3a0" text-anchor="middle">FAMILY GRAPH</text>
+</svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="fg-data.js"></script>
+<script type="text/babel" src="macos-window.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="overview.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "institutional",
+  "chrome": "macos",
+  "pseudo": false
+}/*EDITMODE-END*/;
+
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const { theme, chrome, pseudo } = tweaks;
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  const overview = <Overview pseudo={pseudo} onPseudo={(v)=>setTweak("pseudo", v)}/>;
+
+  const wrapClass = chrome === "full" ? "chrome-wrap full" : "chrome-wrap";
+  const isDark = theme === "forensic";
+
+  return (
+    <div className={wrapClass}>
+      <div className="stage">
+        {chrome === "macos" ? (
+          <div className="mac-frame" data-dark={isDark ? "1" : "0"}>
+            <div className="mac-bar">
+              <div className="lights"><span className="light r"/><span className="light y"/><span className="light g"/></div>
+              <span>Family Graph — {D.institution.name}</span>
+              <span className="url">http://127.0.0.1:3500/</span>
+            </div>
+            {overview}
+          </div>
+        ) : overview}
+      </div>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="Aesthetic">
+          <TweakRadio
+            label="Theme"
+            value={theme}
+            onChange={(v)=>setTweak("theme", v)}
+            options={[
+              { value: "archival",      label: "Archival" },
+              { value: "institutional", label: "Institutional" },
+              { value: "forensic",      label: "Forensic" },
+            ]}
+          />
+          <div style={{fontSize:11, opacity:0.7, marginTop:-4, lineHeight:1.4}}>
+            <div><b>Archival</b> — Plex Serif + paper. Like a notarized ledger.</div>
+            <div><b>Institutional</b> — Inter, neutral, generous. Operator-modern.</div>
+            <div><b>Forensic</b> — JetBrains Mono throughout, dark, terminal-grade density.</div>
+          </div>
+        </TweakSection>
+        <TweakSection title="Frame">
+          <TweakRadio
+            label="Chrome"
+            value={chrome}
+            onChange={(v)=>setTweak("chrome", v)}
+            options={[
+              { value: "macos", label: "macOS window" },
+              { value: "full",  label: "Full bleed" },
+            ]}
+          />
+        </TweakSection>
+        <TweakSection title="Posture">
+          <TweakToggle
+            label="Pseudonym view"
+            value={pseudo}
+            onChange={(v)=>setTweak("pseudo", v)}
+          />
+          <div style={{fontSize:11, opacity:0.7, marginTop:-4, lineHeight:1.4}}>
+            What the AI sees. Same data, identifiers in place of names.
+          </div>
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
