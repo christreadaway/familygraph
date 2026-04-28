@@ -48,16 +48,20 @@ function processFile(db, secrets, thresholds, filePath, opts = {}) {
   try {
     if (kind === 'csv' || kind === 'excel') {
       const parsed = sources.load(filePath, opts.sourceOpts || {});
-      const results = importPipeline.importBatch(db, secrets, thresholds, parsed.canonical, {
+      const batch = importPipeline.importBatch(db, secrets, thresholds, parsed.canonical, {
         actor: 'folder_watch',
         source: parsed.source || kind,
         sourceRef: parsed.fileName,
+        category: opts.category || null,
+        tags: opts.tags || null,
       });
       const summary = {
         file: parsed.fileName,
         source: parsed.source || kind,
         rows: parsed.canonical.length,
-        results: results.map(r => ({
+        import_run: batch.importRunCode,
+        totals: batch.totals,
+        results: batch.results.map(r => ({
           family: r.family ? { code: r.family.code, action: r.family.action } : null,
           persons: r.persons.map(p => ({ code: p.code, action: p.action })),
         })),

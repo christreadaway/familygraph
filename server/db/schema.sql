@@ -215,9 +215,56 @@ CREATE TABLE IF NOT EXISTS source_records (
   code         TEXT PRIMARY KEY,
   source       TEXT NOT NULL,             -- facts | renweb | ministry_platform | csv | excel | sheets | manual | api
   source_ref   TEXT,                      -- file path, sheet+row, vendor record id
+  -- Operator classification of the *file* this row came from. The dashboard
+  -- offers 'church' / 'school' / 'other' but this column accepts any short
+  -- string. Family Graph never aggregates by category; it's a label so the
+  -- operator can later see "this directory entry first appeared in our
+  -- church donor list" vs. "in our school enrollment list".
+  category     TEXT,
+  -- Free-form operator tags (JSON array). Same purpose as `category`, just
+  -- finer-grained: e.g., ['q1-2026', 'donor-list', 'fr-mike-onboarded'].
+  tags         TEXT,
+  -- Link to the batch (import_runs row) that produced this source record.
+  import_run_code TEXT,
   imported_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   raw_payload_ct BLOB                     -- ciphertext of the original row (PII)
 );
+
+CREATE INDEX IF NOT EXISTS source_records_category_idx ON source_records (category);
+CREATE INDEX IF NOT EXISTS source_records_import_run_idx ON source_records (import_run_code);
+
+-------------------------------------------------------------------------------
+-- Import runs (per-batch summary stats)
+-------------------------------------------------------------------------------
+-- One row per /api/import/run call (or per folder-watch file). Holds the
+-- aggregate effects so the operator can review what a freshly-introduced
+-- file did to the directory: how many families/persons appeared, how many
+-- conflicts the resolver opened, what got attached vs. created.
+
+CREATE TABLE IF NOT EXISTS import_runs (
+  code                 TEXT PRIMARY KEY,
+  source               TEXT NOT NULL,            -- csv | facts | renweb | ministry_platform | sheets | excel | manual
+  source_ref           TEXT,
+  category             TEXT,
+  tags                 TEXT,                     -- JSON array
+  rows                 INTEGER NOT NULL DEFAULT 0,
+  families_created     INTEGER NOT NULL DEFAULT 0,
+  families_attached    INTEGER NOT NULL DEFAULT 0,
+  persons_created      INTEGER NOT NULL DEFAULT 0,
+  persons_attached     INTEGER NOT NULL DEFAULT 0,
+  persons_enqueued     INTEGER NOT NULL DEFAULT 0,
+  conflicts_opened     INTEGER NOT NULL DEFAULT 0,
+  addresses_attached   INTEGER NOT NULL DEFAULT 0,
+  emails_attached      INTEGER NOT NULL DEFAULT 0,
+  phones_attached      INTEGER NOT NULL DEFAULT 0,
+  memberships_opened   INTEGER NOT NULL DEFAULT 0,
+  memberships_ended    INTEGER NOT NULL DEFAULT 0,
+  actor                TEXT,
+  created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS import_runs_created_at_idx ON import_runs (created_at);
+CREATE INDEX IF NOT EXISTS import_runs_category_idx ON import_runs (category);
 
 CREATE TABLE IF NOT EXISTS provenance (
   source_code  TEXT NOT NULL REFERENCES source_records(code) ON DELETE CASCADE,

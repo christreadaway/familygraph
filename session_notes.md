@@ -817,4 +817,172 @@ New `server/log/index.js` plus `server/log/middleware.js`:
 
 ---
 
+## Source tagging + per-import summary (Claude Code, 2026-04-28, continued)
+
+Operator sketched three things they wanted: (1) source tagging with a
+church/school category and free-form tags, (2) Google Sheets URL
+ingestion, (3) ingest donation-shaped files but **don't** turn Family
+Graph into a donor-analysis tool — money lives in MissionIQ. Plus a
+follow-up: a per-import summary screen showing what the latest file did.
+
+We dropped (2) (URL fetch out of scope for now), kept (1) and the
+"identity-only ingestion of donation files" flavour of (3), and added
+the import-run summary.
+
+### Schema v5
+
+Migration 0005 (`server/db/migrations/0005_source_tagging.js`):
+
+- `source_records` gains `category`, `tags` (JSON array), and
+  `import_run_code` columns + indexes.
+- New `import_runs` table holds per-batch totals: rows,
+  families_created/attached, persons_created/attached/enqueued,
+  conflicts_opened, addresses/emails/phones attached, memberships
+  opened/ended, plus actor + category + tags + source.
+
+The bootstrap schema declares the same shape so fresh installs and
+upgrades from v4 are equivalent.
+
+### Pipeline + API
+
+`server/identity/import.js`:
+
+- `importRow` accepts `category` / `tags` / `importRunCode` and writes
+  them into the source_records row. It now returns a `stats` object
+  per row (counts of every effect).
+- `importBatch` opens an `import_runs` row first, accumulates per-row
+  stats inside the existing transaction, then UPDATEs the import-runs
+  row with the totals. Audits `import_run` with the totals.
+- New helpers: `getImportRun`, `listImportRuns`, `affectedEntities`
+  (joins provenance against the run's source_records to list every
+  distinct entity the run touched).
+
+`server/api/import.js`:
+
+- `POST /api/import/run` accepts `category` (allow-list:
+  `church`/`school`/`other`) and `tags` (string or array). Returns
+  `import_run` code + `totals` + per-row results.
+- 400 on unknown category.
+
+`server/api/imports.js` (new):
+
+- `GET /api/imports` lists runs newest-first; filterable by `?category`.
+- `GET /api/imports/:code` returns the run row + affected-entities list.
+
+Folder-watch updated to use the new `importBatch` return shape and to
+pass `category`/`tags` if the operator-provided opts include them.
+
+### Dashboard
+
+- **Import wizard** gets a Category dropdown (church/school/other) and
+  a free-form Tags input (comma-separated). After "Run import",
+  the page shows a stat-pill bar with families/persons created vs.
+  attached, conflicts opened, etc., a deep link to the conflict queue
+  if the run produced any conflicts, and a per-row outcome table.
+- **Imports log** at `/imports` lists every past run with a row of
+  stat tags. Click into `/imports/:code` for the run detail with the
+  affected entities grouped by field (family / person / address) and
+  linked to their detail pages.
+
+### Donation-file posture
+
+Family Graph still does not record dollar amounts, dates of donation,
+payment methods, or aggregations. If the operator imports a donation
+CSV, the resolver picks up identity (name, email, address) from the
+recognised columns and ignores everything else. The file's `category`
+and `tags` survive on every source_record so the operator can later
+trace "Mary Smith first appeared in our church Q1-2026 donor list".
+There is no `domain_events` table, no `amount_cents` column, no
+running totals. A test asserts that.
+
+### Tests
+
+160 / 160 pass. Nine new cases in `tests/import-runs.test.js` cover:
+
+- importBatch writes a run with correct totals.
+- source_records inherit category + tags + import_run_code.
+- affectedEntities lists distinct family/person/address codes.
+- Donation-shaped CSV with extra columns is parsed identity-only;
+  asserts there is no `domain_events` table to query.
+- API rejects unknown category, accepts comma-separated tags string,
+  returns import_run + totals.
+- Listing and filtering /api/imports by category.
+- /api/imports/:code returns affected entities.
+- Migration 0005 is idempotent on a fresh schema.
+
+One real bug found and fixed during the pass: changing `importBatch`'s
+return shape broke the folder-watch agent (it expected an array of row
+results; now it gets `{ importRunCode, totals, results }`). Updated the
+folder-watch summary writer to match.
+
+---
+
+## Google Sheets URL ingestion (Claude Code, 2026-04-28, continued)
+
+Operator changed their mind on the previously-skipped point (2): they
+do want Sheets URL ingestion. Built it carefully because pulling
+arbitrary URLs from a server is the classic SSRF foot-gun.
+
+### What landed
+
+- `server/sources/sheets-url.js`:
+  - `parseSheetUrl(url)` strict: requires `https`, host exactly
+    `docs.google.com`, path matching
+    `^/spreadsheets/d/<id>(/<subpath>)?/?$`. We construct the
+    `/export?format=csv` URL ourselves rather than fetching the user's
+    URL directly. `gid` is read from `?gid=` or `#gid=`.
+  - `fetchSheetCsv(url)`: manual redirect handling up to 5 hops; each
+    hop must be `https` to `docs.google.com`, `*.google.com`, or
+    `*.googleusercontent.com`. IP-literal hosts are rejected. 30 s
+    request timeout. 10 MB body cap. Non-CSV `content-type` is
+    rejected with a clear "make the sheet shared with anyone with the
+    link" message — Google returns HTML on auth-walled access.
+- `POST /api/import/fetch-sheet` — Bearer + `import` scope. Returns
+  `{ content, content_type, byte_len, final_url, source_ref }` so the
+  operator can feed the same content into the existing
+  `/api/import/run` flow without changing that endpoint's contract.
+  Each fetch (success or failure) writes one `audit_events` row with
+  `sheet_id`, `gid`, `final_url`, and `byte_len`. Body content never
+  appears in the audit log.
+- Dashboard Import wizard now has a "Pull from a Google Sheets URL"
+  panel above the paste box. Paste link → click Fetch → the CSV
+  populates the box and the source/source_ref fields. Then preview /
+  run as before.
+
+### Tests
+
+177 / 177 pass (17 new):
+
+- Parser accepts `/edit`, `/edit?gid=`, `/edit#gid=`, `/export?format=csv`.
+- Parser rejects non-`docs.google.com` hosts (including
+  `docs.google.com.evil.com`, `www.docs.google.com`, `google.com`,
+  `docs.google.co`), `http`, `javascript:`, `file:`, non-sheet
+  paths, and `format=xlsx`.
+- `_hostAllowedForRedirect` accepts `*.google.com` and
+  `*.googleusercontent.com`, rejects IP literals + arbitrary hosts +
+  case is normalised.
+- Mocked `https.request`: 200 returns CSV body; 302 to allowlisted
+  host follows; 302 to `attacker.example.com` aborts with
+  "disallowed host"; 302 to http downgrades aborts with "non-https";
+  401/403 yields the actionable share-access message; HTML response
+  body (auth wall) yields "did not return CSV"; >5 redirects aborts.
+- API integration: `POST /api/import/fetch-sheet` happy-path
+  (returns CSV + audits sheet_fetch); rejects non-google URL with
+  400; end-to-end fetch → run produces an `import_run` with the
+  expected totals.
+
+### Posture notes
+
+- Sheet must be shared "Anyone with the link can view" for v1. OAuth
+  flow is the planned v2 path. Private-org sheets work today via the
+  existing manual download → paste path.
+- The audit log records the sheet ID and final URL but not the
+  pulled body. If an operator wants to know exactly what was
+  ingested, they can re-fetch the same URL.
+- The fetch happens with `User-Agent: family-graph/1.0`. No cookies,
+  no auth headers, no referrer. Family Graph's identity is plain in
+  the request.
+
+---
+
 *End of session notes*
