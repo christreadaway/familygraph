@@ -33,6 +33,7 @@ const FACTS_MAPPING = {
       middle_name: 'Student Middle Name',
       date_of_birth: 'DOB',
       gender: 'Gender',
+      grade: ['Grade', 'Grade Level', 'Current Grade'],
       role: 'child',
     },
     {

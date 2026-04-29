@@ -152,20 +152,23 @@ export default function App() {
       </div>
       <div className="app-body">
         <aside className="sidebar">
-          <div className="sidebar-eyebrow">Operator</div>
+          <div className="sidebar-eyebrow">Build directory</div>
           <nav>
-            <NavItem to="/search">Search</NavItem>
+            <NavItem to="/import">Import</NavItem>
+            <NavItem to="/imports">Imports log</NavItem>
+          </nav>
+          <div className="sidebar-eyebrow" style={{ marginTop: 12 }}>Directory</div>
+          <nav>
             <NavItem to="/families">Families</NavItem>
             <NavItem to="/people">People</NavItem>
+            <NavItem to="/search">Search</NavItem>
             <NavItem to="/conflicts" badge={health?.pending_conflicts}>
               Conflict queue
             </NavItem>
             <NavItem to="/rules">Resolution rules</NavItem>
           </nav>
-          <div className="sidebar-eyebrow" style={{ marginTop: 12 }}>Ingest · Egress</div>
+          <div className="sidebar-eyebrow" style={{ marginTop: 12 }}>Egress</div>
           <nav>
-            <NavItem to="/import">Import</NavItem>
-            <NavItem to="/imports">Imports log</NavItem>
             <NavItem to="/export">Export</NavItem>
             <NavItem to="/sanitize">Sanitize</NavItem>
           </nav>
@@ -224,7 +227,7 @@ export default function App() {
             onSetToken={handleSaveToken}
           />
           <Routes>
-            <Route path="/" element={<Navigate to="/families" replace />} />
+            <Route path="/" element={<Navigate to="/import" replace />} />
             <Route path="/search" element={<Search />} />
             <Route path="/families" element={<Families />} />
             <Route path="/families/:code" element={<FamilyDetail />} />

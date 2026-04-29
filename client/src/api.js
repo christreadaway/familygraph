@@ -71,6 +71,8 @@ export const api = {
   mergeFamily: (code, winner) => request('POST', `/api/families/${code}/merge`, { winner_code: winner }),
   splitFamily: (code, body) => request('POST', `/api/families/${code}/split`, body),
   addAddress: (code, body) => request('POST', `/api/families/${code}/addresses`, body),
+  setFamilyTags: (code, tags) => request('PUT', `/api/families/${code}/tags`, { tags }),
+  removeFamilyTag: (code, tag) => request('DELETE', `/api/families/${code}/tags/${encodeURIComponent(tag)}`),
 
   listPeople: (opts) => request('GET', opts?.safe ? '/api/safe/people' : '/api/people'),
   getPerson: (code, opts) => request('GET', opts?.safe ? `/api/safe/people/${code}` : `/api/people/${code}`),
@@ -79,6 +81,8 @@ export const api = {
   mergePerson: (code, winner) => request('POST', `/api/people/${code}/merge`, { winner_code: winner }),
   addEmail: (code, body) => request('POST', `/api/people/${code}/emails`, body),
   addPhone: (code, body) => request('POST', `/api/people/${code}/phones`, body),
+  setPersonTags: (code, tags) => request('PUT', `/api/people/${code}/tags`, { tags }),
+  removePersonTag: (code, tag) => request('DELETE', `/api/people/${code}/tags/${encodeURIComponent(tag)}`),
 
   listConflicts: params => {
     const qs = new URLSearchParams(params || { status: 'open' }).toString();
@@ -107,6 +111,7 @@ export const api = {
   importPreview: body => request('POST', '/api/import/preview', body),
   importRun: body => request('POST', '/api/import/run', body),
   fetchSheet: url => request('POST', '/api/import/fetch-sheet', { url }),
+  scanDuplicates: body => request('POST', '/api/scan/duplicates', body || {}),
   listImports: params => {
     const qs = new URLSearchParams(params || {}).toString();
     return request('GET', `/api/imports${qs ? `?${qs}` : ''}`);

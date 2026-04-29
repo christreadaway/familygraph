@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import IdCode from '../components/IdCode.jsx';
+import TagEditor from '../components/TagEditor.jsx';
 
 export default function PersonDetail() {
   const { code } = useParams();
@@ -61,6 +62,19 @@ export default function PersonDetail() {
           <div><label>Notes</label><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
         </div>
         <div style={{ marginTop: 12 }}><button className="primary" onClick={save}>Save</button></div>
+      </div>
+
+      <div className="panel">
+        <h3>Tags{person.grade ? ` · grade ${person.grade}` : ''}</h3>
+        <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+          Tags slice the directory: parishioners, students, alumni-incoming. Imports apply tags
+          automatically based on category — toggle here for one-offs.
+        </p>
+        <TagEditor
+          tags={person.tags || []}
+          onAdd={async next => { await api.setPersonTags(code, next); load(); }}
+          onRemove={async t => { await api.removePersonTag(code, t); load(); }}
+        />
       </div>
 
       <div className="split">

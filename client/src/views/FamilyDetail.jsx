@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { useFG } from '../store.js';
 import IdCode from '../components/IdCode.jsx';
 import Pill from '../components/Pill.jsx';
+import TagEditor from '../components/TagEditor.jsx';
 
 export default function FamilyDetail() {
   const { code } = useParams();
@@ -86,6 +87,19 @@ export default function FamilyDetail() {
             <span className="muted">Created {new Date(fam.created_at).toLocaleString()}</span>
           </div>
         </div>
+      </div>
+
+      <div className="panel">
+        <h3>Tags</h3>
+        <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+          Tags slice the directory: school parents, parishioners, alumni households. Imports apply
+          tags automatically based on category — toggle here for one-offs.
+        </p>
+        <TagEditor
+          tags={fam.tags || []}
+          onAdd={async next => { await api.setFamilyTags(code, next); load(); }}
+          onRemove={async t => { await api.removeFamilyTag(code, t); load(); }}
+        />
       </div>
 
       <div className="panel">

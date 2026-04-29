@@ -3,6 +3,7 @@
 const express = require('express');
 const people = require('../identity/people');
 const contacts = require('../identity/contacts');
+const tagsLib = require('../identity/tags');
 const audit = require('../audit');
 const { isValidCode } = require('../crypto/identifiers');
 
@@ -75,6 +76,40 @@ function build({ db, secrets, includePii }) {
       metadata: { loser: req.params.code, winner: winner_code },
     });
     res.json({ code });
+  });
+
+  r.put('/:code/tags', (req, res) => {
+    if (!isValidCode(req.params.code, 'person')) {
+      return res.status(400).json({ error: 'invalid person code' });
+    }
+    const { tags = [] } = req.body || {};
+    if (!Array.isArray(tags)) return res.status(400).json({ error: 'tags must be an array' });
+    const updated = tagsLib.setPersonTags(db, req.params.code, tags);
+    if (updated == null) return res.status(404).json({ error: 'not found' });
+    audit.record(db, {
+      action: 'person_set_tags',
+      actor: req.auth?.actor || 'unknown',
+      entityCode: req.params.code,
+      entityKind: 'person',
+      metadata: { tags: updated },
+    });
+    res.json({ tags: updated });
+  });
+
+  r.delete('/:code/tags/:tag', (req, res) => {
+    if (!isValidCode(req.params.code, 'person')) {
+      return res.status(400).json({ error: 'invalid person code' });
+    }
+    const updated = tagsLib.removePersonTag(db, req.params.code, req.params.tag);
+    if (updated == null) return res.status(404).json({ error: 'not found' });
+    audit.record(db, {
+      action: 'person_remove_tag',
+      actor: req.auth?.actor || 'unknown',
+      entityCode: req.params.code,
+      entityKind: 'person',
+      metadata: { tag: req.params.tag, tags: updated },
+    });
+    res.json({ tags: updated });
   });
 
   r.post('/:code/emails', (req, res) => {
