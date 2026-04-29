@@ -238,6 +238,12 @@ const NICKNAME_GROUPS = [
   ['alexander', 'alex'],
   ['nathaniel', 'nate', 'nathan'],
   ['zachary', 'zach', 'zack'],
+  // Mary across English / French / Spanish / Latin and common diminutives —
+  // very common in church/school data so we treat them as nickname-equivalent.
+  ['mary', 'marie', 'maria', 'mariah', 'molly', 'polly', 'mae', 'mamie'],
+  ['ann', 'anne', 'anna', 'annie', 'nan', 'nancy'],
+  ['john', 'juan', 'sean', 'shawn'],   // cross-language Johns
+  ['joseph', 'jose', 'pepe'],
   ['catherine', 'katherine', 'kate', 'katie', 'kathy', 'cathy', 'kat'],
   ['elizabeth', 'liz', 'lizzy', 'beth', 'betty', 'betsy', 'eliza'],
   ['jennifer', 'jenny', 'jen'],
@@ -438,32 +444,66 @@ function scoreMatch(a, b) {
     }
   }
 
-  // ---- First name (compound + nickname + prefix)
+  // ---- First name (compound + nickname + prefix). Graduated bands: exact
+  // and nickname matches are strong; below 0.85 still contributes a softer
+  // signal so phonetic variants like Pio/Pia surface for review.
   if (a.given_name && b.given_name) {
     const fs = firstNameMatchesCompound(a.given_name, b.given_name);
     if (fs === 1.0) { confidence += 0.20; reasons.push('exact_first_name'); }
     else if (fs >= 0.90) { confidence += 0.18; reasons.push('nickname_or_short_form'); }
     else if (fs > 0.85) { confidence += 0.10; reasons.push('similar_first_name'); }
+    else if (fs > 0.60) { confidence += 0.05; reasons.push('phonetic_first_name'); }
   }
 
   // ---- DOB
+  let dobExact = false;
   if (a.date_of_birth && b.date_of_birth) {
     if (String(a.date_of_birth) === String(b.date_of_birth)) {
       confidence += 0.20;
       reasons.push('exact_date_of_birth');
+      dobExact = true;
     }
   }
 
-  // ---- Address (DEFINITIVE if very close — same household even with different
-  // last names, e.g. blended families, married couples keeping their names)
+  // Person-level definitive: exact first + exact last + exact DOB. Two people
+  // sharing all three are vanishingly unlikely to be different humans, and
+  // child rosters frequently lack email/phone, so this fills the gap left by
+  // the email/phone-centric definitive path.
+  if (
+    dobExact &&
+    reasons.includes('exact_last_name') &&
+    (reasons.includes('exact_first_name') || reasons.includes('nickname_or_short_form'))
+  ) {
+    confidence = Math.max(confidence, 0.95);
+    definitive = true;
+    reasons.push('exact_name_plus_dob');
+  }
+
+  // ---- Address. Address is a strong signal for FAMILY attachment but on
+  // its own is NOT enough to merge two distinct persons (different first
+  // names at the same household are usually a spouse/parent/child triplet,
+  // not duplicates). missionIQ collapses these — Family Graph keeps them as
+  // separate persons under the same family, which the family resolver
+  // handles. So address contributes a soft additive only, and only becomes
+  // definitive when paired with a name match.
   let addressMatched = false;
   if (a.address_line1 && b.address_line1) {
     const sim = addressSimilarity(a.address_line1, b.address_line1);
     if (sim > 0.85) {
       addressMatched = true;
-      confidence = Math.max(confidence, 0.90);
-      definitive = true;
+      confidence += 0.20;
       reasons.push('address_match_household');
+      // Promote to definitive only if the names also align — without that,
+      // address-alone is a household signal, not a person-identity signal.
+      const nameAligned =
+        reasons.includes('exact_last_name') ||
+        reasons.includes('similar_last_name') ||
+        reasons.includes('exact_first_name') ||
+        reasons.includes('nickname_or_short_form');
+      if (nameAligned) {
+        confidence = Math.max(confidence, 0.90);
+        definitive = true;
+      }
     } else if (sim > 0.65) {
       confidence += 0.15;
       reasons.push('similar_address');
@@ -492,7 +532,18 @@ function scoreMatch(a, b) {
 // Convenience: classify a confidence number into an action given thresholds.
 function classify(confidence, thresholds) {
   const auto = thresholds && typeof thresholds.autoMerge === 'number' ? thresholds.autoMerge : 0.85;
-  const review = thresholds && typeof thresholds.review === 'number' ? thresholds.review : 0.65;
+  // 0.30 default review threshold — calibrated against the new additive
+  // scoring so even surname-only or phonetic-variant first-name matches
+  // surface for operator decision. Family Graph errs on the side of asking;
+  // missionIQ's single 0.75 gate just dropped weak matches on the floor.
+  //   exact_last (0.30)                                  = 0.30  → review
+  //   exact_last + phonetic_first (0.05)                 = 0.35  → review
+  //   exact_last + nickname (0.18)                       = 0.48  → review
+  //   exact_last + exact_first (0.20)                    = 0.50  → review
+  //   exact_last + exact_first + dob                     = 0.95  → auto_merge (definitive)
+  //   exact email or phone                               = 0.95  → auto_merge
+  //   address > 0.85                                     = 0.90  → auto_merge
+  const review = thresholds && typeof thresholds.review === 'number' ? thresholds.review : 0.30;
   if (confidence >= auto) return 'auto_merge';
   if (confidence >= review) return 'review';
   return 'no_match';

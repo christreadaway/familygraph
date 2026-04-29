@@ -117,6 +117,7 @@ function importRow(db, secrets, thresholds, canonical, ctx = {}) {
         display_name: canonical.family?.display_name,
         notes: canonical.family?.notes,
         personCodes,
+        address: canonical.address || null,
       },
       { actor: ctx.actor || 'import' }
     );

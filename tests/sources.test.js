@@ -207,14 +207,28 @@ test('matching > Smith Jr. matches Smith (suffix-aware)', () => {
   assert.ok(r.reasons.includes('exact_last_name') || r.reasons.includes('similar_last_name'));
 });
 
-test('matching > address match auto-merges even with different last names', () => {
+test('matching > address match without name overlap stays soft (NOT a person-merge)', () => {
+  // Address is a strong household signal but not a person-identity signal
+  // when the names are unrelated. The family resolver handles attachment
+  // for "different person, same household."
   const m = require('../server/identity/matching');
   const r = m.scoreMatch(
     { given_name: 'Mary', family_name: 'Escamilla', address_line1: '123 Main Street', city: 'Lima', state: 'OH' },
     { given_name: 'John', family_name: 'Torre',     address_line1: '123 Main St',     city: 'Lima', state: 'OH' },
   );
-  assert.ok(r.confidence >= 0.85);
+  assert.equal(r.definitive, false);
   assert.ok(r.reasons.includes('address_match_household'));
+  assert.ok(r.confidence < 0.85);
+});
+
+test('matching > address + matching last name = definitive person merge', () => {
+  const m = require('../server/identity/matching');
+  const r = m.scoreMatch(
+    { given_name: 'Mary', family_name: 'Smith', address_line1: '123 Main Street' },
+    { given_name: 'Mary', family_name: 'Smith', address_line1: '123 Main St' },
+  );
+  assert.equal(r.definitive, true);
+  assert.ok(r.confidence >= 0.85);
 });
 
 test('matching > "Timothy & Mary" matches Timothy', () => {

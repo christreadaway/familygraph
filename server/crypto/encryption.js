@@ -92,9 +92,30 @@ function normalizePhone(phone) {
   return digits || null;
 }
 
+// Common US street-type and direction abbreviations. Expanded before hashing
+// so "123 Main St" and "123 Main Street" produce the same norm_hash. Subset
+// of matching.js ADDRESS_ABBREVIATIONS — kept here to avoid a circular import
+// between crypto and identity.
+const _ADDRESS_ABBREVIATIONS = {
+  st: 'street', ave: 'avenue', blvd: 'boulevard', dr: 'drive', ln: 'lane',
+  rd: 'road', ct: 'court', cir: 'circle', pl: 'place', pkwy: 'parkway',
+  pky: 'parkway', hwy: 'highway', trl: 'trail',
+  n: 'north', s: 'south', e: 'east', w: 'west',
+  ne: 'northeast', nw: 'northwest', se: 'southeast', sw: 'southwest',
+  apt: 'apartment', ste: 'suite',
+};
+
+function _expandAddressTokens(s) {
+  if (!s) return s;
+  return String(s)
+    .split(/\s+/)
+    .map(t => _ADDRESS_ABBREVIATIONS[t.toLowerCase()] || t)
+    .join(' ');
+}
+
 function normalizeAddress(parts) {
   const arr = [parts.line1, parts.line2, parts.city, parts.region, parts.postal, parts.country]
-    .map(p => normalizeName(p) || '')
+    .map(p => normalizeName(_expandAddressTokens(p)) || '')
     .filter(Boolean);
   return arr.length ? arr.join('|') : null;
 }
