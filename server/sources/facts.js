@@ -31,9 +31,10 @@ const FACTS_MAPPING = {
       given_name: ['Student First Name', 'student_first', 'First Name'],
       family_name: ['Student Last Name', 'student_last', 'Last Name'],
       middle_name: 'Student Middle Name',
-      date_of_birth: 'DOB',
-      gender: 'Gender',
-      grade: ['Grade', 'Grade Level', 'Current Grade'],
+      // Real-world FACTS exports use both 'DOB' and 'Student DOB'; accept either.
+      date_of_birth: ['DOB', 'Student DOB', 'Student Date of Birth', 'Date of Birth', 'Birthdate'],
+      gender: ['Gender', 'Sex'],
+      grade: ['Grade', 'Grade Level', 'Current Grade', 'Student Grade'],
       role: 'child',
     },
     {
@@ -55,14 +56,23 @@ const FACTS_MAPPING = {
   ],
 };
 
+// When the caller passes an explicit `mapping` (anything truthy), respect it.
+// Otherwise fall back to FACTS_MAPPING. The earlier shape `{ mapping:
+// FACTS_MAPPING, ...opts }` was wrong: a caller passing `mapping: null` (the
+// API does this when the operator hasn't customized anything) ended up
+// nulling out FACTS_MAPPING entirely, so the inferred mapper ran instead.
+function _resolvedOpts(opts) {
+  return { ...opts, mapping: opts.mapping || FACTS_MAPPING };
+}
+
 function loadFile(filePath, opts = {}) {
-  const out = csv.loadFile(filePath, { mapping: FACTS_MAPPING, ...opts });
+  const out = csv.loadFile(filePath, _resolvedOpts(opts));
   out.source = 'facts';
   return out;
 }
 
 function loadString(content, opts = {}) {
-  const out = csv.loadString(content, { mapping: FACTS_MAPPING, ...opts });
+  const out = csv.loadString(content, _resolvedOpts(opts));
   out.source = 'facts';
   return out;
 }

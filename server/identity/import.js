@@ -117,6 +117,7 @@ function importRow(db, secrets, thresholds, canonical, ctx = {}) {
         display_name: canonical.family?.display_name,
         notes: canonical.family?.notes,
         personCodes,
+        address: canonical.address || null,
       },
       { actor: ctx.actor || 'import' }
     );
@@ -217,11 +218,19 @@ function importBatch(db, secrets, thresholds, canonicalRows, ctx = {}) {
     phones_attached: 0,
     memberships_opened: 0,
     memberships_ended: 0,        // not produced by import path, kept for symmetry
+    rows_skipped_blank: 0,
   };
   const results = [];
   const tx = db.transaction(() => {
     for (let i = 0; i < canonicalRows.length; i++) {
       const row = canonicalRows[i];
+      const hasPersons = (row.persons || []).length > 0;
+      const hasFamily = !!(row.family && row.family.display_name);
+      if (!hasPersons && !hasFamily) {
+        totals.rows_skipped_blank += 1;
+        results.push({ skipped: true, reason: 'no_mapped_data', family: null, persons: [], stats: {} });
+        continue;
+      }
       const r = importRow(db, secrets, thresholds, row, {
         ...ctx,
         sourceRef: `${ctx.sourceRef || ''}#${i + 1}`,
@@ -239,7 +248,8 @@ function importBatch(db, secrets, thresholds, canonicalRows, ctx = {}) {
        persons_created = ?, persons_attached = ?, persons_enqueued = ?,
        conflicts_opened = ?,
        addresses_attached = ?, emails_attached = ?, phones_attached = ?,
-       memberships_opened = ?, memberships_ended = ?
+       memberships_opened = ?, memberships_ended = ?,
+       rows_skipped_blank = ?
      WHERE code = ?`
   ).run(
     totals.families_created, totals.families_attached,
@@ -247,6 +257,7 @@ function importBatch(db, secrets, thresholds, canonicalRows, ctx = {}) {
     totals.conflicts_opened,
     totals.addresses_attached, totals.emails_attached, totals.phones_attached,
     totals.memberships_opened, totals.memberships_ended,
+    totals.rows_skipped_blank,
     importRunCode,
   );
 

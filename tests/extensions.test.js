@@ -42,8 +42,10 @@ test('profiles > thresholdsFor merges active profile thresholds over fallback', 
   profiles.activate(db, 'diocese');
   const fb = { autoMerge: 0.0, review: 0.0 };
   const out = profiles.thresholdsFor(db, fb);
-  assert.equal(out.autoMerge, 0.95);
-  assert.equal(out.review, 0.6);
+  // diocese profile: see server/identity/profiles.js BUILTIN_PROFILES.
+  // Recalibrated for the additive scoring vendored from missionIQ.
+  assert.equal(out.autoMerge, 0.90);
+  assert.equal(out.review, 0.30);
 });
 
 test('audit > sweep removes only tier-1 older than the cutoff', t => {

@@ -13,7 +13,11 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //   3 — conflicts.assigned_to + assigned_at + assignment_expires_at.
 //   4 — notifications queue + conflicts.reminder_sent_at.
 //   5 — source_records.category/tags/import_run_code + import_runs table.
-const SCHEMA_VERSION = 5;
+//   6 — entity tags on families and persons + persons.grade.
+//   7 — import_runs.rows_skipped_blank.
+//   8 — conflicts.resolution_notes + decided_by_rule (sticky decisions).
+//   9 — persons.employer / title / do_not_contact / not_living_together.
+const SCHEMA_VERSION = 9;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

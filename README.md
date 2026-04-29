@@ -198,9 +198,36 @@ watch dir at startup (default: only new files are picked up).
 Every file you bring in (via the dashboard, the `/api/import/run` endpoint,
 or the folder-watch agent) writes one `import_runs` row that records the
 totals: families created vs. attached, persons created vs. attached vs.
-enqueued, conflicts opened, addresses/emails/phones attached. The
-dashboard's **Imports log** lists every run; click into one to see
-exactly which families and people that file produced.
+enqueued, conflicts opened, addresses/emails/phones attached, and the
+count of rows skipped as blank. The dashboard's **Imports log** lists
+every run; click into one to see exactly which families and people that
+file produced.
+
+The auto-mapper is vendored from missionIQ's ingestion module
+(`server/sources/csv.js`). Every column header is scored against a
+dictionary of ~250 alias variants — including primary/secondary slots
+("Parent 1 First Name", "P2 First", "Spouse Last", "Husband Email",
+"HOH First", "Guardian Phone"), nicknames across English/French/Spanish,
+and child-roster shapes. Highest-scoring (header, field) pairs are
+assigned globally, so "Child First Name" wins over "First Name" for the
+child slot rather than being stolen by the generic. The preview always
+returns:
+
+- `mapping_warning` — a plain-English string when no identity columns
+  were detected, surfaced prominently in the dashboard (and the Import
+  button stays disabled);
+- `summary_rows_dropped` — the count of "Total" / "Grand Total" rows
+  silently filtered out;
+- `diagnostic.rows_with_persons` / `rows_blank` — so the operator sees
+  "10 of 370 rows produced people" before clicking Import, not after;
+- `unmapped_columns` — the list of headers that didn't claim a slot,
+  ready to be mapped by hand in the column editor.
+
+Date columns are normalized to ISO `YYYY-MM-DD` regardless of input
+format: Excel serial numbers (critical for Sheets exports), `MM/DD/YYYY`,
+2-digit year forms, ISO, and textual ("Jan 15, 2025"). Phones split
+concatenated values (`+13143783612+13145607897` → two phones) and strip
+the `+1` country code. Emails lowercase and de-dupe.
 
 Each file is also tagged. At import time the operator picks:
 
@@ -271,6 +298,78 @@ reason in the token banner; the same string also appears in
 `server.log` next to the matching `auth.reject` line.
 
 The full route table is in [`product_spec.md`](./product_spec.md#api-contract).
+
+### External-app identity API
+
+Sibling apps (missionIQ, ParentPoint, future tools) bring in their own
+domain data (donations, engagement events) and delegate the identity
+decision to Family Graph. Three endpoints under `/api/identity/`:
+
+- `POST /api/identity/match` — read-only peek. Body: `{ record: {...} }`.
+  Returns `{ action, confidence, reasons, definitive, candidate, thresholds }`
+  so the caller can preview what Family Graph WOULD do without committing.
+- `POST /api/identity/resolve` — commit. Same input shape; runs the
+  resolver and writes the outcome. Returns `{ code, action, score,
+  reasons, conflict? }` — the calling app stores its domain data keyed
+  by `code`.
+- `POST /api/identity/feedback` — the calling app records `same` or
+  `different` for a pair. `different` is "sticky": future imports will
+  not re-flag that pair as a conflict. `same` merges with the supplied
+  `winner_code`.
+
+Input records accept both flat shapes (`first_name`, `last_name`,
+`email`, `phone`) and structured shapes (`given_name`, `family_name`,
+`emails[]`, `phones[]`, `address: {...}`) so the calling app passes
+through whatever its native rows look like.
+
+### Auto-merge vs prompt-the-user (the matching gate)
+
+`server/identity/matching.js` ports missionIQ's scoring with one
+correctness fix. The decision flow:
+
+1. **Definitive signals** (auto-merge at 0.95 confidence):
+   - Exact email (multi-value aware: comma/semicolon-separated)
+   - Exact phone (multi-value, country-code stripped, concatenation split)
+   - Exact name + exact DOB — promoted to definitive because child
+     rosters frequently lack email/phone
+   - Address line1 ≥ 0.85 similarity AND a name overlap
+2. **Definitive-signal vetoes** drop confidence below auto-merge:
+   - Different states on otherwise-matching addresses (catches
+     inherited-mailbox / cross-generation cases)
+   - Address similarity < 0.5
+3. **Soft additive signals** (capped at 1.0):
+   - last name suffix-aware: exact +0.30, similar +0.20
+     (Smith Jr. == Smith)
+   - first name compound/nickname/prefix-aware: exact +0.20, nickname
+     +0.18, similar +0.10, phonetic +0.05
+     (Tim == Timothy, Bob == Robert, Mary == Marie, "Timothy & Mary"
+     matches each)
+   - DOB exact +0.20
+   - Address similar (>0.65) +0.15
+   - Zip match +0.05/+0.10
+   - City match +0.05
+4. **The gate** (default thresholds):
+   - confidence ≥ 0.85 OR definitive → auto-merge (attach)
+   - ≥ 0.30 → enqueue conflict for operator
+   - < 0.30 → create new person
+   Thresholds are tunable per-institution via the `profiles` table.
+
+**Sticky decisions:** when an operator (or external app) marks a pair
+"different" (`reject`/`dismiss`/feedback `different`), that decision is
+stored in the conflicts table with status `rejected`/`dismissed` and a
+free-form `resolution_notes` field. On every subsequent import or
+rescan, `conflicts.hasStickyNonMatch(left, right)` suppresses re-flagging
+the pair. The decision survives forever unless the operator explicitly
+clears it. The dashboard's Conflicts view shows a per-row textarea for
+the operator to record the WHY ("father and son, confirmed via parish
+records") before clicking merge / reject / dismiss; closed conflicts
+display the stored note verbatim under the row.
+
+**Critical correctness fix vs missionIQ:** address-only auto-merge with
+unrelated names is treated as a *family* signal in Family Graph, not a
+person signal. Mary Escamilla and John Torre at the same address are a
+couple, not duplicates of one person. The family resolver attaches them
+to the same family; the person resolver leaves them as distinct persons.
 
 ---
 
@@ -410,7 +509,11 @@ read tokens via `var(--…)` rather than re-declaring colors. The
 ## Test
 
 ```sh
-# server tests (177 cases via node:test)
+# server tests (206 cases via node:test — see test_suite.md)
+npm test
+# end-to-end browser tests (12 cases via Playwright)
+npm run test:e2e:install   # one-time chromium download
+npm run test:e2e
 npm test
 
 # verify the dashboard builds

@@ -1115,4 +1115,278 @@ cross-app integration plan.
 
 ---
 
+## v9 — Comprehensive missionIQ port: imports, matching, external API, profile fields
+
+**The trigger.** Operator imports a 370-row Google Sheet. Family Graph
+preview cheerfully reports "370 rows" but creates zero families/persons.
+Root cause: the heuristic mapper recognized none of the sheet's column
+headers, so applyMapping returned canonical rows with `persons: []`
+across the board, and the import path silently inserted source_records
+without ever creating people. The operator had no way to see this
+before clicking Import — there was no diagnostic, no warning, no count
+of "rows that produced people." The user (correctly) said "do better"
+and pointed at the missionIQ repo as the gold-standard reference.
+
+**The instruction.** "Go back into the missionIQ repo and look at how
+it imported the records and presented conflicts in the UI and do a
+MUCH more comprehensive job pulling out that code and adapting it
+here." Followed by: "look closely at the logic that determined if two
+records needed to be automatically combined or if the user needed to
+be prompted to resolve." Then: "we will need a way for those apps to
+bring in their data but call on ours for matching and perform a back
+and forth." Then: "improve upon what we built in missionIQ. Look at
+the family profiles in missionIQ. I never liked the UI but a lot of
+the data points were important to collect."
+
+The missionIQ repo at `github.com/christreadaway/missioniq` was opened
+read-only via WebFetch + raw.githubusercontent.com. Five files
+mattered: `server/services/ingestion.js` (auto-mapper, alias
+dictionary, date/phone/email normalization, summary-row filter),
+`server/identity/resolver.js` (the 2,181-line scoring engine with
+suffix stripping, nickname groups, address abbreviation handling,
+compound-name `Timothy & Mary` splitting, cross-state veto),
+`server/database/schema.js` (contacts/families/children with employer
+/title/do_not_contact/not_living_together), `server/routes/conflicts.js`
+and `client/src/pages/Upload.jsx`.
+
+**What got vendored, in five phases.**
+
+### Phase 1 — better imports
+
+`server/sources/csv.js` rewritten end-to-end. The HEADER_HEURISTICS
+dictionary expanded from ~20 entries to ~250 alias variants (parent
+1/2 + p2/p1, contact 2, spouse, husband, wife, partner, secondary
+contact, emergency contact, HOH, head of household, all the
+diminutives and cross-language variants). New `headerMatchScore`
+scores each (header, alias) pair via word-boundary regex (100 exact,
+80/70 word-as-substring, 50 fuzzy fallback ≥4 chars). New
+`autoMapFlat` does GLOBAL best-match assignment so "Child First Name"
+wins over "First Name" rather than getting stolen by the generic.
+
+`normalize.js` extended with `splitEmails`, `splitPhones`
+(concatenated `+13143...+13145...` splits into two 10-digit values),
+`normalizeDate` (Excel serial numbers — *critical* for Sheets
+exports — plus `MM/DD/YYYY`, 2-digit year, ISO, textual), and the
+summary-row filter that drops "Total" / "Grand Total" / "Subtotal".
+
+The preview API now returns `headers`, `mapping_warning`,
+`summary_rows_dropped`, `platform`, and a `diagnostic` block with
+`rows_with_persons / rows_with_address / rows_blank / total_persons /
+unmapped_columns`. The dashboard surfaces `rows_with_persons` of N
+prominently, disables the Import button when zero, and auto-opens a
+column-mapper editor when the auto-mapper failed.
+
+### Phase 2 — matching primitives + resolver upgrade
+
+`server/identity/matching.js` (new, ~470 lines) ports the missionIQ
+scoring primitives in pure-function form: `normalize`, `stripSuffix`,
+`nameSimilarityIgnoringSuffix`, `normalizeAddress`,
+`addressSimilarity`, `stripUnit`, `normalizeState`, `addressesConflict`,
+`splitEmails`, `splitPhones`, `NICKNAME_GROUPS`, `areNicknames`,
+`isPrefixMatch`, `firstNameMatchesCompound`, `scoreMatch`.
+
+The resolver was rewritten to use this. `findCandidates` now blocks on
+every deterministic signal we can hash: family-name (suffix-aware),
+every email, every phone, and the full address. The decision gate:
+**definitive** (exact email/phone, name+DOB, address+name) →
+auto_merge; confidence ≥ thresholds.autoMerge → auto_merge;
+≥ thresholds.review → enqueue; otherwise → create new.
+
+**Critical correctness fix vs missionIQ.** missionIQ treats an exact
+address match as definitive on its own. That's wrong for a household
+registry — Mary Escamilla and John Torre at the same address are a
+couple, not duplicates. Family Graph treats address as definitive
+only when paired with a name overlap. When names diverge, address
+drives FAMILY-level attachment but the persons stay distinct.
+
+`enc.normalizeAddress` extended to expand "St" → "Street" before
+hashing, so `123 Main St` and `123 Main Street` collide on `norm_hash`
+and cross-import dedup actually works.
+
+Threshold recalibration: defaults are now `(autoMerge: 0.85,
+review: 0.30)`. Lower review means even surname-only or
+phonetic-variant matches surface for operator review — FG errs on the
+side of asking.
+
+### Phase 2c — sticky decisions
+
+`conflicts.resolution_notes` captures the operator's free-form WHY
+alongside the existing status WHAT.
+`conflicts.hasStickyNonMatch(left, right)` returns true for pairs with
+a previous `rejected` or `dismissed` decision; the resolver checks
+this before opening a new conflict, so re-imports never re-flag a
+pair the operator already triaged.
+
+### Phase 3 — external matching API
+
+`server/api/identity.js` exposes the back-and-forth: `POST
+/api/identity/match` (peek), `POST /api/identity/resolve` (commit),
+`POST /api/identity/feedback` (record `same` or `different`, with
+`different` becoming sticky). Input shape accepts both flat
+(`first_name`, `email`) and structured (`given_name`, `emails[]`,
+`address: {...}`) keys so missionIQ / ParentPoint pass through their
+native rows.
+
+### Phase 4 — richer profile fields
+
+`persons` table grew `employer_ct`, `title_ct`, `do_not_contact` flag,
+`do_not_contact_reason_ct`, `not_living_together` flag — all from
+missionIQ's contacts shape. Multi-address / multi-email / multi-phone
+were already well-modelled.
+
+### Phase 5 — docs + tests
+
+`test_suite.md` is new — a canonical map of all 202 tests across the
+24 test files. README + ARCHITECTURE_MEMO synced.
+
+**By the numbers.** 9 commits, ~2,400 lines net added. 3 new
+migrations (0007, 0008, 0009). 1 new module + 1 new API surface + 1
+new test file. 25 new tests; 202 total, all passing. Client builds
+clean.
+
+### v9.1 — Playwright e2e + FamilyDetail enrichment + bulk do-not-call
+
+After the v9 work I told the user the dashboard had three remaining
+gaps: no Playwright tests, FamilyDetail still didn't expose
+multi-address/email/phone or per-member profile flags, and Import.jsx
+had only been verified via curl. They asked me to close all three
+without stopping. The session also picked up two new requests
+mid-flight: a "summer-grace" clarification on the grade display
+between May 15 and Aug 15, and a school-side do-not-call workflow
+("search a family by last name, flag every member at once").
+
+**Playwright + chromium-headless-shell** is now wired up. New
+`playwright.config.js` boots an isolated server under
+`/tmp/fg-pw-<pid>/`; new `e2e/_setup.js` reads the master token and
+seeds it + the PII view into localStorage. Twelve e2e tests across
+four files exercise the conflict-notes textarea, the new profile
+fields, the FamilyDetail enrichment (DOB / age / grade / channels
+roll-up / pills), the import preview diagnostic, and the bulk
+do-not-call flow.
+
+**FamilyDetail enrichment.** Each member row now shows
+DOB+age+grade-or-summer-equivalent, the "do not contact" / "separate
+residence" pills, and an employer/title chip when filled. The
+panel header rolls up "N adults · M kids". A new Contact channels
+panel under Members shows every email + phone across the family
+with attribution back to the contributing member. families.members
+was extended to decrypt and surface the new profile fields.
+
+**Three real bugs caught by the e2e tests** that the unit-only
+suite never would have:
+
+1. `FACTS_MAPPING null override`. The /api/import/run handler passes
+   `mapping: null` when the operator hasn't customized anything. The
+   FACTS / RenWeb / Ministry Platform handlers were spreading
+   `{ mapping: PRESET, ...opts }` — which let `opts.mapping = null`
+   wipe the preset and fall through to the inferred mapper. Switched
+   to `{ ...opts, mapping: opts.mapping || PRESET }`. Real-world
+   FACTS exports were silently being parsed via heuristics rather
+   than the FACTS-specific mapping.
+2. `Family Name` colliding between primary_family_name and
+   family_display_name. With the missionIQ-style scoring, a header
+   "Family Name" tied at 100 between the two slots and could win
+   either. In FACTS / RenWeb / school rosters, "Family Name" is the
+   household label, not an individual surname. Removed `'family
+   name'` from the `primary_family_name` aliases — the household-
+   label bucket wins now, and `Parent 1 Last Name` claims the
+   primary_family_name slot via its specific alias.
+3. `flatToStructured` always set the primary slot's role to
+   `'member'`. In a roster with a child slot AND/OR a secondary
+   adult, the primary is logically a parent. New rule: when either
+   sibling slot is present, primary's role becomes `'parent'`.
+
+Plus FACTS_MAPPING now accepts `Student DOB` / `Student Date of
+Birth` / `Student Grade` etc. — earlier it only matched the bare
+`DOB` and `Grade` columns, so live exports with the "Student"
+prefix had their kid's DOB / grade silently dropped.
+
+**Summer-grace grade display.** New `formatGrade(grade, now)`:
+during the school year (Aug 16 – May 14) renders `grade N`; during
+the May 15 – Aug 15 summer gap renders `completed N · rising N+1`
+because "grade 3" in July is ambiguous between just-finished and
+about-to-start. Non-numeric grades (PreK, K) pass through verbatim.
+
+**Bulk do-not-call** got both an API endpoint and a UI:
+
+- New `POST /api/families/:code/do-not-contact` body `{ value,
+  reason? }` flips do_not_contact on every active member, audits
+  per-person AND once at the family level. Clearing wipes the
+  reason too.
+- New `GET /api/families?q=<surname>` filters the families list
+  server-side via `family_name_hash` HMAC equality, so the
+  operator can find a family by any member's surname even when
+  the family has no display_name set.
+- FamilyDetail grew a "Do-not-call list" panel showing the current
+  flagged-members aggregate, a reason input, and add/clear buttons.
+- The Families list view grew a search box (powered by the new
+  `?q=`) and a per-row "Add to do-not-call" / "Clear" quick action.
+
+Two new server tests covering the bulk endpoint + the surname
+filter; six new e2e tests covering the dashboard flows.
+
+**By the numbers (v9.1).** ~880 lines net added across 7 changed
+files + 5 new e2e files + 1 new playwright config. 218 total tests
+green: 206 server + 12 e2e. Client builds clean (Vite v5.4.21).
+
+**The throughline.** v9 closed the gap between "Family Graph is
+conceptually inspired by missionIQ" and "Family Graph runs the
+literal missionIQ logic, with the architectural mistakes corrected."
+
+### v9 follow-up — dashboard UI for resolution notes + profile fields
+
+After the backend port landed, the dashboard had two glaring gaps:
+the operator could not record WHY they made a conflict decision
+(`resolution_notes` was server-only), and the new person-profile
+fields (employer / title / do_not_contact / not_living_together)
+weren't editable anywhere.
+
+Both shipped:
+
+- **Conflicts.jsx**: each row now expands into an inline notes
+  textarea (max 2000 chars, optional). The note threads through to
+  every decision (`merge`/`reject`/`dismiss`) so the operator's
+  reasoning persists in `conflicts.resolution_notes`. A new "Why"
+  column displays the reason chips (`exact_email_match`,
+  `nickname_or_short_form`, `address_conflict_present`, etc.) so the
+  operator sees what triggered the conflict before deciding. Closed
+  conflicts surface the stored note verbatim under the row, with
+  `resolved_by` attribution.
+- **PersonDetail.jsx**: new Profile section with employer / title
+  free-text inputs and two checkbox flags (do_not_contact + reason
+  textarea, not_living_together). The reason input only appears
+  while do_not_contact is checked.
+
+Two backend bugs surfaced during the dev-server integration test:
+
+1. `SCHEMA_VERSION` was still hardcoded to 5 even though migrations
+   0006-0009 had landed. The health endpoint reported the wrong
+   number. Bumped to 9 with version-comment lineage updated.
+2. `server/config.js` and the built-in profiles still used the
+   old weighted-scoring thresholds (autoMerge=0.92, review=0.7).
+   With the new additive scoring, name+name conflicts (0.50)
+   weren't crossing review (0.7), so the user-invoked "Scan whole
+   directory" button silently produced zero conflicts even when
+   duplicates obviously existed. Recalibrated production defaults
+   to autoMerge=0.85, review=0.30; profiles now scale relative
+   from there (parish_donor 0.80 / school 0.85 / diocese 0.90).
+   `tests/extensions.test.js` updated to expect the new diocese
+   numbers.
+
+End-to-end smoke against the live server confirmed:
+- creating two duplicate Pio Pietrelcinas
+- POST /api/scan/duplicates opens 1 conflict
+- POST /api/conflicts/:code/resolve with `notes` persists to
+  `resolution_notes` + `resolved_by`
+- subsequent rescans don't re-flag (sticky non-match in effect)
+- PATCH /api/people/:code with profile fields round-trips through GET
+
+Tests +2 (resolve→profile-fields, conflict-notes persistence) for
+204 total, all green. Client builds clean.
+
+The next session should be Tauri/Electron desktop shell work
+(CLAUDE_CODE_HANDOFF §5).
+
+---
+
 *End of session notes*

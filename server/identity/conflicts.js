@@ -39,7 +39,7 @@ function get(db, code) {
   return { ...row, reasons: row.reasons ? JSON.parse(row.reasons) : [] };
 }
 
-function resolveMerge(db, secrets, conflictCode, { winnerCode, actor = 'operator' } = {}) {
+function resolveMerge(db, secrets, conflictCode, { winnerCode, actor = 'operator', notes = null } = {}) {
   const c = get(db, conflictCode);
   if (!c) throw new Error('conflict not found');
   if (c.status !== 'open') throw new Error('conflict already resolved');
@@ -55,42 +55,59 @@ function resolveMerge(db, secrets, conflictCode, { winnerCode, actor = 'operator
     families.merge(db, secrets, loser, winnerCode);
   }
   db.prepare(
-    `UPDATE conflicts SET status = 'merged', resolved_by = ?, resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
-  ).run(actor, conflictCode);
+    `UPDATE conflicts SET status = 'merged', resolved_by = ?, resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                          resolution_notes = ? WHERE code = ?`
+  ).run(actor, notes ? String(notes).slice(0, 2000) : null, conflictCode);
   audit.record(db, {
     action: 'conflict_merged',
     actor,
     entityCode: winnerCode,
     entityKind: c.kind,
-    metadata: { conflict: conflictCode, loser },
+    metadata: { conflict: conflictCode, loser, notes: notes || null },
   });
   return winnerCode;
 }
 
-function resolveReject(db, conflictCode, { actor = 'operator' } = {}) {
+function resolveReject(db, conflictCode, { actor = 'operator', notes = null } = {}) {
   const c = get(db, conflictCode);
   if (!c) throw new Error('conflict not found');
   if (c.status !== 'open') throw new Error('conflict already resolved');
   db.prepare(
-    `UPDATE conflicts SET status = 'rejected', resolved_by = ?, resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
-  ).run(actor, conflictCode);
+    `UPDATE conflicts SET status = 'rejected', resolved_by = ?, resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                          resolution_notes = ? WHERE code = ?`
+  ).run(actor, notes ? String(notes).slice(0, 2000) : null, conflictCode);
   audit.record(db, {
     action: 'conflict_rejected',
     actor,
     entityKind: c.kind,
-    metadata: { conflict: conflictCode },
+    metadata: { conflict: conflictCode, notes: notes || null },
   });
 }
 
-function resolveDismiss(db, conflictCode, { actor = 'operator' } = {}) {
+function resolveDismiss(db, conflictCode, { actor = 'operator', notes = null } = {}) {
   db.prepare(
-    `UPDATE conflicts SET status = 'dismissed', resolved_by = ?, resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
-  ).run(actor, conflictCode);
+    `UPDATE conflicts SET status = 'dismissed', resolved_by = ?, resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                          resolution_notes = ? WHERE code = ?`
+  ).run(actor, notes ? String(notes).slice(0, 2000) : null, conflictCode);
   audit.record(db, {
     action: 'conflict_dismissed',
     actor,
-    metadata: { conflict: conflictCode },
+    metadata: { conflict: conflictCode, notes: notes || null },
   });
+}
+
+// Returns true if the (left, right) pair has already been decided as
+// "they're not the same" — rejected or dismissed. Used by the resolver to
+// avoid re-flagging a pair the operator already triaged. Order-independent.
+function hasStickyNonMatch(db, leftCode, rightCode) {
+  const row = db.prepare(
+    `SELECT 1 FROM conflicts
+      WHERE kind = 'person'
+        AND status IN ('rejected', 'dismissed')
+        AND ((left_code = ? AND right_code = ?) OR (left_code = ? AND right_code = ?))
+      LIMIT 1`
+  ).get(leftCode, rightCode, rightCode, leftCode);
+  return !!row;
 }
 
 // Assign one or many open conflicts to an email. The assignment expires
@@ -306,6 +323,7 @@ module.exports = {
   resolveMerge,
   resolveReject,
   resolveDismiss,
+  hasStickyNonMatch,
   assign,
   unassign,
   sweepExpiredAssignments,

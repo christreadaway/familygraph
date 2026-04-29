@@ -1,181 +1,332 @@
 'use strict';
 
-// Identity resolver. Vendored from MissionIQ's resolution rules conceptually.
-// Behavior:
-//   - For each incoming person record, score it against existing persons using
-//     deterministic blocking (last-name hash) followed by per-field similarity.
-//   - score >= autoMerge threshold: auto-merge silently (or auto-attach).
-//   - score >= review threshold: enqueue a conflict for the operator.
-//   - score <  review threshold: treat as a new person.
-//   - For families, the same approach applies, using surname + address hash as
-//     the blocking key.
+// Identity resolver. Vendored from missionIQ — both the matching primitives
+// (in ./matching.js) and the auto-merge / prompt-the-user gate that this
+// module wraps.
 //
-// The resolver is intentionally simple. It is the right shape for v1 — the
-// thresholds are tunable, additional rules can be encoded in the
-// `resolution_rules` table, and the conflict queue absorbs the rest.
+// Behavior:
+//   - For each incoming person record, gather candidates by hashing every
+//     deterministic signal (last-name, first-name, every email, every phone,
+//     and the address) and looking each one up in the indexed hash columns.
+//   - Score each candidate using matching.scoreMatch — vendored from
+//     missionIQ — which returns { confidence, reasons, definitive }.
+//   - DECISION GATE:
+//       definitive (exact email/phone/strong address) AND no address conflict
+//                                            → auto_merge
+//       confidence ≥ thresholds.autoMerge   → auto_merge (attach)
+//       confidence ≥ thresholds.review      → enqueue conflict
+//       else                                  → create new person
+//   - For families, the same approach plus the existing "attach to the family
+//     that contains a majority of the incoming persons" heuristic.
 
 const enc = require('../crypto/encryption');
 const people = require('./people');
 const families = require('./families');
-const contacts = require('./contacts');
 const aliases = require('./aliases');
 const rules = require('./rules');
 const audit = require('../audit');
+const matching = require('./matching');
+const conflictsMod = require('./conflicts');
 const { newCode } = require('../crypto/identifiers');
 
-function similarity(a, b) {
-  if (!a && !b) return 0;
-  if (!a || !b) return 0;
-  const x = String(a).toLowerCase();
-  const y = String(b).toLowerCase();
-  if (x === y) return 1;
-  // Damerau-Levenshtein-ish length-normalized similarity. Pure-JS, no deps.
-  const dist = levenshtein(x, y);
-  const maxLen = Math.max(x.length, y.length);
-  if (maxLen === 0) return 0;
-  return 1 - dist / maxLen;
-}
+// Re-exported for backwards compat — some callers (and tests) import these
+// from the resolver directly.
+const { similarity, scoreMatch } = matching;
 
-function levenshtein(a, b) {
-  if (a === b) return 0;
-  if (!a) return b.length;
-  if (!b) return a.length;
-  const al = a.length;
-  const bl = b.length;
-  const v0 = new Array(bl + 1);
-  const v1 = new Array(bl + 1);
-  for (let i = 0; i <= bl; i++) v0[i] = i;
-  for (let i = 0; i < al; i++) {
-    v1[0] = i + 1;
-    for (let j = 0; j < bl; j++) {
-      const cost = a.charCodeAt(i) === b.charCodeAt(j) ? 0 : 1;
-      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
+// ---------- candidate enrichment ----------
+
+// Decrypt a person row into the loose record shape that matching.scoreMatch
+// expects. Pulls every email/phone/address attached to the person too, so
+// the scorer can compare multi-value fields against multi-value candidates.
+function _enrichCandidate(db, secrets, row) {
+  const cand = {
+    code: row.code,
+    given_name: enc.decrypt(secrets, row.given_name_ct),
+    family_name: enc.decrypt(secrets, row.family_name_ct),
+    date_of_birth: enc.decrypt(secrets, row.date_of_birth_ct),
+    emails: [],
+    phones: [],
+    address_line1: null,
+    city: null,
+    state: null,
+    zip: null,
+  };
+
+  const emailRows = db.prepare(
+    `SELECT e.value_ct FROM person_emails pe JOIN emails e ON e.code = pe.email_code WHERE pe.person_code = ?`
+  ).all(row.code);
+  for (const er of emailRows) {
+    const v = enc.decrypt(secrets, er.value_ct);
+    if (v) cand.emails.push(String(v).toLowerCase().trim());
+  }
+
+  const phoneRows = db.prepare(
+    `SELECT ph.value_ct FROM person_phones pp JOIN phones ph ON ph.code = pp.phone_code WHERE pp.person_code = ?`
+  ).all(row.code);
+  for (const pr of phoneRows) {
+    const v = enc.decrypt(secrets, pr.value_ct);
+    if (v) {
+      for (const p of matching.splitPhones(v)) {
+        if (!cand.phones.includes(p)) cand.phones.push(p);
+      }
     }
-    for (let j = 0; j <= bl; j++) v0[j] = v1[j];
-  }
-  return v0[bl];
-}
-
-function scorePerson(incoming, candidate) {
-  // candidate has decrypted PII, incoming is plaintext input.
-  const reasons = [];
-  let score = 0;
-  let weight = 0;
-
-  const family = similarity(
-    enc.normalizeName(incoming.family_name),
-    enc.normalizeName(candidate.family_name)
-  );
-  score += family * 0.45;
-  weight += 0.45;
-  if (family >= 0.95) reasons.push('family_name_exact');
-  else if (family >= 0.8) reasons.push('family_name_close');
-
-  const given = similarity(
-    enc.normalizeName(incoming.given_name),
-    enc.normalizeName(candidate.given_name)
-  );
-  score += given * 0.35;
-  weight += 0.35;
-  if (given >= 0.95) reasons.push('given_name_exact');
-  else if (given >= 0.8) reasons.push('given_name_close');
-
-  if (incoming.date_of_birth && candidate.date_of_birth) {
-    const dob =
-      enc.normalizeName(incoming.date_of_birth) === enc.normalizeName(candidate.date_of_birth)
-        ? 1
-        : 0;
-    score += dob * 0.2;
-    weight += 0.2;
-    if (dob === 1) reasons.push('dob_exact');
   }
 
-  if (weight === 0) return { score: 0, reasons: [] };
-  return { score: score / weight, reasons };
+  // Address: prefer person_addresses, fall back to family primary.
+  const addrRow = db.prepare(
+    `SELECT a.* FROM person_addresses pa JOIN addresses a ON a.code = pa.address_code
+       WHERE pa.person_code = ? ORDER BY pa.is_primary DESC LIMIT 1`
+  ).get(row.code);
+  let addr = addrRow;
+  if (!addr) {
+    addr = db.prepare(
+      `SELECT a.* FROM memberships m
+         JOIN family_addresses fa ON fa.family_code = m.family_code
+         JOIN addresses a ON a.code = fa.address_code
+        WHERE m.person_code = ? AND m.ended_at IS NULL
+        ORDER BY fa.is_primary DESC LIMIT 1`
+    ).get(row.code);
+  }
+  if (addr) {
+    cand.address_line1 = enc.decrypt(secrets, addr.line1_ct);
+    cand.city = enc.decrypt(secrets, addr.city_ct);
+    cand.state = enc.decrypt(secrets, addr.region_ct);
+    cand.zip = enc.decrypt(secrets, addr.postal_ct);
+  }
+
+  return cand;
 }
 
+// Cast an `incoming` record (the canonical-import shape) into the same record
+// shape `matching.scoreMatch` consumes.
+function _toMatcherRecord(incoming) {
+  return {
+    given_name: incoming.given_name || null,
+    family_name: incoming.family_name || null,
+    date_of_birth: incoming.date_of_birth || null,
+    emails: Array.isArray(incoming.emails) ? incoming.emails.map(String) : [],
+    phones: Array.isArray(incoming.phones)
+      ? incoming.phones.flatMap(p => matching.splitPhones(p))
+      : [],
+    address_line1: incoming.address_line1 || (incoming.address && incoming.address.line1) || null,
+    city: incoming.city || (incoming.address && incoming.address.city) || null,
+    state: incoming.state || incoming.region || (incoming.address && incoming.address.region) || null,
+    zip: incoming.zip || incoming.postal || (incoming.address && incoming.address.postal) || null,
+  };
+}
+
+// Gather candidate persons by every deterministic signal we can hash against.
+// Vendored conceptually from missionIQ.findMatchingContact.
 function findCandidates(db, secrets, incoming) {
-  // Block by last-name hash, fall back to first-name if no match.
+  const seen = new Map();   // code → row
   const fh = enc.hmac(secrets, enc.normalizeName(incoming.family_name));
   const gh = enc.hmac(secrets, enc.normalizeName(incoming.given_name));
-  const candidates = [];
-  if (fh) {
-    const rows = db
-      .prepare(
-        `SELECT * FROM persons WHERE status = 'active' AND family_name_hash = ? LIMIT 50`
-      )
-      .all(fh);
-    candidates.push(...rows);
+
+  // 1. Block on family-name hash. (Suffix-aware: also try the suffix-stripped
+  //    base name so "Smith Jr." finds existing "Smith" rows.)
+  function fetchByFamily(name) {
+    if (!name) return;
+    const h = enc.hmac(secrets, enc.normalizeName(name));
+    if (!h) return;
+    for (const r of db.prepare(
+      `SELECT * FROM persons WHERE status = 'active' AND family_name_hash = ? LIMIT 50`
+    ).all(h)) {
+      seen.set(r.code, r);
+    }
   }
-  if (candidates.length === 0 && gh) {
-    const rows = db
-      .prepare(
-        `SELECT * FROM persons WHERE status = 'active' AND given_name_hash = ? LIMIT 25`
-      )
-      .all(gh);
-    candidates.push(...rows);
+  fetchByFamily(incoming.family_name);
+  if (incoming.family_name) {
+    const { baseName } = matching.stripSuffix(incoming.family_name);
+    if (baseName && baseName !== incoming.family_name) fetchByFamily(baseName);
   }
-  return candidates.map(r => ({
-    code: r.code,
-    given_name: enc.decrypt(secrets, r.given_name_ct),
-    family_name: enc.decrypt(secrets, r.family_name_ct),
-    date_of_birth: enc.decrypt(secrets, r.date_of_birth_ct),
-  }));
+
+  // 2. Block on email hashes.
+  for (const email of incoming.emails || []) {
+    const norm = enc.normalizeEmail(email);
+    if (!norm) continue;
+    const h = enc.hmac(secrets, norm);
+    const rows = db.prepare(
+      `SELECT p.* FROM persons p
+         JOIN person_emails pe ON pe.person_code = p.code
+         JOIN emails e ON e.code = pe.email_code
+        WHERE p.status = 'active' AND e.norm_hash = ? LIMIT 25`
+    ).all(h);
+    for (const r of rows) seen.set(r.code, r);
+  }
+
+  // 3. Block on phone hashes.
+  for (const phone of incoming.phones || []) {
+    for (const p of matching.splitPhones(phone)) {
+      const norm = enc.normalizePhone(p);
+      if (!norm) continue;
+      const h = enc.hmac(secrets, norm);
+      const rows = db.prepare(
+        `SELECT p.* FROM persons p
+           JOIN person_phones pp ON pp.person_code = p.code
+           JOIN phones ph ON ph.code = pp.phone_code
+          WHERE p.status = 'active' AND ph.norm_hash = ? LIMIT 25`
+      ).all(h);
+      for (const r of rows) seen.set(r.code, r);
+    }
+  }
+
+  // 4. Block on address hash — pulls every person who lives at this address,
+  //    even if their last name is different.
+  const addrParts = incoming.address || {};
+  const addrLine1 = incoming.address_line1 || addrParts.line1;
+  if (addrLine1) {
+    const norm = enc.normalizeAddress({
+      line1: addrLine1,
+      line2: incoming.address_line2 || addrParts.line2,
+      city: incoming.city || addrParts.city,
+      region: incoming.region || addrParts.region,
+      postal: incoming.postal || addrParts.postal,
+      country: incoming.country || addrParts.country,
+    });
+    if (norm) {
+      const h = enc.hmac(secrets, norm);
+      const rows = db.prepare(
+        `SELECT p.* FROM persons p
+           JOIN memberships m ON m.person_code = p.code AND m.ended_at IS NULL
+           JOIN family_addresses fa ON fa.family_code = m.family_code
+           JOIN addresses a ON a.code = fa.address_code
+          WHERE p.status = 'active' AND a.norm_hash = ? LIMIT 50`
+      ).all(h);
+      for (const r of rows) seen.set(r.code, r);
+    }
+  }
+
+  // 5. Last-resort: first-name hash (only if nothing else hit).
+  if (seen.size === 0 && gh) {
+    for (const r of db.prepare(
+      `SELECT * FROM persons WHERE status = 'active' AND given_name_hash = ? LIMIT 25`
+    ).all(gh)) {
+      seen.set(r.code, r);
+    }
+  }
+
+  return Array.from(seen.values()).map(r => _enrichCandidate(db, secrets, r));
 }
 
-// resolveOrCreatePerson:
-//   action = 'auto_merged' | 'enqueued' | 'attached' | 'created'
+// ---------- the gate ----------
+//
+// Returns { action, candidate?, confidence, reasons, definitive }.
+// The shape is the same one the calling code already consumed.
+function decideMatch(scored, thresholds) {
+  if (!scored) return { action: 'create', confidence: 0, reasons: [], definitive: false };
+  const { confidence, reasons, definitive } = scored;
+  if (definitive) return { action: 'auto_merge', confidence, reasons, definitive: true };
+  if (confidence >= thresholds.autoMerge) return { action: 'auto_merge', confidence, reasons, definitive: false };
+  if (confidence >= thresholds.review) return { action: 'review', confidence, reasons, definitive: false };
+  return { action: 'create', confidence, reasons, definitive: false };
+}
+
+// ---------- public API ----------
+
 function resolveOrCreatePerson(db, secrets, thresholds, incoming, opts = {}) {
   const candidates = findCandidates(db, secrets, incoming);
+  const incomingRec = _toMatcherRecord(incoming);
   const activeRules = rules.loadActive(db, 'person');
+
   let best = null;
   for (const c of candidates) {
-    let r = scorePerson(incoming, c);
+    let scored = matching.scoreMatch(incomingRec, c);
     if (activeRules.length > 0) {
-      const adjusted = rules.applyToScore(activeRules, r, incoming, c, {
-        incoming: { email: (incoming.emails || [])[0], postal: incoming.postal },
-        candidate: { email: c.email, postal: c.postal },
-      });
-      r = { score: adjusted.score, reasons: adjusted.reasons, override: adjusted.override };
+      const adjusted = rules.applyToScore(
+        activeRules,
+        { score: scored.confidence, reasons: scored.reasons },
+        incoming,
+        c,
+        {
+          incoming: { email: (incomingRec.emails || [])[0], postal: incomingRec.zip },
+          candidate: { email: (c.emails || [])[0], postal: c.zip },
+        }
+      );
+      scored = {
+        confidence: adjusted.score,
+        reasons: adjusted.reasons,
+        definitive: scored.definitive && !adjusted.override,
+      };
     }
-    if (!best || r.score > best.score) best = { ...r, candidate: c };
+    if (!best || scored.confidence > best.confidence) best = { ...scored, candidate: c };
   }
 
-  if (best && best.score >= thresholds.autoMerge) {
+  const decision = decideMatch(best, thresholds);
+
+  if (decision.action === 'auto_merge') {
     audit.record(db, {
       action: 'resolver_attach',
       actor: opts.actor || 'resolver',
       entityCode: best.candidate.code,
       entityKind: 'person',
-      metadata: { score: best.score, reasons: best.reasons },
+      metadata: {
+        confidence: decision.confidence,
+        reasons: decision.reasons,
+        definitive: decision.definitive,
+      },
     });
-    // Do not silently overwrite name/dob; leave the existing record. The
-    // operator can edit later. If new fields exist on incoming and not on the
-    // existing record, fill them.
+    // Patch in any new fields the existing record was missing.
     const patch = {};
     if (!best.candidate.given_name && incoming.given_name) patch.given_name = incoming.given_name;
     if (!best.candidate.family_name && incoming.family_name) patch.family_name = incoming.family_name;
     if (!best.candidate.date_of_birth && incoming.date_of_birth) patch.date_of_birth = incoming.date_of_birth;
     if (Object.keys(patch).length) people.update(db, secrets, best.candidate.code, patch);
-    return { code: best.candidate.code, action: 'attached', score: best.score, reasons: best.reasons };
+    return {
+      code: best.candidate.code,
+      action: 'attached',
+      score: decision.confidence,
+      reasons: decision.reasons,
+      definitive: decision.definitive,
+    };
   }
 
-  if (best && best.score >= thresholds.review) {
-    // Create the new person and queue the conflict pair for operator review.
+  if (decision.action === 'review') {
+    // Sticky non-match: if the operator already triaged this exact pair as
+    // not-the-same, don't re-flag it. The new record is created as a fresh
+    // person with no conflict opened.
+    if (conflictsMod.hasStickyNonMatch(db, best.candidate.code, best.candidate.code)) {
+      // (placeholder branch — left-side is the candidate, the new record has
+      //  no code yet; we re-check after creation below.)
+    }
     const newPerson = people.create(db, secrets, incoming);
+    if (conflictsMod.hasStickyNonMatch(db, newPerson, best.candidate.code)) {
+      audit.record(db, {
+        action: 'resolver_sticky_skip',
+        actor: opts.actor || 'resolver',
+        entityCode: newPerson,
+        entityKind: 'person',
+        metadata: {
+          reason: 'prior_decision_rejected_or_dismissed',
+          peer: best.candidate.code,
+        },
+      });
+      return {
+        code: newPerson,
+        action: 'created',
+        score: decision.confidence,
+        reasons: decision.reasons,
+        sticky_skip: true,
+      };
+    }
     const conflictCode = newCode('conflict');
     db.prepare(
       `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons)
        VALUES (?, 'person', ?, ?, ?, ?)`
-    ).run(conflictCode, newPerson, best.candidate.code, best.score, JSON.stringify(best.reasons));
+    ).run(conflictCode, newPerson, best.candidate.code, decision.confidence, JSON.stringify(decision.reasons));
     audit.record(db, {
       action: 'resolver_enqueued',
       actor: opts.actor || 'resolver',
       entityCode: newPerson,
       entityKind: 'person',
-      metadata: { score: best.score, reasons: best.reasons, conflict: conflictCode },
+      metadata: { confidence: decision.confidence, reasons: decision.reasons, conflict: conflictCode },
     });
-    return { code: newPerson, action: 'enqueued', score: best.score, reasons: best.reasons, conflict: conflictCode };
+    return {
+      code: newPerson,
+      action: 'enqueued',
+      score: decision.confidence,
+      reasons: decision.reasons,
+      conflict: conflictCode,
+    };
   }
 
   const code = people.create(db, secrets, incoming);
@@ -185,26 +336,21 @@ function resolveOrCreatePerson(db, secrets, thresholds, incoming, opts = {}) {
     entityCode: code,
     entityKind: 'person',
   });
-  return { code, action: 'created', score: best ? best.score : 0, reasons: [] };
+  return { code, action: 'created', score: best ? best.confidence : 0, reasons: [] };
 }
 
-// Family resolution: same shape, blocked on (surname-hash + address-hash) so
-// that two families with the same surname at different addresses don't merge.
 function resolveOrCreateFamily(db, secrets, thresholds, input, opts = {}) {
-  // Heuristic: prefer to attach to an existing family that already contains
-  // any of `input.persons` resolved via attached/auto-merge above.
+  // 1. Person-overlap heuristic: if a majority of the incoming persons already
+  //    live in some existing family, attach there.
   const linkedFamilyCounts = new Map();
   for (const pc of input.personCodes || []) {
-    const fams = db
-      .prepare(
-        `SELECT family_code FROM memberships WHERE person_code = ? AND ended_at IS NULL`
-      )
-      .all(aliases.resolveAlias(db, pc));
+    const fams = db.prepare(
+      `SELECT family_code FROM memberships WHERE person_code = ? AND ended_at IS NULL`
+    ).all(aliases.resolveAlias(db, pc));
     for (const r of fams) {
       linkedFamilyCounts.set(r.family_code, (linkedFamilyCounts.get(r.family_code) || 0) + 1);
     }
   }
-  // If any family contains a majority of the incoming people, attach there.
   if (linkedFamilyCounts.size > 0 && (input.personCodes || []).length > 0) {
     const sorted = [...linkedFamilyCounts.entries()].sort((a, b) => b[1] - a[1]);
     const [topFamily, count] = sorted[0];
@@ -212,6 +358,36 @@ function resolveOrCreateFamily(db, secrets, thresholds, input, opts = {}) {
       return { code: topFamily, action: 'attached' };
     }
   }
+
+  // 2. Address-overlap: if no person overlapped but the incoming address
+  //    matches an existing family's primary address, attach there. This is
+  //    the "blended household" / "spouse keeping maiden name" case — same
+  //    home, different person, same family. Requires a meaningful line1
+  //    (city+zip alone aren't specific enough — many families share a city).
+  const addr = input.address || null;
+  if (addr && addr.line1) {
+    const norm = enc.normalizeAddress({
+      line1: addr.line1 || null,
+      line2: addr.line2 || null,
+      city: addr.city || null,
+      region: addr.region || null,
+      postal: addr.postal || null,
+      country: addr.country || null,
+    });
+    if (norm) {
+      const h = enc.hmac(secrets, norm);
+      const fam = db.prepare(
+        `SELECT fa.family_code AS code
+           FROM addresses a
+           JOIN family_addresses fa ON fa.address_code = a.code
+           JOIN families f ON f.code = fa.family_code
+          WHERE a.norm_hash = ? AND f.status = 'active'
+          LIMIT 1`
+      ).get(h);
+      if (fam) return { code: fam.code, action: 'attached' };
+    }
+  }
+
   const code = families.create(db, secrets, {
     display_name: input.display_name,
     notes: input.notes,
@@ -225,42 +401,48 @@ function resolveOrCreateFamily(db, secrets, thresholds, input, opts = {}) {
   return { code, action: 'created' };
 }
 
-// Recompute conflicts for a freshly written person. Useful when a write happens
-// outside the normal resolver path (manual creation in dashboard).
 function rescorePerson(db, secrets, thresholds, personCode) {
   const target = aliases.resolveAlias(db, personCode);
   const row = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
   if (!row) return [];
-  const incoming = {
-    given_name: enc.decrypt(secrets, row.given_name_ct),
-    family_name: enc.decrypt(secrets, row.family_name_ct),
-    date_of_birth: enc.decrypt(secrets, row.date_of_birth_ct),
-  };
+  const incoming = _enrichCandidate(db, secrets, row);
   const candidates = findCandidates(db, secrets, incoming).filter(c => c.code !== target);
   const matches = [];
   for (const c of candidates) {
-    const r = scorePerson(incoming, c);
-    if (r.score >= thresholds.review) matches.push({ candidate: c, ...r });
+    const scored = matching.scoreMatch(incoming, c);
+    if (scored.confidence >= thresholds.review) {
+      matches.push({ candidate: c, ...scored });
+    }
   }
   for (const m of matches) {
-    const dupe = db
-      .prepare(
-        `SELECT 1 FROM conflicts WHERE kind = 'person' AND status = 'open' AND
-           ((left_code = ? AND right_code = ?) OR (left_code = ? AND right_code = ?))`
-      )
-      .get(target, m.candidate.code, m.candidate.code, target);
+    // Skip if there's an existing OPEN conflict for this pair OR a prior
+    // non-match decision the operator already made (rejected/dismissed).
+    const dupe = db.prepare(
+      `SELECT status FROM conflicts WHERE kind = 'person' AND
+         ((left_code = ? AND right_code = ?) OR (left_code = ? AND right_code = ?))`
+    ).get(target, m.candidate.code, m.candidate.code, target);
     if (dupe) continue;
     db.prepare(
       `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons)
        VALUES (?, 'person', ?, ?, ?, ?)`
-    ).run(newCode('conflict'), target, m.candidate.code, m.score, JSON.stringify(m.reasons));
+    ).run(newCode('conflict'), target, m.candidate.code, m.confidence, JSON.stringify(m.reasons));
   }
   return matches;
+}
+
+// Backwards-compatible scorePerson — preserved for callers (and tests) that
+// still use it. Routes through matching.scoreMatch.
+function scorePerson(incoming, candidate) {
+  const scored = matching.scoreMatch(_toMatcherRecord(incoming), candidate);
+  return { score: scored.confidence, reasons: scored.reasons };
 }
 
 module.exports = {
   scorePerson,
   similarity,
+  scoreMatch,
+  decideMatch,
+  findCandidates,
   resolveOrCreatePerson,
   resolveOrCreateFamily,
   rescorePerson,

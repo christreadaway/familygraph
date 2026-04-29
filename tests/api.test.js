@@ -201,3 +201,63 @@ test('api > conflict resolve via merge', async t => {
   });
   assert.equal(resolve.status, 200);
 });
+
+test('api > family bulk do-not-contact flags every active member', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-family-graph-actor': 'unit-test' };
+  // Build a family with 3 active members.
+  const fam = (await request(port, { method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'Smith' } })).body.code;
+  const a = (await request(port, { method: 'POST', path: '/api/people', headers: auth, body: { given_name: 'Mary', family_name: 'Smith' } })).body.code;
+  const b = (await request(port, { method: 'POST', path: '/api/people', headers: auth, body: { given_name: 'John', family_name: 'Smith' } })).body.code;
+  const c = (await request(port, { method: 'POST', path: '/api/people', headers: auth, body: { given_name: 'Lucy', family_name: 'Smith' } })).body.code;
+  for (const pc of [a, b, c]) {
+    await request(port, { method: 'POST', path: `/api/families/${fam}/members`, headers: auth, body: { person_code: pc, role: 'member' } });
+  }
+
+  // Bulk-flag with a reason.
+  const r = await request(port, {
+    method: 'POST', path: `/api/families/${fam}/do-not-contact`, headers: auth,
+    body: { value: true, reason: 'requested no phone solicitation' },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.updated, 3);
+
+  for (const pc of [a, b, c]) {
+    const got = await request(port, { method: 'GET', path: `/api/people/${pc}`, headers: auth });
+    assert.equal(got.body.person.do_not_contact, true);
+    assert.equal(got.body.person.do_not_contact_reason, 'requested no phone solicitation');
+  }
+
+  // Clearing wipes the reason too.
+  await request(port, {
+    method: 'POST', path: `/api/families/${fam}/do-not-contact`, headers: auth,
+    body: { value: false },
+  });
+  for (const pc of [a, b, c]) {
+    const got = await request(port, { method: 'GET', path: `/api/people/${pc}`, headers: auth });
+    assert.equal(got.body.person.do_not_contact, false);
+    assert.equal(got.body.person.do_not_contact_reason, null);
+  }
+});
+
+test('api > /api/families?q= filters by member surname (HMAC equality)', async t => {
+  const { port, secrets } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-family-graph-actor': 'unit-test' };
+  // Two distinct families.
+  const fam1 = (await request(port, { method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'A' } })).body.code;
+  const fam2 = (await request(port, { method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'B' } })).body.code;
+  const p1 = (await request(port, { method: 'POST', path: '/api/people', headers: auth, body: { given_name: 'Mary', family_name: 'Smith' } })).body.code;
+  const p2 = (await request(port, { method: 'POST', path: '/api/people', headers: auth, body: { given_name: 'John', family_name: 'Doe' } })).body.code;
+  await request(port, { method: 'POST', path: `/api/families/${fam1}/members`, headers: auth, body: { person_code: p1, role: 'member' } });
+  await request(port, { method: 'POST', path: `/api/families/${fam2}/members`, headers: auth, body: { person_code: p2, role: 'member' } });
+
+  // Without q= we get both.
+  let r = await request(port, { method: 'GET', path: '/api/families', headers: auth });
+  assert.ok(r.body.items.length >= 2);
+
+  // With q=Smith, only fam1.
+  r = await request(port, { method: 'GET', path: '/api/families?q=Smith', headers: auth });
+  const codes = r.body.items.map(f => f.code);
+  assert.ok(codes.includes(fam1), 'expected fam1 (Mary Smith)');
+  assert.ok(!codes.includes(fam2), 'expected fam2 to be filtered out');
+});

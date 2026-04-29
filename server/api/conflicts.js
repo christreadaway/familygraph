@@ -65,19 +65,19 @@ function build({ db, secrets }) {
   });
 
   r.post('/:code/resolve', (req, res) => {
-    const { decision, winner_code } = req.body || {};
+    const { decision, winner_code, notes = null } = req.body || {};
     const actor = req.auth?.actor || 'operator';
     try {
       if (decision === 'merge') {
-        const code = conflicts.resolveMerge(db, secrets, req.params.code, { winnerCode: winner_code, actor });
+        const code = conflicts.resolveMerge(db, secrets, req.params.code, { winnerCode: winner_code, actor, notes });
         return res.json({ code });
       }
       if (decision === 'reject') {
-        conflicts.resolveReject(db, req.params.code, { actor });
+        conflicts.resolveReject(db, req.params.code, { actor, notes });
         return res.json({ ok: true });
       }
       if (decision === 'dismiss') {
-        conflicts.resolveDismiss(db, req.params.code, { actor });
+        conflicts.resolveDismiss(db, req.params.code, { actor, notes });
         return res.json({ ok: true });
       }
       return res.status(400).json({ error: 'decision must be merge | reject | dismiss' });

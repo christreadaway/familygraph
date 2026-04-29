@@ -75,6 +75,7 @@ function MappingSummary({ mapping }) {
         <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>People</div>
         <FieldChip label="given_name" present={person.given_name} />
         <FieldChip label="family_name" present={person.family_name} />
+        <FieldChip label="full_name" present={person.full_name} />
         <FieldChip label="email" present={person.email} />
         <FieldChip label="phone" present={person.phone} />
         <FieldChip label="dob" present={person.date_of_birth} />
@@ -91,6 +92,129 @@ function MappingSummary({ mapping }) {
         <FieldChip label="region" present={addr.region} />
         <FieldChip label="postal" present={addr.postal} />
       </div>
+    </div>
+  );
+}
+
+// Editable per-field column picker. Lets the operator point a canonical field
+// at a different CSV column when the heuristic missed.
+function HeaderSelect({ value, headers, onChange }) {
+  return (
+    <select value={value || ''} onChange={e => onChange(e.target.value || null)}>
+      <option value="">— not mapped —</option>
+      {headers.map(h => (
+        <option key={h} value={h}>{h}</option>
+      ))}
+    </select>
+  );
+}
+
+const PERSON_FIELDS = [
+  ['given_name', 'First name'],
+  ['family_name', 'Last name'],
+  ['full_name', 'Full name (split into first/last)'],
+  ['middle_name', 'Middle'],
+  ['email', 'Email'],
+  ['phone', 'Phone'],
+  ['date_of_birth', 'Date of birth'],
+  ['gender', 'Gender'],
+  ['grade', 'Grade'],
+];
+
+function PersonTemplateEditor({ tmpl, idx, headers, onChange, onRemove }) {
+  function patch(field, value) {
+    onChange({ ...tmpl, [field]: value });
+  }
+  return (
+    <div className="panel" style={{ padding: 12, margin: '8px 0' }}>
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <strong>Person #{idx + 1}</strong>
+        <div className="row" style={{ gap: 8 }}>
+          <label style={{ fontSize: 12 }}>Role:&nbsp;</label>
+          <select value={tmpl.role || 'member'} onChange={e => patch('role', e.target.value)}>
+            <option value="member">member</option>
+            <option value="parent">parent</option>
+            <option value="child">child</option>
+            <option value="spouse">spouse</option>
+            <option value="other">other</option>
+          </select>
+          <button onClick={onRemove} style={{ fontSize: 12 }}>Remove</button>
+        </div>
+      </div>
+      <table style={{ width: '100%', fontSize: 13 }}>
+        <tbody>
+          {PERSON_FIELDS.map(([f, label]) => (
+            <tr key={f}>
+              <td style={{ width: 220, padding: '4px 8px 4px 0' }}>{label}</td>
+              <td><HeaderSelect value={tmpl[f]} headers={headers} onChange={v => patch(f, v)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MappingEditor({ mapping, headers, onChange }) {
+  const persons = mapping.persons || [];
+  function setPersons(next) {
+    onChange({ ...mapping, persons: next });
+  }
+  function setFamily(field, v) {
+    onChange({ ...mapping, family: { ...(mapping.family || {}), [field]: v } });
+  }
+  function setAddress(field, v) {
+    onChange({ ...mapping, address: { ...(mapping.address || { label: 'home' }), [field]: v } });
+  }
+  return (
+    <div>
+      <h4 style={{ marginTop: 0 }}>Family fields</h4>
+      <table style={{ fontSize: 13 }}>
+        <tbody>
+          <tr>
+            <td style={{ width: 220, padding: '4px 8px 4px 0' }}>Family display name</td>
+            <td><HeaderSelect value={mapping.family?.display_name} headers={headers} onChange={v => setFamily('display_name', v)} /></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>Address fields</h4>
+      <table style={{ fontSize: 13 }}>
+        <tbody>
+          {[
+            ['line1', 'Street line 1'],
+            ['line2', 'Street line 2'],
+            ['city', 'City'],
+            ['region', 'State / Region'],
+            ['postal', 'Zip / Postal'],
+            ['country', 'Country'],
+          ].map(([f, label]) => (
+            <tr key={f}>
+              <td style={{ width: 220, padding: '4px 8px 4px 0' }}>{label}</td>
+              <td><HeaderSelect value={mapping.address?.[f]} headers={headers} onChange={v => setAddress(f, v)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h4>People in each row</h4>
+      {persons.map((tmpl, i) => (
+        <PersonTemplateEditor
+          key={i}
+          tmpl={tmpl}
+          idx={i}
+          headers={headers}
+          onChange={t => { const next = persons.slice(); next[i] = t; setPersons(next); }}
+          onRemove={() => setPersons(persons.filter((_, j) => j !== i))}
+        />
+      ))}
+      <button onClick={() => setPersons([...persons, { role: 'member' }])} style={{ marginTop: 8 }}>
+        + Add another person template
+      </button>
+      <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+        Each "person template" produces one person per row. A school roster typically has three
+        templates: the student, parent 1, and parent 2. A donor list usually has one.
+      </p>
     </div>
   );
 }
@@ -182,12 +306,16 @@ export default function ImportView() {
     } finally { setBusy(false); }
   }
 
-  async function runPreview(rawContent, src) {
+  async function runPreview(rawContent, src, mappingOverride) {
     if (!rawContent) return;
     setPreviewing(true);
     setError(null);
     try {
-      const res = await api.importPreview({ content: rawContent, source: src || null });
+      const res = await api.importPreview({
+        content: rawContent,
+        source: src || null,
+        mapping: mappingOverride || null,
+      });
       setPreview(res);
       setTimeout(() => {
         if (previewRef.current) previewRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -198,6 +326,11 @@ export default function ImportView() {
     } finally {
       setPreviewing(false);
     }
+  }
+
+  async function applyMappingChange(nextMapping) {
+    setPreview(p => p ? { ...p, mapping: nextMapping } : p);
+    await runPreview(content, source || null, nextMapping);
   }
 
   async function doRun() {
@@ -297,6 +430,48 @@ export default function ImportView() {
       {preview && !previewing && (
         <div className="panel">
           <h3>3 · Review what we found ({preview.row_count} rows · detected source: {preview.source})</h3>
+
+          {preview.diagnostic && (
+            <div
+              className={`panel ${preview.diagnostic.rows_with_persons === 0 ? 'error' : preview.diagnostic.rows_skipped_blank > 0 ? 'warn' : ''}`}
+              style={{
+                margin: '0 0 12px 0',
+                padding: 12,
+                background: preview.diagnostic.rows_with_persons === 0
+                  ? 'rgba(220,80,80,.08)'
+                  : preview.diagnostic.rows_blank > 0 ? 'rgba(240,181,81,.08)' : 'transparent',
+                borderColor: preview.diagnostic.rows_with_persons === 0 ? 'var(--error, #c33)' : 'var(--warn)',
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                {preview.diagnostic.rows_with_persons} of {preview.row_count} rows will produce people
+                {preview.diagnostic.total_persons > 0 && ` (${preview.diagnostic.total_persons} total persons)`}.
+              </div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Family-named: {preview.diagnostic.rows_with_family_name} ·
+                Addresses: {preview.diagnostic.rows_with_address} ·
+                Blank rows: {preview.diagnostic.rows_blank}
+              </div>
+              {preview.diagnostic.rows_with_persons === 0 && (
+                <div style={{ marginTop: 8, fontSize: 13 }}>
+                  <strong>None of your rows produced a person.</strong> The column-name heuristics
+                  didn't match anything in this sheet — open the column mapper below and point
+                  the right columns at first/last name (or a single full-name column).
+                </div>
+              )}
+              {preview.diagnostic.unmapped_columns && preview.diagnostic.unmapped_columns.length > 0 && (
+                <details style={{ marginTop: 8, fontSize: 12 }}>
+                  <summary>Unmapped columns ({preview.diagnostic.unmapped_columns.length})</summary>
+                  <div style={{ marginTop: 6 }}>
+                    {preview.diagnostic.unmapped_columns.map(c => (
+                      <span key={c} className="tag" style={{ marginRight: 6, marginBottom: 4 }}>{c}</span>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+
           <MappingSummary mapping={preview.mapping} />
           <div style={{ marginTop: 16 }}>
             <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>
@@ -304,9 +479,30 @@ export default function ImportView() {
             </div>
             <PreviewTable canonical={preview.canonical_preview} />
           </div>
+
+          <details style={{ marginTop: 16 }} open={preview.diagnostic && preview.diagnostic.rows_with_persons === 0}>
+            <summary><strong>Column mapping</strong> — point each canonical field at one of your CSV columns</summary>
+            <div style={{ marginTop: 12 }}>
+              <MappingEditor
+                mapping={preview.mapping}
+                headers={preview.headers || []}
+                onChange={applyMappingChange}
+              />
+            </div>
+          </details>
+
           <div className="row" style={{ marginTop: 16, gap: 12 }}>
-            <button className="primary" onClick={doRun} disabled={busy}>
-              {busy ? 'Importing…' : `Import ${preview.row_count} rows into directory`}
+            <button
+              className="primary"
+              onClick={doRun}
+              disabled={busy || (preview.diagnostic && preview.diagnostic.rows_with_persons === 0)}
+              title={preview.diagnostic && preview.diagnostic.rows_with_persons === 0 ? 'Fix the column mapping first — no rows would produce people.' : ''}
+            >
+              {busy
+                ? 'Importing…'
+                : preview.diagnostic
+                  ? `Import ${preview.diagnostic.rows_with_persons} rows into directory${preview.diagnostic.rows_blank ? ` (${preview.diagnostic.rows_blank} blank skipped)` : ''}`
+                  : `Import ${preview.row_count} rows into directory`}
             </button>
             <button onClick={() => setShowAdvanced(v => !v)}>
               {showAdvanced ? 'Hide' : 'Show'} advanced (raw mapping, paste box)
@@ -389,6 +585,9 @@ export default function ImportView() {
               <StatPill label="Emails attached" value={result.totals.emails_attached} />
               <StatPill label="Phones attached" value={result.totals.phones_attached} />
               <StatPill label="Memberships opened" value={result.totals.memberships_opened} />
+              {result.totals.rows_skipped_blank > 0 && (
+                <StatPill label="Rows skipped (blank)" value={result.totals.rows_skipped_blank} kind="warn" />
+              )}
             </div>
             {result.totals.conflicts_opened > 0 && (
               <div className="panel warn" style={{ marginTop: 12, marginBottom: 0, background: 'rgba(240,181,81,.08)', borderColor: 'var(--warn)' }}>
@@ -403,10 +602,22 @@ export default function ImportView() {
               <thead><tr><th>Row</th><th>Family</th><th>Persons</th></tr></thead>
               <tbody>
                 {result.results.map((r, i) => (
-                  <tr key={i}>
+                  <tr key={i} style={r.skipped ? { opacity: 0.55 } : null}>
                     <td>{i + 1}</td>
-                    <td>{r.family ? <span><code>{r.family.code}</code> <span className="tag action">{r.family.action}</span></span> : <span className="muted">—</span>}</td>
-                    <td>{r.persons.map(p => <span key={p.code} style={{ display: 'inline-flex', gap: 4, marginRight: 8 }}><code>{p.code}</code><span className="tag action">{p.action}</span></span>)}</td>
+                    <td>
+                      {r.skipped
+                        ? <span className="muted">skipped · {r.reason || 'blank'}</span>
+                        : r.family
+                          ? <span><code>{r.family.code}</code> <span className="tag action">{r.family.action}</span></span>
+                          : <span className="muted">—</span>}
+                    </td>
+                    <td>
+                      {(r.persons || []).map(p => (
+                        <span key={p.code} style={{ display: 'inline-flex', gap: 4, marginRight: 8 }}>
+                          <code>{p.code}</code><span className="tag action">{p.action}</span>
+                        </span>
+                      ))}
+                    </td>
                   </tr>
                 ))}
               </tbody>

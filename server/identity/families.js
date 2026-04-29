@@ -49,7 +49,21 @@ function list(db, secrets, { limit = 50, status = 'active', includePii = false }
   const rows = db
     .prepare(`SELECT * FROM families WHERE status = ? ORDER BY created_at DESC LIMIT ?`)
     .all(status, Math.max(1, Math.min(1000, Number(limit) || 50)));
-  return rows.map(r => row2family(r, secrets, { includePii }));
+  // Annotate each family with whether any active member has do_not_contact
+  // set. This is the signal the Families list view uses to render its
+  // "Add to do-not-call" / "Clear" quick-action button without having to
+  // round-trip through every family's detail.
+  const dncStmt = db.prepare(
+    `SELECT 1 FROM memberships m
+       JOIN persons p ON p.code = m.person_code
+      WHERE m.family_code = ? AND m.ended_at IS NULL AND p.do_not_contact = 1
+      LIMIT 1`
+  );
+  return rows.map(r => {
+    const fam = row2family(r, secrets, { includePii });
+    fam.do_not_contact_any = !!dncStmt.get(r.code);
+    return fam;
+  });
 }
 
 function update(db, secrets, code, patch) {
@@ -69,7 +83,10 @@ function members(db, secrets, code, { activeOnly = true, includePii = false } = 
   const where = activeOnly ? `AND m.ended_at IS NULL` : '';
   const rows = db
     .prepare(
-      `SELECT m.*, p.given_name_ct, p.family_name_ct, p.display_name_ct
+      `SELECT m.*, p.given_name_ct, p.family_name_ct, p.display_name_ct,
+              p.date_of_birth_ct, p.gender_ct, p.grade,
+              p.employer_ct, p.title_ct,
+              p.do_not_contact, p.do_not_contact_reason_ct, p.not_living_together
          FROM memberships m
          JOIN persons p ON p.code = m.person_code
         WHERE m.family_code = ? ${where}
@@ -89,8 +106,22 @@ function members(db, secrets, code, { activeOnly = true, includePii = false } = 
           given_name: enc.decrypt(secrets, r.given_name_ct),
           family_name: enc.decrypt(secrets, r.family_name_ct),
           display_name: enc.decrypt(secrets, r.display_name_ct),
+          date_of_birth: enc.decrypt(secrets, r.date_of_birth_ct),
+          gender: enc.decrypt(secrets, r.gender_ct),
+          grade: r.grade || null,
+          employer: enc.decrypt(secrets, r.employer_ct),
+          title: enc.decrypt(secrets, r.title_ct),
+          do_not_contact: !!r.do_not_contact,
+          do_not_contact_reason: enc.decrypt(secrets, r.do_not_contact_reason_ct),
+          not_living_together: !!r.not_living_together,
         }
-      : { code: r.person_code },
+      : {
+          code: r.person_code,
+          // Non-PII flags safe for the safe surface — they classify behavior,
+          // not identity.
+          do_not_contact: !!r.do_not_contact,
+          not_living_together: !!r.not_living_together,
+        },
   }));
 }
 

@@ -6,6 +6,57 @@ import IdCode from '../components/IdCode.jsx';
 import Pill from '../components/Pill.jsx';
 import TagEditor from '../components/TagEditor.jsx';
 
+// Compute current age from an ISO YYYY-MM-DD date-of-birth string. Returns
+// null when the input isn't a date we can parse — keeps the UI from showing
+// "NaN years" on placeholder values.
+function ageFromDob(dob) {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const before = now.getMonth() < d.getMonth() || (now.getMonth() === d.getMonth() && now.getDate() < d.getDate());
+  if (before) age -= 1;
+  return age >= 0 && age < 130 ? age : null;
+}
+
+// Format a person's grade for display. During the school year (Aug 16 -
+// May 14) we render "grade N" — that's the kid's current grade. During
+// the summer gap (May 15 - Aug 15) the previous-year grade is ambiguous,
+// so we render "completed N · rising N+1" which is what schools actually
+// say between school years.
+function formatGrade(rawGrade, now = new Date()) {
+  if (rawGrade == null || rawGrade === '') return null;
+  const g = String(rawGrade).trim();
+  // Non-numeric grades (PreK, K, etc.) just pass through verbatim because
+  // the +1 increment is meaningless.
+  const n = Number(g);
+  const isInSummer = (() => {
+    const m = now.getMonth(); // 0-based
+    const d = now.getDate();
+    // May 15 .. Aug 15 inclusive
+    if (m === 4 && d >= 15) return true;          // May 15-31
+    if (m === 5 || m === 6) return true;           // June, July
+    if (m === 7 && d <= 15) return true;           // Aug 1-15
+    return false;
+  })();
+  if (!isInSummer) return `grade ${g}`;
+  if (Number.isFinite(n)) return `completed ${n} · rising ${n + 1}`;
+  return `completed ${g}`;
+}
+
+// "Mary, 8" / "Mary, 8 · grade 3" / "Mary" depending on what's filled in.
+function memberSubtitle(person, now = new Date()) {
+  if (!person) return null;
+  const bits = [];
+  const age = ageFromDob(person.date_of_birth);
+  if (age != null) bits.push(`age ${age}`);
+  else if (person.date_of_birth) bits.push(person.date_of_birth);
+  const g = formatGrade(person.grade, now);
+  if (g) bits.push(g);
+  return bits.length ? bits.join(' · ') : null;
+}
+
 export default function FamilyDetail() {
   const { code } = useParams();
   const nav = useNavigate();
@@ -18,6 +69,7 @@ export default function FamilyDetail() {
   const [history, setHistory] = useState([]);
   const [rels, setRels] = useState([]);
   const [newRel, setNewRel] = useState({ to: '', kind: 'related_household', detail: '' });
+  const [dncReason, setDncReason] = useState('');
 
   const { view } = useFG();
   const pseudo = view === 'pseudonym';
@@ -102,28 +154,204 @@ export default function FamilyDetail() {
         />
       </div>
 
+      {(() => {
+        // Aggregate do-not-contact state across the family. If at least one
+        // member is flagged, the panel surfaces "applied to N of M". The
+        // toggle bulk-applies (or clears) for every active member at once —
+        // that's the school-side do-not-call workflow.
+        const total = data.members.length;
+        const flagged = data.members.filter(m => m.person && m.person.do_not_contact).length;
+        const allFlagged = total > 0 && flagged === total;
+        const someFlagged = flagged > 0 && !allFlagged;
+        return (
+          <div className="panel">
+            <h3>
+              Do-not-call list
+              {flagged > 0 && (
+                <span className="muted" style={{ fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
+                  · applied to {flagged} of {total} member{total === 1 ? '' : 's'}
+                </span>
+              )}
+            </h3>
+            <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+              Flag every active member of this household so outbound channels (mail merges, phone
+              banks, parish-school mass-text) skip them. Each member's per-person flag and reason
+              are written individually so callers that pull one person still see the audit
+              attribution.
+            </p>
+            {someFlagged && (
+              <div className="panel warn" style={{ marginTop: 0, marginBottom: 12, padding: '8px 12px', background: 'rgba(240,181,81,.08)', borderColor: 'var(--warn)' }}>
+                Mixed state — {flagged} flagged, {total - flagged} not. Use one of the buttons below
+                to bring the household into a single state, or open each member's profile to
+                disagree on purpose.
+              </div>
+            )}
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                placeholder="Reason (e.g., 'requested no phone solicitation')"
+                value={dncReason}
+                onChange={e => setDncReason(e.target.value)}
+                style={{ flex: 1, minWidth: 240 }}
+              />
+              <button
+                onClick={async () => {
+                  await api.setFamilyDoNotContact(code, true, dncReason || null);
+                  setDncReason('');
+                  load();
+                }}
+                disabled={allFlagged && !someFlagged}
+              >
+                {allFlagged ? 'Already on the do-not-call list' : 'Add household to do-not-call list'}
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm('Clear do-not-call from every member of this family?')) return;
+                  await api.setFamilyDoNotContact(code, false);
+                  load();
+                }}
+                disabled={flagged === 0}
+              >
+                Clear from household
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="panel">
-        <h3>Members ({data.members.length})</h3>
+        <h3>
+          Members ({data.members.length})
+          {(() => {
+            const kids = data.members.filter(m => m.role === 'child').length;
+            const adults = data.members.filter(m => m.role === 'parent' || m.role === 'guardian' || m.role === 'spouse' || m.role === 'other_adult').length;
+            const parts = [];
+            if (adults) parts.push(`${adults} adult${adults === 1 ? '' : 's'}`);
+            if (kids) parts.push(`${kids} kid${kids === 1 ? '' : 's'}`);
+            return parts.length
+              ? <span className="muted" style={{ fontSize: 12, fontWeight: 400, marginLeft: 8 }}>· {parts.join(' · ')}</span>
+              : null;
+          })()}
+        </h3>
         <table>
           <thead>
-            <tr><th>Person</th><th>Role</th><th>Custody</th><th>Started</th><th></th></tr>
+            <tr>
+              <th>Person</th>
+              <th>Role</th>
+              <th>DOB · age · grade</th>
+              <th>Profile</th>
+              <th>Custody</th>
+              <th>Started</th>
+              <th></th>
+            </tr>
           </thead>
           <tbody>
-            {data.members.map(m => (
-              <tr key={m.membership_code}>
-                <td>
-                  <Link to={`/people/${m.person_code}`}><IdCode type="person" code={m.person_code} /></Link>
-                  {!pseudo && m.person.display_name && <> · {m.person.display_name}</>}
-                </td>
-                <td>{m.role}</td>
-                <td>{m.custody || <span className="muted">—</span>}</td>
-                <td className="muted">{new Date(m.started_at).toLocaleString()}</td>
-                <td><button className="danger" onClick={() => endMember(m.membership_code)}>end</button></td>
-              </tr>
-            ))}
-            {data.members.length === 0 && <tr><td colSpan={5} className="muted">No active members.</td></tr>}
+            {data.members.map(m => {
+              const subtitle = memberSubtitle(m.person);
+              return (
+                <tr key={m.membership_code}>
+                  <td>
+                    <Link to={`/people/${m.person_code}`}><IdCode type="person" code={m.person_code} /></Link>
+                    {!pseudo && m.person.display_name && <> · {m.person.display_name}</>}
+                  </td>
+                  <td>{m.role}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>
+                    {pseudo
+                      ? <span className="faint">[redacted]</span>
+                      : (subtitle || <span className="muted">—</span>)}
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {m.person.do_not_contact && (
+                        <Pill state="pii" title={!pseudo && m.person.do_not_contact_reason ? m.person.do_not_contact_reason : 'do not contact'}>
+                          do not contact
+                        </Pill>
+                      )}
+                      {m.person.not_living_together && (
+                        <Pill state="muted" title="Not living together at family address">
+                          separate residence
+                        </Pill>
+                      )}
+                      {!pseudo && m.person.employer && (
+                        <span className="tag" style={{ fontSize: 11 }}>
+                          {m.person.title ? `${m.person.title} · ` : ''}{m.person.employer}
+                        </span>
+                      )}
+                      {!m.person.do_not_contact && !m.person.not_living_together && !(m.person && m.person.employer) && (
+                        <span className="muted" style={{ fontSize: 12 }}>—</span>
+                      )}
+                    </div>
+                  </td>
+                  <td>{m.custody || <span className="muted">—</span>}</td>
+                  <td className="muted">{new Date(m.started_at).toLocaleString()}</td>
+                  <td><button className="danger" onClick={() => endMember(m.membership_code)}>end</button></td>
+                </tr>
+              );
+            })}
+            {data.members.length === 0 && <tr><td colSpan={7} className="muted">No active members.</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      <div className="panel">
+        <h3>
+          Contact channels
+          <span className="muted" style={{ fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
+            · {data.contacts.emails.length} email{data.contacts.emails.length === 1 ? '' : 's'}
+            · {data.contacts.phones.length} phone{data.contacts.phones.length === 1 ? '' : 's'}
+          </span>
+        </h3>
+        <div className="split" style={{ alignItems: 'flex-start' }}>
+          <div>
+            <h4 style={{ margin: '4px 0' }}>Emails</h4>
+            {data.contacts.emails.length === 0 && (
+              <span className="muted" style={{ fontSize: 12 }}>No emails attached.</span>
+            )}
+            <div className="col" style={{ gap: 4 }}>
+              {data.contacts.emails.map(e => {
+                const member = data.members.find(m => m.person_code === e.person_code);
+                const memberName = member && member.person && member.person.display_name;
+                return (
+                  <div key={e.code + ':' + e.person_code} className="row" style={{ gap: 6, alignItems: 'center' }}>
+                    {e.is_primary && <Pill state="loopback">primary</Pill>}
+                    {e.is_verified && <Pill state="muted">verified</Pill>}
+                    <span style={{ fontSize: 13 }}>
+                      {pseudo ? <span className="faint mono">[redacted]</span> : (e.value || <span className="muted">—</span>)}
+                    </span>
+                    <span className="muted" style={{ fontSize: 11 }}>
+                      → <Link to={`/people/${e.person_code}`}><IdCode type="person" code={e.person_code} /></Link>
+                      {!pseudo && memberName && ` · ${memberName}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <h4 style={{ margin: '4px 0' }}>Phones</h4>
+            {data.contacts.phones.length === 0 && (
+              <span className="muted" style={{ fontSize: 12 }}>No phones attached.</span>
+            )}
+            <div className="col" style={{ gap: 4 }}>
+              {data.contacts.phones.map(p => {
+                const member = data.members.find(m => m.person_code === p.person_code);
+                const memberName = member && member.person && member.person.display_name;
+                return (
+                  <div key={p.code + ':' + p.person_code} className="row" style={{ gap: 6, alignItems: 'center' }}>
+                    {p.is_primary && <Pill state="loopback">primary</Pill>}
+                    {p.kind && p.kind !== 'other' && <Pill state="muted">{p.kind}</Pill>}
+                    <span style={{ fontSize: 13 }}>
+                      {pseudo ? <span className="faint mono">[redacted]</span> : (p.value || <span className="muted">—</span>)}
+                    </span>
+                    <span className="muted" style={{ fontSize: 11 }}>
+                      → <Link to={`/people/${p.person_code}`}><IdCode type="person" code={p.person_code} /></Link>
+                      {!pseudo && memberName && ` · ${memberName}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="panel">

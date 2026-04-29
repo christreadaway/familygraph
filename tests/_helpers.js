@@ -30,7 +30,13 @@ function newSecrets() {
 }
 
 function defaultThresholds() {
-  return { autoMerge: 0.92, review: 0.7 };
+  // Recalibrated for the missionIQ-style additive scoring vendored into
+  // server/identity/matching.js. autoMerge holds the "definitive signal"
+  // bar (exact email/phone, exact name+DOB, very-close address). review
+  // is calibrated so even surname-only or phonetic-variant first-name
+  // matches are surfaced for operator decision rather than silently
+  // dropped on the floor.
+  return { autoMerge: 0.85, review: 0.30 };
 }
 
 function cleanup(dir) {

@@ -9,6 +9,27 @@ const profiles = require('../identity/profiles');
 
 const VALID_CATEGORIES = new Set(['church', 'school', 'other']);
 
+// Walk a mapping and collect every header it references.
+function _collectUsedHeaders(mapping) {
+  const used = new Set();
+  const visit = v => {
+    if (!v) return;
+    if (Array.isArray(v)) { v.forEach(visit); return; }
+    if (typeof v === 'string') { used.add(v); return; }
+    if (typeof v === 'object') { Object.values(v).forEach(visit); return; }
+  };
+  if (mapping) {
+    visit(mapping.family);
+    visit(mapping.address);
+    for (const t of mapping.persons || []) {
+      for (const k of ['given_name', 'family_name', 'full_name', 'middle_name', 'prefix', 'suffix', 'email', 'phone', 'date_of_birth', 'gender', 'grade']) {
+        visit(t[k]);
+      }
+    }
+  }
+  return used;
+}
+
 function _normalizeTags(input) {
   if (input == null || input === '') return null;
   if (Array.isArray(input)) return input.map(t => String(t).trim()).filter(Boolean);
@@ -27,12 +48,41 @@ function build({ db, secrets, thresholds }) {
     if (!content) return res.status(400).json({ error: 'content required' });
     const handler = (source && sources.HANDLERS[source]) || sources.csv;
     const out = handler.loadString(content, { mapping });
+    const headers = out.headers || (out.rows.length > 0 ? Object.keys(out.rows[0]) : []);
+    let rowsWithPersons = 0;
+    let rowsWithAddress = 0;
+    let rowsWithFamilyName = 0;
+    let rowsBlank = 0;
+    let totalPersons = 0;
+    for (const c of out.canonical) {
+      const hasPersons = (c.persons || []).length > 0;
+      const hasFamily = !!(c.family && c.family.display_name);
+      const hasAddress = !!c.address;
+      if (hasPersons) { rowsWithPersons += 1; totalPersons += c.persons.length; }
+      if (hasAddress) rowsWithAddress += 1;
+      if (hasFamily) rowsWithFamilyName += 1;
+      if (!hasPersons && !hasFamily) rowsBlank += 1;
+    }
+    const usedHeaders = _collectUsedHeaders(out.mapping);
+    const unmappedColumns = headers.filter(h => !usedHeaders.has(h));
     res.json({
-      source: out.source || source || 'csv',
+      source: out.source || out.platform || source || 'csv',
+      platform: out.platform || null,
       rows: out.rows.slice(0, 10),
       mapping: out.mapping,
       row_count: out.rows.length,
       canonical_preview: out.canonical.slice(0, 10),
+      headers,
+      mapping_warning: out.mapping_warning || null,
+      summary_rows_dropped: out.summary_rows_dropped || 0,
+      diagnostic: {
+        rows_with_persons: rowsWithPersons,
+        rows_with_family_name: rowsWithFamilyName,
+        rows_with_address: rowsWithAddress,
+        rows_blank: rowsBlank,
+        total_persons: totalPersons,
+        unmapped_columns: unmappedColumns,
+      },
     });
   });
 
@@ -71,8 +121,10 @@ function build({ db, secrets, thresholds }) {
       rows: out.canonical.length,
       totals: result.totals,
       results: result.results.map(r => ({
+        skipped: !!r.skipped,
+        reason: r.reason || null,
         family: r.family ? { code: r.family.code, action: r.family.action } : null,
-        persons: r.persons.map(p => ({ code: p.code, action: p.action, score: p.score })),
+        persons: (r.persons || []).map(p => ({ code: p.code, action: p.action, score: p.score })),
       })),
     });
   });

@@ -23,9 +23,15 @@ const config = {
   secretPath: process.env.FAMILY_GRAPH_SECRET || path.join(FAMILY_GRAPH_HOME, 'secret.key'),
   port: Number(process.env.FAMILY_GRAPH_PORT || 3500),
   bind: process.env.FAMILY_GRAPH_BIND || '127.0.0.1',
+  // Recalibrated for the missionIQ-style additive scoring vendored in
+  // server/identity/matching.js (v9). autoMerge=0.85 holds the
+  // "definitive signal OR very strong soft signals" bar; review=0.30
+  // surfaces even surname-only or phonetic-variant matches for operator
+  // decision rather than silently dropping them. Override per
+  // institution via env var or via the profiles table.
   resolverThresholds: {
-    autoMerge: Number(process.env.FAMILY_GRAPH_AUTO_MERGE || 0.92),
-    review: Number(process.env.FAMILY_GRAPH_REVIEW || 0.7),
+    autoMerge: Number(process.env.FAMILY_GRAPH_AUTO_MERGE || 0.85),
+    review: Number(process.env.FAMILY_GRAPH_REVIEW || 0.30),
   },
   // When true, the safe API surface is reachable only from loopback.
   enforceLoopbackOnSafe: true,

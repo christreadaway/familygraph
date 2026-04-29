@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS persons (
   date_of_birth_ct BLOB,
   gender_ct        BLOB,
   notes_ct         BLOB,
+  -- Vendored from missionIQ contact-shape: per-person profile fields that
+  -- matter for institutional workflows. employer/title for donor research,
+  -- do_not_contact for compliance, not_living_together for custody-aware
+  -- messaging on shared family addresses.
+  employer_ct      BLOB,
+  title_ct         BLOB,
+  do_not_contact   INTEGER NOT NULL DEFAULT 0,
+  do_not_contact_reason_ct BLOB,
+  not_living_together INTEGER NOT NULL DEFAULT 0,
   status           TEXT NOT NULL DEFAULT 'active',
   merged_into      TEXT,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -259,6 +268,7 @@ CREATE TABLE IF NOT EXISTS import_runs (
   phones_attached      INTEGER NOT NULL DEFAULT 0,
   memberships_opened   INTEGER NOT NULL DEFAULT 0,
   memberships_ended    INTEGER NOT NULL DEFAULT 0,
+  rows_skipped_blank   INTEGER NOT NULL DEFAULT 0,
   actor                TEXT,
   created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -289,6 +299,13 @@ CREATE TABLE IF NOT EXISTS conflicts (
   status                 TEXT NOT NULL DEFAULT 'open',  -- open | merged | rejected | dismissed
   resolved_by            TEXT,
   resolved_at            TEXT,
+  -- Free-form operator note recorded with the resolution. The status field
+  -- captures WHAT was decided; this captures WHY ("same name, different DOB,
+  -- confirmed via parish records"). Surfaced on family/person history.
+  resolution_notes       TEXT,
+  -- If a saved resolution_rules row triggered the auto-decision, its rule
+  -- code is stored here so the audit trail can replay the exact rule.
+  decided_by_rule        TEXT,
   -- Operator may park an open conflict on a colleague's email. The
   -- assignment auto-expires per the operator-chosen TTL; the sweeper clears
   -- expired rows back to unassigned. None of these columns are PII; the email
