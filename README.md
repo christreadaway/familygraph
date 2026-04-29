@@ -509,7 +509,11 @@ read tokens via `var(--…)` rather than re-declaring colors. The
 ## Test
 
 ```sh
-# server tests (202 cases via node:test — see test_suite.md)
+# server tests (206 cases via node:test — see test_suite.md)
+npm test
+# end-to-end browser tests (12 cases via Playwright)
+npm run test:e2e:install   # one-time chromium download
+npm run test:e2e
 npm test
 
 # verify the dashboard builds

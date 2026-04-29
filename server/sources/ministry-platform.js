@@ -35,13 +35,13 @@ const MP_MAPPING = {
 };
 
 function loadFile(filePath, opts = {}) {
-  const out = csv.loadFile(filePath, { mapping: MP_MAPPING, ...opts });
+  const out = csv.loadFile(filePath, { ...opts, mapping: opts.mapping || MP_MAPPING });
   out.source = 'ministry_platform';
   return out;
 }
 
 function loadString(content, opts = {}) {
-  const out = csv.loadString(content, { mapping: MP_MAPPING, ...opts });
+  const out = csv.loadString(content, { ...opts, mapping: opts.mapping || MP_MAPPING });
   out.source = 'ministry_platform';
   return out;
 }

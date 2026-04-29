@@ -1,8 +1,17 @@
 # Test suite
 
-`npm test` runs the suite via Node's built-in `node:test` runner, which spawns
-each `tests/*.test.js` file as its own subtest tree. The total at the time of
-this writing: **204 tests, all passing.**
+Two suites, both required green before merging:
+
+1. **Server tests** — `npm test`. Built on Node's `node:test` runner; one
+   subtest tree per `tests/*.test.js` file. **206 tests, all passing.**
+2. **End-to-end browser tests** — `npm run test:e2e`. Playwright-driven.
+   Boots an isolated Family Graph at `127.0.0.1:13500` against a temp
+   `$FAMILY_GRAPH_HOME` and drives the React dashboard with the headless
+   Chromium shell. **12 tests, all passing.**
+
+Total: **218 tests, all green.** First-time setup for Playwright:
+`npm run test:e2e:install` (downloads the headless-shell chromium build to
+`/opt/pw-browsers/`).
 
 This document is the canonical map of what's covered, where, and what each
 test is asserting. New tests should land alongside the closest sibling and
@@ -91,6 +100,13 @@ call into.
 | `/feedback "same" merges the pair` | Pair merges with the supplied winner_code. |
 | `/resolve persists profile fields on creation` | After resolve→PATCH the new profile fields (employer/title/do_not_contact/reason/not_living_together) round-trip through GET. |
 | `conflicts api > resolve with notes persists resolution_notes` | A POST to /api/conflicts/:code/resolve with `notes` writes resolution_notes + resolved_by, and the closed conflict surfaces them on subsequent list calls. |
+
+### `tests/api.test.js` — bulk do-not-call + family-list filter (added in v9.1)
+
+| Test | Asserts |
+| --- | --- |
+| `family bulk do-not-contact flags every active member` | POST /api/families/:code/do-not-contact with `value:true, reason` flips do_not_contact + reason on every active member; `value:false` clears both. Counts updated members. |
+| `/api/families?q= filters by member surname (HMAC equality)` | `?q=Smith` returns only families containing a member with family_name_hash matching the HMAC of "smith". Powers the Families list "search by last name" affordance. |
 
 ### `tests/identity.test.js` — core entity CRUD
 
@@ -239,13 +255,52 @@ miss.
 
 ---
 
+## End-to-end browser tests (`e2e/*.e2e.js`)
+
+Driven by Playwright. The Playwright `webServer` boots a fresh Family Graph
+under `/tmp/fg-pw-<pid>/` so the browser flows never collide with a
+developer's running instance. `e2e/_setup.js` reads the master token out of
+that home's `secret.key`, seeds it into localStorage, and flips the view to
+`pii` so member rows render their human details (the product default is
+pseudonym).
+
+### `e2e/import.e2e.js`
+
+| Test | Asserts |
+| --- | --- |
+| Preview panel surfaces diagnostic + disables Import on bad mapping | The /import page renders the diagnostic banner and the column mapper auto-opens when nothing matches. |
+| Preview API: empty mapping triggers `mapping_warning` and `rows_with_persons=0` | Pure API contract: `mapping_warning` matches /No identity columns/, diagnostic counts are accurate. |
+| Preview API: summary rows are dropped + `mapping_warning` stays null on a clean CSV | "Grand Total" line is filtered, real rows count, mapping_warning stays null. |
+| Running an import lands rows + reports stats in the result panel | POST /api/import/run for two unique persons creates 2 persons; the new run shows up in the /imports list. |
+
+### `e2e/conflicts.e2e.js`
+
+| Test | Asserts |
+| --- | --- |
+| Resolution-notes textarea persists notes through reject | Operator types a note → clicks reject → switches to status=rejected → the saved note is rendered verbatim under the row. |
+| Merging records the note alongside the merge | Same flow with merge: the note threads through to `conflicts.resolution_notes` and shows on the closed-conflict view. |
+
+### `e2e/person-profile.e2e.js`
+
+| Test | Asserts |
+| --- | --- |
+| Profile fields edit + persist | employer / title / do_not_contact / reason / not_living_together round-trip through the React form to the GET surface. |
+| `do_not_contact` reason input only appears while checked | Reason field renders only when the DNC checkbox is checked; unchecking re-hides it. |
+
+### `e2e/family-detail.e2e.js`
+
+| Test | Asserts |
+| --- | --- |
+| Member rows surface DOB, age, profile flags; channels roll up | School-roster import → family detail → adult/kid roll-up in the panel header, "grade N" or "completed N · rising N+1" depending on date, both parents' emails listed under Contact channels. |
+| "do not contact" flag shows as a pill on the member row | After a PATCH on one member, the row pill renders + employer chip renders. |
+| Bulk do-not-call flags every active member | The do-not-call panel button bulk-flags every member with the supplied reason. |
+| Families list > search by last name + quick "Add to do-not-call" | `?q=<surname>` filters the list server-side; the row's quick-action button + dialog reason apply do-not-call across the household. |
+
 ## What's NOT covered (known gaps)
 
-- The React dashboard has no automated tests yet. The Vite build (`npm run
-  client:build`) is the only check, which catches JSX-level errors but not
-  user-flow regressions. Adding Playwright coverage for the import wizard
-  (column-mapper) and conflict queue (resolution-notes textarea, reason
-  chips, sticky-decision indicator) is the next priority.
+- The Tauri/Electron desktop shell (CLAUDE_CODE_HANDOFF §5) hasn't been
+  built yet — the dashboard runs only as the Vite-built SPA served by the
+  Express process.
 - The folder-watch tests use a hand-rolled FS event simulator rather than
   real `chokidar` events; on macOS specifically there's a watch-collapse
   edge case that's not exercised.

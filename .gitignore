@@ -19,3 +19,7 @@ secret.key
 *.sqlite-wal
 *.sqlite-shm
 *.family-graph-backup
+
+# Playwright artifacts
+test-results/
+playwright-report/

@@ -62,7 +62,11 @@ export async function validateToken() {
 export const api = {
   health: () => request('GET', '/api/health'),
 
-  listFamilies: (opts) => request('GET', opts?.safe ? '/api/safe/families' : '/api/families'),
+  listFamilies: (opts) => {
+    if (opts?.safe) return request('GET', '/api/safe/families');
+    const qs = opts?.q ? `?q=${encodeURIComponent(opts.q)}` : '';
+    return request('GET', `/api/families${qs}`);
+  },
   getFamily: (code, opts) => request('GET', opts?.safe ? `/api/safe/families/${code}` : `/api/families/${code}`),
   createFamily: body => request('POST', '/api/families', body),
   updateFamily: (code, body) => request('PATCH', `/api/families/${code}`, body),
@@ -73,6 +77,8 @@ export const api = {
   addAddress: (code, body) => request('POST', `/api/families/${code}/addresses`, body),
   setFamilyTags: (code, tags) => request('PUT', `/api/families/${code}/tags`, { tags }),
   removeFamilyTag: (code, tag) => request('DELETE', `/api/families/${code}/tags/${encodeURIComponent(tag)}`),
+  setFamilyDoNotContact: (code, value, reason = null) =>
+    request('POST', `/api/families/${code}/do-not-contact`, { value, reason }),
 
   listPeople: (opts) => request('GET', opts?.safe ? '/api/safe/people' : '/api/people'),
   getPerson: (code, opts) => request('GET', opts?.safe ? `/api/safe/people/${code}` : `/api/people/${code}`),

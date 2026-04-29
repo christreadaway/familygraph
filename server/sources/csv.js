@@ -41,11 +41,16 @@ const STANDARD_FIELDS = {
   ],
   primary_family_name: [
     'last_name', 'lastname', 'last name', 'lname', 'ln', 'last',
-    'surname', 'family name', 'parent last', 'parent_last', 'guardian last', 'contact last',
+    'surname', 'parent last', 'parent_last', 'guardian last', 'contact last',
     'parent last name', 'guardian last name', 'mom last', 'dad last',
     'parent ln', 'contact ln',
     'parent 1 last name', 'parent 1 last', 'parent1 last', 'parent1 last name',
     'contact 1 last name', 'primary last name', 'primary last',
+    // NOTE: 'family name' is intentionally NOT here. In FACTS / RenWeb /
+    // school rosters, "Family Name" is the household label, not the
+    // individual's surname. It belongs to family_display_name. Without
+    // this exclusion, scored auto-mapping would tie at 100 between
+    // primary_family_name and family_display_name and pick arbitrarily.
   ],
   primary_full_name: [
     'name', 'full name', 'fullname', 'display name', 'displayname',
@@ -267,6 +272,17 @@ function autoMapFlat(headers) {
 function flatToStructured(flat) {
   const persons = [];
 
+  // Whether this row has a child or secondary slot. When either is present
+  // the primary slot is logically a parent of the household, not an
+  // unattached "member" — e.g. on a school roster the primary record is
+  // Parent 1 / the head of household, not the kid being enrolled.
+  const hasChildSlot =
+    !!(flat.child_given_name || flat.child_family_name || flat.child_full_name);
+  const hasSecondaryAdult =
+    !!(flat.secondary_given_name || flat.secondary_family_name || flat.secondary_full_name ||
+       flat.secondary_email || flat.secondary_phone);
+  const primaryRole = (hasChildSlot || hasSecondaryAdult) ? 'parent' : 'member';
+
   // Primary adult — uses primary_* fields, falls back to top-level given/family
   // when an unprefixed dataset lands in primary slots via aliases.
   const primary = {
@@ -280,7 +296,7 @@ function flatToStructured(flat) {
     phone: flat.phone || null,
     date_of_birth: flat.date_of_birth || null,
     gender: flat.gender || null,
-    role: 'member',
+    role: primaryRole,
   };
   if (
     primary.given_name || primary.family_name || primary.full_name ||

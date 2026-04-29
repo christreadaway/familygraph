@@ -46,13 +46,13 @@ const RENWEB_MAPPING = {
 };
 
 function loadFile(filePath, opts = {}) {
-  const out = csv.loadFile(filePath, { mapping: RENWEB_MAPPING, ...opts });
+  const out = csv.loadFile(filePath, { ...opts, mapping: opts.mapping || RENWEB_MAPPING });
   out.source = 'renweb';
   return out;
 }
 
 function loadString(content, opts = {}) {
-  const out = csv.loadString(content, { mapping: RENWEB_MAPPING, ...opts });
+  const out = csv.loadString(content, { ...opts, mapping: opts.mapping || RENWEB_MAPPING });
   out.source = 'renweb';
   return out;
 }

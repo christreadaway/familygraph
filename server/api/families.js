@@ -5,18 +5,34 @@ const families = require('../identity/families');
 const contacts = require('../identity/contacts');
 const tagsLib = require('../identity/tags');
 const audit = require('../audit');
+const enc = require('../crypto/encryption');
 const { isValidCode } = require('../crypto/identifiers');
 
 function build({ db, secrets, includePii }) {
   const r = express.Router();
 
   r.get('/', (req, res) => {
-    const list = families.list(db, secrets, {
+    const all = families.list(db, secrets, {
       limit: req.query.limit ? Number(req.query.limit) : 50,
       status: req.query.status || 'active',
       includePii,
     });
-    res.json({ items: list });
+    // Optional ?q=<surname> filter — used by the Families list UI to support
+    // the school-side do-not-call workflow ("search by last name, then flag").
+    // Match strategy: hash the query token the same way persons.family_name_hash
+    // is hashed, and keep families whose any active member matches.
+    const q = req.query.q ? String(req.query.q).trim() : '';
+    if (!q) return res.json({ items: all });
+    const fh = enc.hmac(secrets, enc.normalizeName(q));
+    if (!fh) return res.json({ items: all });
+    const matchingFams = new Set(
+      db.prepare(
+        `SELECT DISTINCT m.family_code AS code FROM memberships m
+           JOIN persons p ON p.code = m.person_code
+          WHERE m.ended_at IS NULL AND p.family_name_hash = ?`
+      ).all(fh).map(r => r.code)
+    );
+    res.json({ items: all.filter(f => matchingFams.has(f.code)) });
   });
 
   r.post('/', (req, res) => {
@@ -93,6 +109,47 @@ function build({ db, secrets, includePii }) {
       metadata: { membership: req.params.membership },
     });
     res.status(204).end();
+  });
+
+  // POST /api/families/:code/do-not-contact
+  // Body: { value: true|false, reason?: string }
+  // Bulk-flag every active member of this family. The school-side
+  // "do-not-call list" workflow: an operator searches for the family,
+  // toggles this once, and every adult + child gets the same flag with
+  // the same reason. Each per-person update is audited individually so
+  // an outbound channel that pulls one person can still see the audit
+  // attribution.
+  r.post('/:code/do-not-contact', (req, res) => {
+    if (!isValidCode(req.params.code, 'family')) {
+      return res.status(400).json({ error: 'invalid family code' });
+    }
+    const value = !!(req.body && req.body.value);
+    const reason = req.body && req.body.reason ? String(req.body.reason).slice(0, 500) : null;
+    const members = families.members(db, secrets, req.params.code, { activeOnly: true });
+    const people = require('../identity/people');
+    let updated = 0;
+    for (const m of members) {
+      const patch = { do_not_contact: value };
+      if (value && reason) patch.do_not_contact_reason = reason;
+      if (!value) patch.do_not_contact_reason = null;
+      const code = people.update(db, secrets, m.person_code, patch);
+      if (code) updated += 1;
+      audit.record(db, {
+        action: 'person_do_not_contact_set',
+        actor: req.auth?.actor || 'unknown',
+        entityCode: m.person_code,
+        entityKind: 'person',
+        metadata: { value, reason: reason || null, via: req.params.code },
+      });
+    }
+    audit.record(db, {
+      action: 'family_do_not_contact_bulk',
+      actor: req.auth?.actor || 'unknown',
+      entityCode: req.params.code,
+      entityKind: 'family',
+      metadata: { value, reason: reason || null, members_updated: updated },
+    });
+    res.json({ updated, value, reason });
   });
 
   r.post('/:code/merge', (req, res) => {

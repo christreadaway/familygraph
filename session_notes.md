@@ -1244,6 +1244,91 @@ migrations (0007, 0008, 0009). 1 new module + 1 new API surface + 1
 new test file. 25 new tests; 202 total, all passing. Client builds
 clean.
 
+### v9.1 — Playwright e2e + FamilyDetail enrichment + bulk do-not-call
+
+After the v9 work I told the user the dashboard had three remaining
+gaps: no Playwright tests, FamilyDetail still didn't expose
+multi-address/email/phone or per-member profile flags, and Import.jsx
+had only been verified via curl. They asked me to close all three
+without stopping. The session also picked up two new requests
+mid-flight: a "summer-grace" clarification on the grade display
+between May 15 and Aug 15, and a school-side do-not-call workflow
+("search a family by last name, flag every member at once").
+
+**Playwright + chromium-headless-shell** is now wired up. New
+`playwright.config.js` boots an isolated server under
+`/tmp/fg-pw-<pid>/`; new `e2e/_setup.js` reads the master token and
+seeds it + the PII view into localStorage. Twelve e2e tests across
+four files exercise the conflict-notes textarea, the new profile
+fields, the FamilyDetail enrichment (DOB / age / grade / channels
+roll-up / pills), the import preview diagnostic, and the bulk
+do-not-call flow.
+
+**FamilyDetail enrichment.** Each member row now shows
+DOB+age+grade-or-summer-equivalent, the "do not contact" / "separate
+residence" pills, and an employer/title chip when filled. The
+panel header rolls up "N adults · M kids". A new Contact channels
+panel under Members shows every email + phone across the family
+with attribution back to the contributing member. families.members
+was extended to decrypt and surface the new profile fields.
+
+**Three real bugs caught by the e2e tests** that the unit-only
+suite never would have:
+
+1. `FACTS_MAPPING null override`. The /api/import/run handler passes
+   `mapping: null` when the operator hasn't customized anything. The
+   FACTS / RenWeb / Ministry Platform handlers were spreading
+   `{ mapping: PRESET, ...opts }` — which let `opts.mapping = null`
+   wipe the preset and fall through to the inferred mapper. Switched
+   to `{ ...opts, mapping: opts.mapping || PRESET }`. Real-world
+   FACTS exports were silently being parsed via heuristics rather
+   than the FACTS-specific mapping.
+2. `Family Name` colliding between primary_family_name and
+   family_display_name. With the missionIQ-style scoring, a header
+   "Family Name" tied at 100 between the two slots and could win
+   either. In FACTS / RenWeb / school rosters, "Family Name" is the
+   household label, not an individual surname. Removed `'family
+   name'` from the `primary_family_name` aliases — the household-
+   label bucket wins now, and `Parent 1 Last Name` claims the
+   primary_family_name slot via its specific alias.
+3. `flatToStructured` always set the primary slot's role to
+   `'member'`. In a roster with a child slot AND/OR a secondary
+   adult, the primary is logically a parent. New rule: when either
+   sibling slot is present, primary's role becomes `'parent'`.
+
+Plus FACTS_MAPPING now accepts `Student DOB` / `Student Date of
+Birth` / `Student Grade` etc. — earlier it only matched the bare
+`DOB` and `Grade` columns, so live exports with the "Student"
+prefix had their kid's DOB / grade silently dropped.
+
+**Summer-grace grade display.** New `formatGrade(grade, now)`:
+during the school year (Aug 16 – May 14) renders `grade N`; during
+the May 15 – Aug 15 summer gap renders `completed N · rising N+1`
+because "grade 3" in July is ambiguous between just-finished and
+about-to-start. Non-numeric grades (PreK, K) pass through verbatim.
+
+**Bulk do-not-call** got both an API endpoint and a UI:
+
+- New `POST /api/families/:code/do-not-contact` body `{ value,
+  reason? }` flips do_not_contact on every active member, audits
+  per-person AND once at the family level. Clearing wipes the
+  reason too.
+- New `GET /api/families?q=<surname>` filters the families list
+  server-side via `family_name_hash` HMAC equality, so the
+  operator can find a family by any member's surname even when
+  the family has no display_name set.
+- FamilyDetail grew a "Do-not-call list" panel showing the current
+  flagged-members aggregate, a reason input, and add/clear buttons.
+- The Families list view grew a search box (powered by the new
+  `?q=`) and a per-row "Add to do-not-call" / "Clear" quick action.
+
+Two new server tests covering the bulk endpoint + the surname
+filter; six new e2e tests covering the dashboard flows.
+
+**By the numbers (v9.1).** ~880 lines net added across 7 changed
+files + 5 new e2e files + 1 new playwright config. 218 total tests
+green: 206 server + 12 e2e. Client builds clean (Vite v5.4.21).
+
 **The throughline.** v9 closed the gap between "Family Graph is
 conceptually inspired by missionIQ" and "Family Graph runs the
 literal missionIQ logic, with the architectural mistakes corrected."
