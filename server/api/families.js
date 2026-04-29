@@ -3,6 +3,7 @@
 const express = require('express');
 const families = require('../identity/families');
 const contacts = require('../identity/contacts');
+const tagsLib = require('../identity/tags');
 const audit = require('../audit');
 const { isValidCode } = require('../crypto/identifiers');
 
@@ -127,6 +128,40 @@ function build({ db, secrets, includePii }) {
       metadata: { new_family: newFamily, persons_moved: person_codes.length },
     });
     res.status(201).json({ code: newFamily });
+  });
+
+  r.put('/:code/tags', (req, res) => {
+    if (!isValidCode(req.params.code, 'family')) {
+      return res.status(400).json({ error: 'invalid family code' });
+    }
+    const { tags = [] } = req.body || {};
+    if (!Array.isArray(tags)) return res.status(400).json({ error: 'tags must be an array' });
+    const updated = tagsLib.setFamilyTags(db, req.params.code, tags);
+    if (updated == null) return res.status(404).json({ error: 'not found' });
+    audit.record(db, {
+      action: 'family_set_tags',
+      actor: req.auth?.actor || 'unknown',
+      entityCode: req.params.code,
+      entityKind: 'family',
+      metadata: { tags: updated },
+    });
+    res.json({ tags: updated });
+  });
+
+  r.delete('/:code/tags/:tag', (req, res) => {
+    if (!isValidCode(req.params.code, 'family')) {
+      return res.status(400).json({ error: 'invalid family code' });
+    }
+    const updated = tagsLib.removeFamilyTag(db, req.params.code, req.params.tag);
+    if (updated == null) return res.status(404).json({ error: 'not found' });
+    audit.record(db, {
+      action: 'family_remove_tag',
+      actor: req.auth?.actor || 'unknown',
+      entityCode: req.params.code,
+      entityKind: 'family',
+      metadata: { tag: req.params.tag, tags: updated },
+    });
+    res.json({ tags: updated });
   });
 
   r.post('/:code/addresses', (req, res) => {

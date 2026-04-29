@@ -25,6 +25,7 @@ const RENWEB_MAPPING = {
       middle_name: 'StudentMiddle',
       date_of_birth: 'StudentDOB',
       gender: 'StudentGender',
+      grade: ['StudentGrade', 'Grade', 'Grade Level'],
       role: 'child',
     },
     {

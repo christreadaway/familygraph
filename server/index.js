@@ -32,6 +32,7 @@ const buildSettings = require('./api/settings');
 const buildExport = require('./api/export');
 const buildRelationships = require('./api/relationships');
 const buildNotifications = require('./api/notifications');
+const buildScan = require('./api/scan');
 
 // method2scope: chooses one of two scoped middlewares depending on the HTTP
 // method. GET/HEAD use the read middleware; everything else uses the write
@@ -93,6 +94,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/settings', bearerMaster, buildSettings({ db }));
   app.use('/api/export', bearerRead, buildExport({ db, secrets }));
   app.use('/api/notifications', bearerMaster, buildNotifications({ db }));
+  app.use('/api/scan', bearerWrite, buildScan({ db, secrets, thresholds }));
 
   // Static client (built React UI).
   const clientDir = path.join(__dirname, '..', 'client', 'dist');

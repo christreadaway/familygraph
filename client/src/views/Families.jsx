@@ -39,46 +39,56 @@ export default function Families() {
       <h2>Families</h2>
       {error && <div className="panel error">Error: {error}</div>}
       <div className="panel">
-        <h3>Create a family</h3>
-        <form className="row" onSubmit={create}>
-          <input
-            placeholder="Display name (optional)"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <button className="primary" disabled={creating}>Create</button>
-        </form>
+        <h3>{items.length} active{pseudo ? ' · pseudonym surface' : ''}</h3>
+        {items.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>
+            No families yet. <Link to="/import">Import a roster</Link> to populate the directory,
+            or add one manually below.
+          </p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Display name</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(f => (
+                <tr key={f.code}>
+                  <td><IdCode type="family" code={f.code} /></td>
+                  <td>
+                    {pseudo
+                      ? <span className="faint mono">[pseudonym surface]</span>
+                      : (f.display_name || <span className="muted">—</span>)}
+                  </td>
+                  <td className="muted mono">{new Date(f.created_at).toLocaleString()}</td>
+                  <td><Link to={`/families/${f.code}`}>open →</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
       <div className="panel">
-        <h3>{items.length} active{pseudo ? ' · pseudonym surface' : ''}</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Code</th>
-              <th>Display name</th>
-              <th>Created</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map(f => (
-              <tr key={f.code}>
-                <td><IdCode type="family" code={f.code} /></td>
-                <td>
-                  {pseudo
-                    ? <span className="faint mono">[pseudonym surface]</span>
-                    : (f.display_name || <span className="muted">—</span>)}
-                </td>
-                <td className="muted mono">{new Date(f.created_at).toLocaleString()}</td>
-                <td><Link to={`/families/${f.code}`}>open →</Link></td>
-              </tr>
-            ))}
-            {items.length === 0 && (
-              <tr><td colSpan={4} className="muted">No families yet. Import a roster or create one above.</td></tr>
-            )}
-          </tbody>
-        </table>
+        <details>
+          <summary><strong>Add a single family manually</strong></summary>
+          <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            Most directories are built by <Link to="/import">importing a roster</Link>. Use this only
+            for one-offs.
+          </p>
+          <form className="row" onSubmit={create}>
+            <input
+              placeholder="Display name (optional)"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <button className="primary" disabled={creating}>Create</button>
+          </form>
+        </details>
       </div>
     </>
   );

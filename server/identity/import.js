@@ -7,6 +7,7 @@ const families = require('./families');
 const contacts = require('./contacts');
 const resolver = require('./resolver');
 const audit = require('../audit');
+const tagsLib = require('./tags');
 
 // Import a parsed canonical row (the output of source handler.applyMapping).
 // Pure function over the database; the caller decides whether to wrap N rows
@@ -53,14 +54,29 @@ function importRow(db, secrets, thresholds, canonical, ctx = {}) {
     memberships_opened: 0,
   };
 
+  const customTagsArr = ctx.tags == null
+    ? []
+    : (Array.isArray(ctx.tags) ? ctx.tags : (() => { try { const v = JSON.parse(ctx.tags); return Array.isArray(v) ? v : []; } catch (_) { return []; } })());
+  const autoTags = tagsLib.autoTagsForRow(ctx.category, canonical, customTagsArr);
+
   const personOutcomes = [];
   const personCodes = [];
-  for (const incoming of canonical.persons || []) {
+  for (let pi = 0; pi < (canonical.persons || []).length; pi++) {
+    const incoming = canonical.persons[pi];
     const r = resolver.resolveOrCreatePerson(db, secrets, thresholds, incoming, {
       actor: ctx.actor || 'import',
     });
     personOutcomes.push({ ...r, incoming });
     personCodes.push(r.code);
+
+    if (incoming.grade) {
+      db.prepare(`UPDATE persons SET grade = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`)
+        .run(String(incoming.grade), r.code);
+    }
+    const tagsForPerson = autoTags.personTags[pi] || [];
+    if (tagsForPerson.length) {
+      tagsLib.addPersonTags(db, r.code, tagsForPerson);
+    }
 
     if (r.action === 'created') stats.persons_created += 1;
     else if (r.action === 'attached') stats.persons_attached += 1;
@@ -106,6 +122,10 @@ function importRow(db, secrets, thresholds, canonical, ctx = {}) {
     );
     if (familyOutcome.action === 'created') stats.families_created += 1;
     else if (familyOutcome.action === 'attached') stats.families_attached += 1;
+
+    if (autoTags.familyTags.length) {
+      tagsLib.addFamilyTags(db, familyOutcome.code, autoTags.familyTags);
+    }
 
     for (let i = 0; i < personCodes.length; i++) {
       const pc = personCodes[i];

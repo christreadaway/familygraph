@@ -52,6 +52,7 @@ function applyMapping(row, mapping) {
       suffix: pick(row, tmpl.suffix),
       date_of_birth: pick(row, tmpl.date_of_birth),
       gender: pick(row, tmpl.gender),
+      grade: pick(row, tmpl.grade),
       role: tmpl.role || 'member',
       custody: tmpl.custody || null,
       emails: [],

@@ -71,10 +71,37 @@ export default function Conflicts() {
     load();
   }
 
+  async function scanForDuplicates() {
+    setError(null); setBusy(true);
+    try {
+      const r = await api.scanDuplicates({});
+      alert(
+        `Scanned ${r.scanned} active person${r.scanned === 1 ? '' : 's'}. ` +
+        `Surfaced ${r.matches_found} potential duplicate match${r.matches_found === 1 ? '' : 'es'}. ` +
+        `${r.new_conflicts_opened} new conflict${r.new_conflicts_opened === 1 ? '' : 's'} opened. ` +
+        `Total open: ${r.open_person_conflicts}.`
+      );
+      load();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+
   return (
     <>
       <h2>Conflict queue</h2>
       {error && <div className="panel error">{error}</div>}
+
+      <div className="panel">
+        <h3>Scan for duplicates</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Walk every active person in the directory and compare them against the candidate pool.
+          Anything scoring at or above the review threshold lands here as an open conflict that
+          you can merge, reject (these are different people — divorce, similar names, etc.), or
+          dismiss.
+        </p>
+        <button onClick={scanForDuplicates} disabled={busy}>
+          {busy ? 'Scanning…' : 'Scan whole directory'}
+        </button>
+      </div>
 
       <div className="panel">
         <h3>Filters</h3>

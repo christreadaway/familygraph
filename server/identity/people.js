@@ -6,10 +6,16 @@ const aliases = require('./aliases');
 
 function row2person(row, secrets, { includePii }) {
   if (!row) return null;
+  let tags = [];
+  if (row.tags) {
+    try { const arr = JSON.parse(row.tags); if (Array.isArray(arr)) tags = arr; } catch (_) { /* ignore */ }
+  }
   const base = {
     code: row.code,
     status: row.status,
     merged_into: row.merged_into,
+    tags,
+    grade: row.grade || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
