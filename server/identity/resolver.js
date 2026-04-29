@@ -26,6 +26,7 @@ const aliases = require('./aliases');
 const rules = require('./rules');
 const audit = require('../audit');
 const matching = require('./matching');
+const conflictsMod = require('./conflicts');
 const { newCode } = require('../crypto/identifiers');
 
 // Re-exported for backwards compat — some callers (and tests) import these
@@ -280,7 +281,33 @@ function resolveOrCreatePerson(db, secrets, thresholds, incoming, opts = {}) {
   }
 
   if (decision.action === 'review') {
+    // Sticky non-match: if the operator already triaged this exact pair as
+    // not-the-same, don't re-flag it. The new record is created as a fresh
+    // person with no conflict opened.
+    if (conflictsMod.hasStickyNonMatch(db, best.candidate.code, best.candidate.code)) {
+      // (placeholder branch — left-side is the candidate, the new record has
+      //  no code yet; we re-check after creation below.)
+    }
     const newPerson = people.create(db, secrets, incoming);
+    if (conflictsMod.hasStickyNonMatch(db, newPerson, best.candidate.code)) {
+      audit.record(db, {
+        action: 'resolver_sticky_skip',
+        actor: opts.actor || 'resolver',
+        entityCode: newPerson,
+        entityKind: 'person',
+        metadata: {
+          reason: 'prior_decision_rejected_or_dismissed',
+          peer: best.candidate.code,
+        },
+      });
+      return {
+        code: newPerson,
+        action: 'created',
+        score: decision.confidence,
+        reasons: decision.reasons,
+        sticky_skip: true,
+      };
+    }
     const conflictCode = newCode('conflict');
     db.prepare(
       `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons)
@@ -388,8 +415,10 @@ function rescorePerson(db, secrets, thresholds, personCode) {
     }
   }
   for (const m of matches) {
+    // Skip if there's an existing OPEN conflict for this pair OR a prior
+    // non-match decision the operator already made (rejected/dismissed).
     const dupe = db.prepare(
-      `SELECT 1 FROM conflicts WHERE kind = 'person' AND status = 'open' AND
+      `SELECT status FROM conflicts WHERE kind = 'person' AND
          ((left_code = ? AND right_code = ?) OR (left_code = ? AND right_code = ?))`
     ).get(target, m.candidate.code, m.candidate.code, target);
     if (dupe) continue;

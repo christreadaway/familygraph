@@ -19,7 +19,13 @@ function row2person(row, secrets, { includePii }) {
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
-  if (!includePii) return base;
+  if (!includePii) {
+    return {
+      ...base,
+      do_not_contact: !!row.do_not_contact,
+      not_living_together: !!row.not_living_together,
+    };
+  }
   return {
     ...base,
     given_name: enc.decrypt(secrets, row.given_name_ct),
@@ -31,6 +37,11 @@ function row2person(row, secrets, { includePii }) {
     date_of_birth: enc.decrypt(secrets, row.date_of_birth_ct),
     gender: enc.decrypt(secrets, row.gender_ct),
     notes: enc.decrypt(secrets, row.notes_ct),
+    employer: enc.decrypt(secrets, row.employer_ct),
+    title: enc.decrypt(secrets, row.title_ct),
+    do_not_contact: !!row.do_not_contact,
+    do_not_contact_reason: enc.decrypt(secrets, row.do_not_contact_reason_ct),
+    not_living_together: !!row.not_living_together,
   };
 }
 
@@ -49,8 +60,9 @@ function create(db, secrets, input) {
     `INSERT INTO persons (
        code, given_name_ct, family_name_ct, middle_name_ct, prefix_ct, suffix_ct,
        display_name_ct, given_name_hash, family_name_hash,
-       date_of_birth_ct, gender_ct, notes_ct
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       date_of_birth_ct, gender_ct, notes_ct,
+       employer_ct, title_ct, do_not_contact, do_not_contact_reason_ct, not_living_together
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   stmt.run(
     code,
@@ -64,7 +76,12 @@ function create(db, secrets, input) {
     enc.hmac(secrets, enc.normalizeName(input.family_name)),
     enc.encrypt(secrets, input.date_of_birth),
     enc.encrypt(secrets, input.gender),
-    enc.encrypt(secrets, input.notes)
+    enc.encrypt(secrets, input.notes),
+    enc.encrypt(secrets, input.employer),
+    enc.encrypt(secrets, input.title),
+    input.do_not_contact ? 1 : 0,
+    enc.encrypt(secrets, input.do_not_contact_reason),
+    input.not_living_together ? 1 : 0,
   );
   return code;
 }
@@ -108,13 +125,20 @@ function update(db, secrets, code, patch) {
     date_of_birth: 'date_of_birth' in patch ? patch.date_of_birth : enc.decrypt(secrets, existing.date_of_birth_ct),
     gender: 'gender' in patch ? patch.gender : enc.decrypt(secrets, existing.gender_ct),
     notes: 'notes' in patch ? patch.notes : enc.decrypt(secrets, existing.notes_ct),
+    employer: 'employer' in patch ? patch.employer : enc.decrypt(secrets, existing.employer_ct),
+    title: 'title' in patch ? patch.title : enc.decrypt(secrets, existing.title_ct),
+    do_not_contact_reason: 'do_not_contact_reason' in patch ? patch.do_not_contact_reason : enc.decrypt(secrets, existing.do_not_contact_reason_ct),
   };
+  const dnc = 'do_not_contact' in patch ? (patch.do_not_contact ? 1 : 0) : (existing.do_not_contact || 0);
+  const nlt = 'not_living_together' in patch ? (patch.not_living_together ? 1 : 0) : (existing.not_living_together || 0);
   const display = patch.display_name || buildDisplayName(merged);
   db.prepare(
     `UPDATE persons SET
        given_name_ct = ?, family_name_ct = ?, middle_name_ct = ?, prefix_ct = ?,
        suffix_ct = ?, display_name_ct = ?, given_name_hash = ?, family_name_hash = ?,
-       date_of_birth_ct = ?, gender_ct = ?, notes_ct = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       date_of_birth_ct = ?, gender_ct = ?, notes_ct = ?,
+       employer_ct = ?, title_ct = ?, do_not_contact = ?, do_not_contact_reason_ct = ?, not_living_together = ?,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
      WHERE code = ?`
   ).run(
     enc.encrypt(secrets, merged.given_name),
@@ -128,6 +152,11 @@ function update(db, secrets, code, patch) {
     enc.encrypt(secrets, merged.date_of_birth),
     enc.encrypt(secrets, merged.gender),
     enc.encrypt(secrets, merged.notes),
+    enc.encrypt(secrets, merged.employer),
+    enc.encrypt(secrets, merged.title),
+    dnc,
+    enc.encrypt(secrets, merged.do_not_contact_reason),
+    nlt,
     target
   );
   return target;
