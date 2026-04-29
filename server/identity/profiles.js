@@ -15,12 +15,22 @@ const audit = require('../audit');
 //     description: string
 //   }
 
+// Threshold notes (recalibrated for missionIQ-style additive scoring,
+// see server/identity/matching.js):
+//   autoMerge ≥ 0.85 corresponds to "definitive signal AND no
+//                     conflicting address" — exact email/phone, exact
+//                     name+DOB, address+name overlap.
+//   review     ≥ 0.30 surfaces even a surname-only or phonetic match
+//                     for operator review (FG errs on the side of
+//                     asking; missionIQ silently dropped these).
+//   Higher institutional bars (e.g., diocese with mixed-source data)
+//   raise both — fewer auto-merges, more conflict-queue work.
 const BUILTIN_PROFILES = [
   {
     name: 'catholic_school',
     config: {
       description: 'A K-12 Catholic school. Families resolve by surname + address. Joint custody is the default.',
-      thresholds: { autoMerge: 0.92, review: 0.7 },
+      thresholds: { autoMerge: 0.85, review: 0.30 },
       custody: { default: 'joint' },
     },
   },
@@ -28,7 +38,7 @@ const BUILTIN_PROFILES = [
     name: 'parish_donor',
     config: {
       description: 'A parish development office. Donor giving history attaches by Family Graph codes; resolver tolerates more variance because donor records are messier.',
-      thresholds: { autoMerge: 0.94, review: 0.65 },
+      thresholds: { autoMerge: 0.80, review: 0.30 },
       custody: { default: 'unspecified' },
     },
   },
@@ -36,7 +46,7 @@ const BUILTIN_PROFILES = [
     name: 'diocese',
     config: {
       description: 'A diocesan office combining school, parish, and HR data. Resolver thresholds err on the side of conflict-queue review.',
-      thresholds: { autoMerge: 0.95, review: 0.6 },
+      thresholds: { autoMerge: 0.90, review: 0.30 },
       custody: { default: 'unspecified' },
     },
   },

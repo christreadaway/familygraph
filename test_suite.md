@@ -2,7 +2,7 @@
 
 `npm test` runs the suite via Node's built-in `node:test` runner, which spawns
 each `tests/*.test.js` file as its own subtest tree. The total at the time of
-this writing: **202 tests, all passing.**
+this writing: **204 tests, all passing.**
 
 This document is the canonical map of what's covered, where, and what each
 test is asserting. New tests should land alongside the closest sibling and
@@ -89,6 +89,8 @@ call into.
 | `/resolve creates a new person when no candidate hits` | 201 + new `p_*` code. |
 | `/feedback "different" makes a sticky non-match` | rescorePerson does NOT re-flag the pair after the operator marks them different. |
 | `/feedback "same" merges the pair` | Pair merges with the supplied winner_code. |
+| `/resolve persists profile fields on creation` | After resolve→PATCH the new profile fields (employer/title/do_not_contact/reason/not_living_together) round-trip through GET. |
+| `conflicts api > resolve with notes persists resolution_notes` | A POST to /api/conflicts/:code/resolve with `notes` writes resolution_notes + resolved_by, and the closed conflict surfaces them on subsequent list calls. |
 
 ### `tests/identity.test.js` — core entity CRUD
 
@@ -242,7 +244,8 @@ miss.
 - The React dashboard has no automated tests yet. The Vite build (`npm run
   client:build`) is the only check, which catches JSX-level errors but not
   user-flow regressions. Adding Playwright coverage for the import wizard
-  and conflict queue is the next priority.
+  (column-mapper) and conflict queue (resolution-notes textarea, reason
+  chips, sticky-decision indicator) is the next priority.
 - The folder-watch tests use a hand-rolled FS event simulator rather than
   real `chokidar` events; on macOS specifically there's a watch-collapse
   edge case that's not exercised.

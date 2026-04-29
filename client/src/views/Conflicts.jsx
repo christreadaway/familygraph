@@ -26,6 +26,11 @@ export default function Conflicts() {
   const [assignee, setAssignee] = useState('');
   const [ttl, setTtl] = useState(24);
   const [busy, setBusy] = useState(false);
+  // Per-row staged note. Operators jot a one-line WHY ("father and son,
+  // confirmed via parish records") before clicking merge / reject / dismiss.
+  // The note persists into conflicts.resolution_notes.
+  const [notes, setNotes] = useState({});
+  const [pendingDecision, setPendingDecision] = useState({});
 
   function load() {
     const params = { status: filter.status };
@@ -46,8 +51,15 @@ export default function Conflicts() {
   }
 
   async function resolve(c, decision, winner) {
-    await api.resolveConflict(c.code, { decision, winner_code: winner });
-    load();
+    const note = (notes[c.code] || '').trim() || null;
+    try {
+      await api.resolveConflict(c.code, { decision, winner_code: winner, notes: note });
+      const nextNotes = { ...notes }; delete nextNotes[c.code]; setNotes(nextNotes);
+      const nextPending = { ...pendingDecision }; delete nextPending[c.code]; setPendingDecision(nextPending);
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
   async function assignSelected() {
@@ -166,6 +178,7 @@ export default function Conflicts() {
               <th>Kind</th>
               <th>Pair</th>
               <th>Score</th>
+              <th>Why</th>
               <th>Assigned</th>
               <th>Expires</th>
               <th>Actions</th>
@@ -175,64 +188,117 @@ export default function Conflicts() {
             {items.map(c => {
               const exp = formatExpires(c.assignment_expires_at);
               const linkBase = c.kind === 'family' ? 'families' : 'people';
+              const note = notes[c.code] || '';
+              const reasons = Array.isArray(c.reasons) ? c.reasons : [];
               return (
-                <tr key={c.code}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={!!picked[c.code]}
-                      onChange={e => setPicked({ ...picked, [c.code]: e.target.checked })}
-                    />
-                  </td>
-                  <td><IdCode code={c.code} /></td>
-                  <td><Pill state="muted">{c.kind}</Pill></td>
-                  <td>
-                    <div className="col" style={{ gap: 2 }}>
-                      <Link to={`/${linkBase}/${c.left_code}`}>
-                        <IdCode type={c.kind} code={c.left_code} />
-                      </Link>
-                      <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>↕ vs</span>
-                      <Link to={`/${linkBase}/${c.right_code}`}>
-                        <IdCode type={c.kind} code={c.right_code} />
-                      </Link>
-                    </div>
-                  </td>
-                  <td className="mono tnum">{Math.round(c.score * 100)}%</td>
-                  <td>
-                    {c.assigned_to ? (
-                      <>
-                        <Pill state="muted">{c.assigned_to}</Pill>
-                        {c.status === 'open' && (
-                          <button onClick={() => unassign(c)} style={{ marginLeft: 6 }}>clear</button>
-                        )}
-                      </>
-                    ) : <span className="muted">—</span>}
-                  </td>
-                  <td>
-                    {exp
-                      ? <Pill state={exp.warn ? 'pii' : 'muted'}>{exp.label}</Pill>
-                      : <span className="muted">—</span>}
-                  </td>
-                  <td>
-                    {c.status === 'open' ? (
-                      <div className="col" style={{ gap: 6 }}>
-                        <div className="row" style={{ gap: 6 }}>
-                          <button className="primary" title="Merge left" onClick={() => resolve(c, 'merge', c.left_code)}>← left</button>
-                          <button className="primary" title="Merge right" onClick={() => resolve(c, 'merge', c.right_code)}>→ right</button>
-                        </div>
-                        <div className="row" style={{ gap: 6 }}>
-                          <button onClick={() => resolve(c, 'reject')}>reject</button>
-                          <button onClick={() => resolve(c, 'dismiss')}>✕ dismiss</button>
-                        </div>
+                <React.Fragment key={c.code}>
+                  <tr>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={!!picked[c.code]}
+                        onChange={e => setPicked({ ...picked, [c.code]: e.target.checked })}
+                      />
+                    </td>
+                    <td><IdCode code={c.code} /></td>
+                    <td><Pill state="muted">{c.kind}</Pill></td>
+                    <td>
+                      <div className="col" style={{ gap: 2 }}>
+                        <Link to={`/${linkBase}/${c.left_code}`}>
+                          <IdCode type={c.kind} code={c.left_code} />
+                        </Link>
+                        <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>↕ vs</span>
+                        <Link to={`/${linkBase}/${c.right_code}`}>
+                          <IdCode type={c.kind} code={c.right_code} />
+                        </Link>
                       </div>
-                    ) : (
-                      <span className="muted">{c.status} {c.resolved_at ? new Date(c.resolved_at).toLocaleString() : ''}</span>
-                    )}
-                  </td>
-                </tr>
+                    </td>
+                    <td className="mono tnum">{Math.round(c.score * 100)}%</td>
+                    <td style={{ maxWidth: 220 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {reasons.length === 0 && <span className="muted" style={{ fontSize: 12 }}>—</span>}
+                        {reasons.map(r => (
+                          <span key={r} className="tag" style={{ fontSize: 11 }}>{r}</span>
+                        ))}
+                      </div>
+                    </td>
+                    <td>
+                      {c.assigned_to ? (
+                        <>
+                          <Pill state="muted">{c.assigned_to}</Pill>
+                          {c.status === 'open' && (
+                            <button onClick={() => unassign(c)} style={{ marginLeft: 6 }}>clear</button>
+                          )}
+                        </>
+                      ) : <span className="muted">—</span>}
+                    </td>
+                    <td>
+                      {exp
+                        ? <Pill state={exp.warn ? 'pii' : 'muted'}>{exp.label}</Pill>
+                        : <span className="muted">—</span>}
+                    </td>
+                    <td>
+                      {c.status === 'open' ? (
+                        <div className="col" style={{ gap: 6 }}>
+                          <div className="row" style={{ gap: 6 }}>
+                            <button className="primary" title="Merge left" onClick={() => resolve(c, 'merge', c.left_code)}>← left</button>
+                            <button className="primary" title="Merge right" onClick={() => resolve(c, 'merge', c.right_code)}>→ right</button>
+                          </div>
+                          <div className="row" style={{ gap: 6 }}>
+                            <button onClick={() => resolve(c, 'reject')}>reject</button>
+                            <button onClick={() => resolve(c, 'dismiss')}>✕ dismiss</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="muted">{c.status} {c.resolved_at ? new Date(c.resolved_at).toLocaleString() : ''}</span>
+                      )}
+                    </td>
+                  </tr>
+                  {/* Notes row — operator note for an open conflict, or the
+                      stored resolution_notes for a closed one. */}
+                  <tr>
+                    <td></td>
+                    <td colSpan={8} style={{ paddingTop: 0, paddingBottom: 12 }}>
+                      {c.status === 'open' ? (
+                        <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+                          <label
+                            className="muted"
+                            style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em', minWidth: 60, paddingTop: 6 }}
+                          >
+                            Note
+                          </label>
+                          <textarea
+                            value={note}
+                            onChange={e => setNotes({ ...notes, [c.code]: e.target.value })}
+                            placeholder="Optional: why are you making this decision? (e.g., 'father and son, confirmed via parish records')"
+                            rows={1}
+                            style={{ flex: 1, fontSize: 13, resize: 'vertical', minHeight: 28 }}
+                            maxLength={2000}
+                          />
+                          <span className="muted" style={{ fontSize: 11, paddingTop: 8 }}>
+                            {note.length > 0 ? `${note.length}/2000` : ''}
+                          </span>
+                        </div>
+                      ) : c.resolution_notes ? (
+                        <div className="row" style={{ gap: 8, alignItems: 'baseline' }}>
+                          <label
+                            className="muted"
+                            style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em', minWidth: 60 }}
+                          >
+                            Note
+                          </label>
+                          <span style={{ flex: 1, fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                            "{c.resolution_notes}"
+                            {c.resolved_by && <span className="muted"> — {c.resolved_by}</span>}
+                          </span>
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                </React.Fragment>
               );
             })}
-            {items.length === 0 && <tr><td colSpan={8} className="muted">No conflicts.</td></tr>}
+            {items.length === 0 && <tr><td colSpan={9} className="muted">No conflicts.</td></tr>}
           </tbody>
         </table>
       </div>

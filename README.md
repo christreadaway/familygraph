@@ -360,7 +360,10 @@ stored in the conflicts table with status `rejected`/`dismissed` and a
 free-form `resolution_notes` field. On every subsequent import or
 rescan, `conflicts.hasStickyNonMatch(left, right)` suppresses re-flagging
 the pair. The decision survives forever unless the operator explicitly
-clears it.
+clears it. The dashboard's Conflicts view shows a per-row textarea for
+the operator to record the WHY ("father and son, confirmed via parish
+records") before clicking merge / reject / dismiss; closed conflicts
+display the stored note verbatim under the row.
 
 **Critical correctness fix vs missionIQ:** address-only auto-merge with
 unrelated names is treated as a *family* signal in Family Graph, not a

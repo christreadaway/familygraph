@@ -1247,10 +1247,60 @@ clean.
 **The throughline.** v9 closed the gap between "Family Graph is
 conceptually inspired by missionIQ" and "Family Graph runs the
 literal missionIQ logic, with the architectural mistakes corrected."
-The next session should focus on the dashboard UI — the
-ColumnMapper exists but the conflict-queue view doesn't expose
-`resolution_notes` yet, and family detail hasn't been updated to show
-employer/title/do_not_contact.
+
+### v9 follow-up — dashboard UI for resolution notes + profile fields
+
+After the backend port landed, the dashboard had two glaring gaps:
+the operator could not record WHY they made a conflict decision
+(`resolution_notes` was server-only), and the new person-profile
+fields (employer / title / do_not_contact / not_living_together)
+weren't editable anywhere.
+
+Both shipped:
+
+- **Conflicts.jsx**: each row now expands into an inline notes
+  textarea (max 2000 chars, optional). The note threads through to
+  every decision (`merge`/`reject`/`dismiss`) so the operator's
+  reasoning persists in `conflicts.resolution_notes`. A new "Why"
+  column displays the reason chips (`exact_email_match`,
+  `nickname_or_short_form`, `address_conflict_present`, etc.) so the
+  operator sees what triggered the conflict before deciding. Closed
+  conflicts surface the stored note verbatim under the row, with
+  `resolved_by` attribution.
+- **PersonDetail.jsx**: new Profile section with employer / title
+  free-text inputs and two checkbox flags (do_not_contact + reason
+  textarea, not_living_together). The reason input only appears
+  while do_not_contact is checked.
+
+Two backend bugs surfaced during the dev-server integration test:
+
+1. `SCHEMA_VERSION` was still hardcoded to 5 even though migrations
+   0006-0009 had landed. The health endpoint reported the wrong
+   number. Bumped to 9 with version-comment lineage updated.
+2. `server/config.js` and the built-in profiles still used the
+   old weighted-scoring thresholds (autoMerge=0.92, review=0.7).
+   With the new additive scoring, name+name conflicts (0.50)
+   weren't crossing review (0.7), so the user-invoked "Scan whole
+   directory" button silently produced zero conflicts even when
+   duplicates obviously existed. Recalibrated production defaults
+   to autoMerge=0.85, review=0.30; profiles now scale relative
+   from there (parish_donor 0.80 / school 0.85 / diocese 0.90).
+   `tests/extensions.test.js` updated to expect the new diocese
+   numbers.
+
+End-to-end smoke against the live server confirmed:
+- creating two duplicate Pio Pietrelcinas
+- POST /api/scan/duplicates opens 1 conflict
+- POST /api/conflicts/:code/resolve with `notes` persists to
+  `resolution_notes` + `resolved_by`
+- subsequent rescans don't re-flag (sticky non-match in effect)
+- PATCH /api/people/:code with profile fields round-trips through GET
+
+Tests +2 (resolve→profile-fields, conflict-notes persistence) for
+204 total, all green. Client builds clean.
+
+The next session should be Tauri/Electron desktop shell work
+(CLAUDE_CODE_HANDOFF §5).
 
 ---
 

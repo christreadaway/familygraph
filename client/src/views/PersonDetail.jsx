@@ -17,7 +17,20 @@ export default function PersonDetail() {
   function load() {
     api
       .getPerson(code)
-      .then(d => { setPerson(d.person); setForm({ given_name: d.person.given_name || '', family_name: d.person.family_name || '', date_of_birth: d.person.date_of_birth || '', notes: d.person.notes || '' }); })
+      .then(d => {
+        setPerson(d.person);
+        setForm({
+          given_name: d.person.given_name || '',
+          family_name: d.person.family_name || '',
+          date_of_birth: d.person.date_of_birth || '',
+          notes: d.person.notes || '',
+          employer: d.person.employer || '',
+          title: d.person.title || '',
+          do_not_contact: !!d.person.do_not_contact,
+          do_not_contact_reason: d.person.do_not_contact_reason || '',
+          not_living_together: !!d.person.not_living_together,
+        });
+      })
       .catch(e => setError(e.message));
   }
   useEffect(load, [code]);
@@ -58,9 +71,60 @@ export default function PersonDetail() {
         <div className="split">
           <div><label>First name</label><input value={form.given_name} onChange={e => setForm({ ...form, given_name: e.target.value })} /></div>
           <div><label>Last name</label><input value={form.family_name} onChange={e => setForm({ ...form, family_name: e.target.value })} /></div>
-          <div><label>Date of birth</label><input value={form.date_of_birth} onChange={e => setForm({ ...form, date_of_birth: e.target.value })} /></div>
+          <div><label>Date of birth</label><input value={form.date_of_birth} onChange={e => setForm({ ...form, date_of_birth: e.target.value })} placeholder="YYYY-MM-DD" /></div>
           <div><label>Notes</label><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
         </div>
+
+        <h4 style={{ marginTop: 18, marginBottom: 8 }}>Profile</h4>
+        <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: 12 }}>
+          Employer / title power donor research and parish directory listings. Do-not-contact and
+          not-living-together drive how outbound channels (email, mail merges) address this person.
+        </p>
+        <div className="split">
+          <div>
+            <label>Employer</label>
+            <input value={form.employer} onChange={e => setForm({ ...form, employer: e.target.value })} placeholder="e.g., St. Joseph Hospital" />
+          </div>
+          <div>
+            <label>Title / role</label>
+            <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="e.g., Director of Development" />
+          </div>
+        </div>
+        <div className="split" style={{ marginTop: 12 }}>
+          <div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={form.do_not_contact}
+                onChange={e => setForm({ ...form, do_not_contact: e.target.checked })}
+              />
+              Do not contact
+            </label>
+            {form.do_not_contact && (
+              <input
+                value={form.do_not_contact_reason}
+                onChange={e => setForm({ ...form, do_not_contact_reason: e.target.value })}
+                placeholder="Reason (e.g., 'unsubscribed Q1 2026')"
+                style={{ marginTop: 6 }}
+              />
+            )}
+          </div>
+          <div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={form.not_living_together}
+                onChange={e => setForm({ ...form, not_living_together: e.target.checked })}
+              />
+              Not living together at family address
+            </label>
+            <p className="muted" style={{ fontSize: 11, marginTop: 4, marginBottom: 0 }}>
+              Suppresses "Mom and Dad"-style joint salutations on shared-address mail when parents
+              are separated.
+            </p>
+          </div>
+        </div>
+
         <div style={{ marginTop: 12 }}><button className="primary" onClick={save}>Save</button></div>
       </div>
 

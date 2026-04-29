@@ -3,14 +3,22 @@
 
 > **Status (2026-04-29):** The web dashboard at `http://127.0.0.1:3500/`
 > is live. The v9 backend port (see `session_notes.md`) brought in the
-> full missionIQ ingestion + matching logic plus a new external
-> identity API at `/api/identity/{match,resolve,feedback}`. The
-> ColumnMapper UI for unmapped imports is shipped; the Conflicts view
-> still needs a `resolution_notes` text input and the Family Detail
-> view still needs employer/title/do_not_contact/not_living_together
-> fields. The Tauri/Electron desktop shell (§5) is the next major
-> milestone; everything below the title bar applies regardless of how
-> the shell is wrapped.
+> full missionIQ ingestion + matching logic, the external identity API
+> at `/api/identity/{match,resolve,feedback}`, and the dashboard now
+> exposes:
+> - the **ColumnMapper** on the Import view (auto-opens when the
+>   auto-mapper produced zero person rows);
+> - a **per-conflict resolution-notes textarea** on the Conflicts
+>   view, with stored notes shown verbatim under closed conflicts;
+> - the **conflict reason chips** so the operator can see *why* the
+>   resolver flagged the pair (`exact_email_match`,
+>   `nickname_or_short_form`, `address_conflict_present`, etc.);
+> - new **Profile** section on the Person detail view: employer,
+>   title, do-not-contact (with reason), not-living-together.
+>
+> The Tauri/Electron desktop shell (§5) is the next major milestone;
+> everything below the title bar applies regardless of how the shell
+> is wrapped.
 
 This document is the contract between design and engineering. Read it once end-to-end before touching the dashboard. The companion design system PDF (`Family Graph — Institutional Design System.pdf`) is the visual reference; this file is the build instructions.
 

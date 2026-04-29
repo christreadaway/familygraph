@@ -142,3 +142,55 @@ test('identity api > /feedback "same" merges the pair', async t => {
   assert.equal(r.body.decision, 'merged');
   assert.equal(r.body.winner, a);
 });
+
+test('identity api > /resolve persists profile fields on creation', async t => {
+  const { port, db, secrets } = await makeServer(t);
+  const r = await request(port, {
+    method: 'POST', path: '/api/identity/resolve', headers: auth(secrets),
+    body: { record: { first_name: 'Pio', last_name: 'Pietrelcina' }, source: 'missioniq' },
+  });
+  assert.equal(r.status, 201);
+  // Now PATCH richer profile fields and read them back via the people API
+  const code = r.body.code;
+  await request(port, {
+    method: 'PATCH', path: `/api/people/${code}`, headers: auth(secrets),
+    body: {
+      employer: 'St Joseph Hospital',
+      title: 'Director of Development',
+      do_not_contact: true,
+      do_not_contact_reason: 'unsubscribed Q1 2026',
+      not_living_together: true,
+    },
+  });
+  const got = await request(port, { method: 'GET', path: `/api/people/${code}`, headers: auth(secrets) });
+  assert.equal(got.status, 200);
+  assert.equal(got.body.person.employer, 'St Joseph Hospital');
+  assert.equal(got.body.person.title, 'Director of Development');
+  assert.equal(got.body.person.do_not_contact, true);
+  assert.equal(got.body.person.do_not_contact_reason, 'unsubscribed Q1 2026');
+  assert.equal(got.body.person.not_living_together, true);
+});
+
+test('conflicts api > resolve with notes persists resolution_notes', async t => {
+  const { port, db, secrets } = await makeServer(t);
+  const a = people.create(db, secrets, { given_name: 'Pio', family_name: 'Pietrelcina' });
+  const b = people.create(db, secrets, { given_name: 'Pio', family_name: 'Pietrelcina' });
+
+  // Run a duplicate scan to open the conflict.
+  const resolver = require('../server/identity/resolver');
+  resolver.rescorePerson(db, secrets, defaultThresholds(), b);
+  const conflictsMod = require('../server/identity/conflicts');
+  const open = conflictsMod.list(db, { status: 'open' });
+  assert.equal(open.length, 1);
+
+  const r = await request(port, {
+    method: 'POST', path: `/api/conflicts/${open[0].code}/resolve`, headers: auth(secrets),
+    body: { decision: 'reject', notes: 'father and son, confirmed via parish records' },
+  });
+  assert.equal(r.status, 200);
+
+  const closed = conflictsMod.list(db, { status: 'rejected' });
+  assert.equal(closed.length, 1);
+  assert.equal(closed[0].resolution_notes, 'father and son, confirmed via parish records');
+  assert.equal(closed[0].resolved_by, 'unit-test');
+});
