@@ -259,6 +259,7 @@ CREATE TABLE IF NOT EXISTS import_runs (
   phones_attached      INTEGER NOT NULL DEFAULT 0,
   memberships_opened   INTEGER NOT NULL DEFAULT 0,
   memberships_ended    INTEGER NOT NULL DEFAULT 0,
+  rows_skipped_blank   INTEGER NOT NULL DEFAULT 0,
   actor                TEXT,
   created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );

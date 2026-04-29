@@ -84,3 +84,42 @@ test('sources > empty rows are skipped', () => {
   const peopleRows = out.canonical.flatMap(c => c.persons);
   assert.equal(peopleRows.length, 1);
 });
+
+test('sources > full-name column splits when no first/last present', () => {
+  const data = 'Name,Email,Phone\nMary Smith,mary@example.org,415-555-0100\nJohn Q. Smith,john@example.org,\n';
+  const out = csv.loadString(data);
+  assert.equal(out.canonical.length, 2);
+  assert.equal(out.canonical[0].persons[0].given_name, 'Mary');
+  assert.equal(out.canonical[0].persons[0].family_name, 'Smith');
+  assert.equal(out.canonical[1].persons[0].given_name, 'John');
+  assert.equal(out.canonical[1].persons[0].family_name, 'Smith');
+  assert.equal(out.canonical[1].persons[0].middle_name, 'Q.');
+});
+
+test('sources > "Last, First" full-name column splits correctly', () => {
+  const data = 'Name\n"Smith, Mary"\n"Doe, John Quincy"\n';
+  const out = csv.loadString(data);
+  assert.equal(out.canonical[0].persons[0].given_name, 'Mary');
+  assert.equal(out.canonical[0].persons[0].family_name, 'Smith');
+  assert.equal(out.canonical[1].persons[0].given_name, 'John');
+  assert.equal(out.canonical[1].persons[0].family_name, 'Doe');
+  assert.equal(out.canonical[1].persons[0].middle_name, 'Quincy');
+});
+
+test('sources > spouse / husband / wife slots produce parent templates', () => {
+  const data = 'First Name,Last Name,Spouse First Name,Spouse Last Name,Spouse Email\nMary,Smith,John,Smith,john@example.org\n';
+  const out = csv.loadString(data);
+  const persons = out.canonical[0].persons;
+  assert.equal(persons.length, 2);
+  const spouse = persons.find(p => p.given_name === 'John');
+  assert.ok(spouse);
+  assert.equal(spouse.role, 'parent');
+  assert.equal(spouse.emails[0], 'john@example.org');
+});
+
+test('sources > headers, when nothing matches, produce zero persons (caller can detect)', () => {
+  const data = 'foo,bar,baz\n1,2,3\n';
+  const out = csv.loadString(data);
+  assert.equal(out.canonical[0].persons.length, 0);
+  assert.deepEqual(out.headers, ['foo', 'bar', 'baz']);
+});

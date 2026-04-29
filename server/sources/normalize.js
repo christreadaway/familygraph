@@ -19,6 +19,34 @@ function pick(row, keys) {
   return null;
 }
 
+// Split a single full-name string into { given, family, middle? }.
+// Recognizes:
+//   "Last, First" / "Last, First Middle"   → comma-separated, family-first
+//   "First Last"                            → space-separated, family-last
+//   "First Middle Last"                     → middle gets folded as middle_name
+// Single-token names are treated as family_name (matches what the resolver
+// blocks on; better than dropping the row).
+function splitFullName(full) {
+  if (!full) return { given: null, family: null, middle: null };
+  const s = String(full).trim().replace(/\s+/g, ' ');
+  if (!s) return { given: null, family: null, middle: null };
+  if (s.includes(',')) {
+    const [familyPart, restPart = ''] = s.split(',', 2).map(t => t.trim());
+    const restTokens = restPart.split(' ').filter(Boolean);
+    const given = restTokens[0] || null;
+    const middle = restTokens.length > 1 ? restTokens.slice(1).join(' ') : null;
+    return { given, family: familyPart || null, middle };
+  }
+  const tokens = s.split(' ').filter(Boolean);
+  if (tokens.length === 1) return { given: null, family: tokens[0], middle: null };
+  if (tokens.length === 2) return { given: tokens[0], family: tokens[1], middle: null };
+  return {
+    given: tokens[0],
+    family: tokens[tokens.length - 1],
+    middle: tokens.slice(1, -1).join(' '),
+  };
+}
+
 function applyMapping(row, mapping) {
   const out = { family: {}, persons: [], address: null };
 
@@ -44,10 +72,23 @@ function applyMapping(row, mapping) {
 
   // Persons (mapping.persons is an array of person templates)
   for (const tmpl of mapping.persons || []) {
+    let given = pick(row, tmpl.given_name);
+    let family = pick(row, tmpl.family_name);
+    let middle = pick(row, tmpl.middle_name);
+
+    // Fall back to splitting a full-name column when first/last weren't found.
+    if ((!given || !family) && tmpl.full_name) {
+      const full = pick(row, tmpl.full_name);
+      const split = splitFullName(full);
+      if (!given) given = split.given;
+      if (!family) family = split.family;
+      if (!middle) middle = split.middle;
+    }
+
     const person = {
-      given_name: pick(row, tmpl.given_name),
-      family_name: pick(row, tmpl.family_name) || out.family.display_name,
-      middle_name: pick(row, tmpl.middle_name),
+      given_name: given,
+      family_name: family || out.family.display_name,
+      middle_name: middle,
       prefix: pick(row, tmpl.prefix),
       suffix: pick(row, tmpl.suffix),
       date_of_birth: pick(row, tmpl.date_of_birth),
@@ -69,4 +110,4 @@ function applyMapping(row, mapping) {
   return out;
 }
 
-module.exports = { applyMapping, pick };
+module.exports = { applyMapping, pick, splitFullName };
