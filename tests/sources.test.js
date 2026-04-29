@@ -123,3 +123,105 @@ test('sources > headers, when nothing matches, produce zero persons (caller can 
   assert.equal(out.canonical[0].persons.length, 0);
   assert.deepEqual(out.headers, ['foo', 'bar', 'baz']);
 });
+
+test('sources > scored auto-mapper picks specific over generic (Child First Name)', () => {
+  const data = 'First Name,Last Name,Child First Name,Child Last Name,Grade\nMary,Smith,Lucy,Smith,3\n';
+  const out = csv.loadString(data);
+  const persons = out.canonical[0].persons;
+  // Adult primary + child
+  const child = persons.find(p => p.role === 'child');
+  const adult = persons.find(p => p.role !== 'child');
+  assert.ok(child, 'expected a child person');
+  assert.equal(child.given_name, 'Lucy');
+  assert.equal(adult.given_name, 'Mary');
+});
+
+test('sources > Excel serial DOB normalizes to ISO via applyMapping', () => {
+  const data = 'first_name,last_name,date_of_birth\nMary,Smith,40179\n';
+  const out = csv.loadString(data);
+  // Excel serial 40179 = 2010-01-01 (epoch Dec 30 1899)
+  assert.equal(out.canonical[0].persons[0].date_of_birth, '2010-01-01');
+});
+
+test('sources > concatenated phone splits into multiple values per person', () => {
+  const data = 'first_name,last_name,phone\nMary,Smith,+13143783612+13145607897\n';
+  const out = csv.loadString(data);
+  assert.deepEqual(out.canonical[0].persons[0].phones, ['3143783612', '3145607897']);
+});
+
+test('sources > "Total" / "Grand Total" rows are dropped', () => {
+  const data = 'first_name,last_name\nMary,Smith\nGrand Total,\nJohn,Doe\nTotal,\n';
+  const out = csv.loadString(data);
+  assert.equal(out.summary_rows_dropped, 2);
+  assert.equal(out.canonical.length, 2);
+});
+
+test('sources > mapping warning fires when no identity columns detected', () => {
+  const data = 'foo,bar,baz\n1,2,3\n';
+  const out = csv.loadString(data);
+  assert.match(out.mapping_warning, /No identity columns/);
+});
+
+test('matching > exact email match is definitive even with different last names', () => {
+  const m = require('../server/identity/matching');
+  const r = m.scoreMatch(
+    { given_name: 'Mary', family_name: 'Escamilla', email: 'mary@example.org' },
+    { given_name: 'Mary', family_name: 'Torre',     email: 'mary@example.org' },
+  );
+  assert.equal(r.definitive, true);
+  assert.ok(r.confidence >= 0.95);
+  assert.ok(r.reasons.includes('exact_email_match'));
+});
+
+test('matching > different states veto a definitive email match', () => {
+  const m = require('../server/identity/matching');
+  const r = m.scoreMatch(
+    { given_name: 'Mary', family_name: 'Smith', email: 'mary@example.org', address_line1: '12 Maple St', state: 'TX' },
+    { given_name: 'Mary', family_name: 'Smith', email: 'mary@example.org', address_line1: '88 Oak Ave',  state: 'NY' },
+  );
+  // Cross-state with same email = different households (gen-share / inherited inbox).
+  // Confidence is capped below auto-merge so the operator must decide.
+  assert.equal(r.definitive, false);
+  assert.ok(r.confidence < 0.85);
+  assert.ok(r.reasons.includes('address_conflict_present'));
+});
+
+test('matching > Tim/Timothy nickname match', () => {
+  const m = require('../server/identity/matching');
+  const r = m.scoreMatch(
+    { given_name: 'Tim',     family_name: 'Smith' },
+    { given_name: 'Timothy', family_name: 'Smith' },
+  );
+  // Last name exact + nickname → above review threshold but typically below auto-merge
+  // unless an address/email/phone signal is also present. That is the desired behavior.
+  assert.ok(r.confidence >= 0.40 && r.confidence < 0.85);
+  assert.ok(r.reasons.includes('nickname_or_short_form'));
+});
+
+test('matching > Smith Jr. matches Smith (suffix-aware)', () => {
+  const m = require('../server/identity/matching');
+  const r = m.scoreMatch(
+    { given_name: 'John', family_name: 'Smith Jr.' },
+    { given_name: 'John', family_name: 'Smith' },
+  );
+  assert.ok(r.reasons.includes('exact_last_name') || r.reasons.includes('similar_last_name'));
+});
+
+test('matching > address match auto-merges even with different last names', () => {
+  const m = require('../server/identity/matching');
+  const r = m.scoreMatch(
+    { given_name: 'Mary', family_name: 'Escamilla', address_line1: '123 Main Street', city: 'Lima', state: 'OH' },
+    { given_name: 'John', family_name: 'Torre',     address_line1: '123 Main St',     city: 'Lima', state: 'OH' },
+  );
+  assert.ok(r.confidence >= 0.85);
+  assert.ok(r.reasons.includes('address_match_household'));
+});
+
+test('matching > "Timothy & Mary" matches Timothy', () => {
+  const m = require('../server/identity/matching');
+  const r = m.scoreMatch(
+    { given_name: 'Timothy & Mary', family_name: 'Smith' },
+    { given_name: 'Timothy',         family_name: 'Smith' },
+  );
+  assert.ok(r.reasons.includes('exact_first_name') || r.reasons.includes('nickname_or_short_form'));
+});

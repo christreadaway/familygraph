@@ -66,12 +66,15 @@ function build({ db, secrets, thresholds }) {
     const usedHeaders = _collectUsedHeaders(out.mapping);
     const unmappedColumns = headers.filter(h => !usedHeaders.has(h));
     res.json({
-      source: out.source || source || 'csv',
+      source: out.source || out.platform || source || 'csv',
+      platform: out.platform || null,
       rows: out.rows.slice(0, 10),
       mapping: out.mapping,
       row_count: out.rows.length,
       canonical_preview: out.canonical.slice(0, 10),
       headers,
+      mapping_warning: out.mapping_warning || null,
+      summary_rows_dropped: out.summary_rows_dropped || 0,
       diagnostic: {
         rows_with_persons: rowsWithPersons,
         rows_with_family_name: rowsWithFamilyName,
