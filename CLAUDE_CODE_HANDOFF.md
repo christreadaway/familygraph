@@ -1,13 +1,16 @@
 # Family Graph — Claude Code Handoff
 **Theme:** Institutional · **Chrome:** native per OS (macOS traffic lights on Mac, Windows controls on Windows) · **Surface:** local desktop app (Tauri or Electron) on macOS + Windows.
 
-> **Status (2026-04-28):** The web dashboard at `http://127.0.0.1:3500/`
-> has been migrated to this handoff. The Tauri/Electron desktop shell
-> (§5) is the next milestone; everything below the title bar — tokens,
-> components, status rail, posture pills, identifier hues — is live and
-> applies regardless of how the shell is wrapped. See §10 below for the
-> current acceptance state and `session_notes.md` for the migration
-> entry.
+> **Status (2026-04-29):** The web dashboard at `http://127.0.0.1:3500/`
+> is live. The v9 backend port (see `session_notes.md`) brought in the
+> full missionIQ ingestion + matching logic plus a new external
+> identity API at `/api/identity/{match,resolve,feedback}`. The
+> ColumnMapper UI for unmapped imports is shipped; the Conflicts view
+> still needs a `resolution_notes` text input and the Family Detail
+> view still needs employer/title/do_not_contact/not_living_together
+> fields. The Tauri/Electron desktop shell (§5) is the next major
+> milestone; everything below the title bar applies regardless of how
+> the shell is wrapped.
 
 This document is the contract between design and engineering. Read it once end-to-end before touching the dashboard. The companion design system PDF (`Family Graph — Institutional Design System.pdf`) is the visual reference; this file is the build instructions.
 

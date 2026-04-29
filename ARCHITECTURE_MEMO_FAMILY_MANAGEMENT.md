@@ -88,6 +88,9 @@ Family Graph exposes an HTTP API on `localhost:3500`. Apps authenticate via a sh
 
 | Endpoint | Auth | Use case |
 |---|---|---|
+| `POST /api/identity/match` | required | App previews what FG WOULD do for a record (no write). Returns `{ action, confidence, reasons, definitive, candidate, thresholds }`. |
+| `POST /api/identity/resolve` | required | App commits the verdict for a record. FG runs the full resolver and writes auto-merge / conflict / new. Returns `{ code, action, score, reasons, conflict? }`. App stores its domain data keyed by `code`. |
+| `POST /api/identity/feedback` | required | App records `same` or `different` for a pair. `different` becomes a sticky non-match — FG stops re-flagging that pair on subsequent imports. |
 | `POST /api/sanitize` | optional | App ingests a file. Sends raw records to Family Graph. Receives identifiers back. |
 | `POST /api/desanitize` | required | App receives an AI response containing pseudonyms. Restores names for display. |
 | `GET /api/families/:id` | required | App needs to display a family's real details (e.g., when showing donor name). |
@@ -96,6 +99,39 @@ Family Graph exposes an HTTP API on `localhost:3500`. Apps authenticate via a sh
 | `GET /api/people/:id/safe` | none | App needs pseudonymous person details. |
 | `POST /api/audit/external-export` | required | App logs that its user consented to exporting PII. Records what left the machine. |
 | `GET /api/health` | none | App checks if Family Graph is responsive before making other calls. |
+
+### The identity match/resolve pattern (the back-and-forth)
+
+This is how missionIQ / ParentPoint bring in their own data while
+delegating identity to Family Graph:
+
+```
+┌─ missionIQ ─────────────┐         ┌─ Family Graph ──────────┐
+│ ingest donation row:    │         │                         │
+│ { name, email, amount } │         │                         │
+│                         │         │                         │
+│ POST /api/identity/match├────────▶│ score against registry  │
+│                         │         │                         │
+│      { action, code }   │◀────────┤                         │
+│                         │         │                         │
+│ if action='auto_merge'  │         │                         │
+│   POST .../resolve      ├────────▶│ commit                  │
+│                         │◀────────┤  return { code }        │
+│                         │         │                         │
+│ if action='review'      │         │                         │
+│   show user "could be   │         │                         │
+│   <candidate> — same?"  │         │                         │
+│   POST .../feedback     ├────────▶│ store sticky decision   │
+│                         │         │                         │
+│ store donation keyed    │         │                         │
+│ by FG person code       │         │                         │
+└─────────────────────────┘         └─────────────────────────┘
+```
+
+Family Graph's role is purely identity. missionIQ keeps owning
+donations, engagement events, in-kind gifts, and donor research notes
+— it just keys them by FG's `p_*` / `f_*` codes instead of maintaining
+its own person/family tables.
 
 ---
 

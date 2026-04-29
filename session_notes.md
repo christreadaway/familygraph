@@ -1115,4 +1115,143 @@ cross-app integration plan.
 
 ---
 
+## v9 — Comprehensive missionIQ port: imports, matching, external API, profile fields
+
+**The trigger.** Operator imports a 370-row Google Sheet. Family Graph
+preview cheerfully reports "370 rows" but creates zero families/persons.
+Root cause: the heuristic mapper recognized none of the sheet's column
+headers, so applyMapping returned canonical rows with `persons: []`
+across the board, and the import path silently inserted source_records
+without ever creating people. The operator had no way to see this
+before clicking Import — there was no diagnostic, no warning, no count
+of "rows that produced people." The user (correctly) said "do better"
+and pointed at the missionIQ repo as the gold-standard reference.
+
+**The instruction.** "Go back into the missionIQ repo and look at how
+it imported the records and presented conflicts in the UI and do a
+MUCH more comprehensive job pulling out that code and adapting it
+here." Followed by: "look closely at the logic that determined if two
+records needed to be automatically combined or if the user needed to
+be prompted to resolve." Then: "we will need a way for those apps to
+bring in their data but call on ours for matching and perform a back
+and forth." Then: "improve upon what we built in missionIQ. Look at
+the family profiles in missionIQ. I never liked the UI but a lot of
+the data points were important to collect."
+
+The missionIQ repo at `github.com/christreadaway/missioniq` was opened
+read-only via WebFetch + raw.githubusercontent.com. Five files
+mattered: `server/services/ingestion.js` (auto-mapper, alias
+dictionary, date/phone/email normalization, summary-row filter),
+`server/identity/resolver.js` (the 2,181-line scoring engine with
+suffix stripping, nickname groups, address abbreviation handling,
+compound-name `Timothy & Mary` splitting, cross-state veto),
+`server/database/schema.js` (contacts/families/children with employer
+/title/do_not_contact/not_living_together), `server/routes/conflicts.js`
+and `client/src/pages/Upload.jsx`.
+
+**What got vendored, in five phases.**
+
+### Phase 1 — better imports
+
+`server/sources/csv.js` rewritten end-to-end. The HEADER_HEURISTICS
+dictionary expanded from ~20 entries to ~250 alias variants (parent
+1/2 + p2/p1, contact 2, spouse, husband, wife, partner, secondary
+contact, emergency contact, HOH, head of household, all the
+diminutives and cross-language variants). New `headerMatchScore`
+scores each (header, alias) pair via word-boundary regex (100 exact,
+80/70 word-as-substring, 50 fuzzy fallback ≥4 chars). New
+`autoMapFlat` does GLOBAL best-match assignment so "Child First Name"
+wins over "First Name" rather than getting stolen by the generic.
+
+`normalize.js` extended with `splitEmails`, `splitPhones`
+(concatenated `+13143...+13145...` splits into two 10-digit values),
+`normalizeDate` (Excel serial numbers — *critical* for Sheets
+exports — plus `MM/DD/YYYY`, 2-digit year, ISO, textual), and the
+summary-row filter that drops "Total" / "Grand Total" / "Subtotal".
+
+The preview API now returns `headers`, `mapping_warning`,
+`summary_rows_dropped`, `platform`, and a `diagnostic` block with
+`rows_with_persons / rows_with_address / rows_blank / total_persons /
+unmapped_columns`. The dashboard surfaces `rows_with_persons` of N
+prominently, disables the Import button when zero, and auto-opens a
+column-mapper editor when the auto-mapper failed.
+
+### Phase 2 — matching primitives + resolver upgrade
+
+`server/identity/matching.js` (new, ~470 lines) ports the missionIQ
+scoring primitives in pure-function form: `normalize`, `stripSuffix`,
+`nameSimilarityIgnoringSuffix`, `normalizeAddress`,
+`addressSimilarity`, `stripUnit`, `normalizeState`, `addressesConflict`,
+`splitEmails`, `splitPhones`, `NICKNAME_GROUPS`, `areNicknames`,
+`isPrefixMatch`, `firstNameMatchesCompound`, `scoreMatch`.
+
+The resolver was rewritten to use this. `findCandidates` now blocks on
+every deterministic signal we can hash: family-name (suffix-aware),
+every email, every phone, and the full address. The decision gate:
+**definitive** (exact email/phone, name+DOB, address+name) →
+auto_merge; confidence ≥ thresholds.autoMerge → auto_merge;
+≥ thresholds.review → enqueue; otherwise → create new.
+
+**Critical correctness fix vs missionIQ.** missionIQ treats an exact
+address match as definitive on its own. That's wrong for a household
+registry — Mary Escamilla and John Torre at the same address are a
+couple, not duplicates. Family Graph treats address as definitive
+only when paired with a name overlap. When names diverge, address
+drives FAMILY-level attachment but the persons stay distinct.
+
+`enc.normalizeAddress` extended to expand "St" → "Street" before
+hashing, so `123 Main St` and `123 Main Street` collide on `norm_hash`
+and cross-import dedup actually works.
+
+Threshold recalibration: defaults are now `(autoMerge: 0.85,
+review: 0.30)`. Lower review means even surname-only or
+phonetic-variant matches surface for operator review — FG errs on the
+side of asking.
+
+### Phase 2c — sticky decisions
+
+`conflicts.resolution_notes` captures the operator's free-form WHY
+alongside the existing status WHAT.
+`conflicts.hasStickyNonMatch(left, right)` returns true for pairs with
+a previous `rejected` or `dismissed` decision; the resolver checks
+this before opening a new conflict, so re-imports never re-flag a
+pair the operator already triaged.
+
+### Phase 3 — external matching API
+
+`server/api/identity.js` exposes the back-and-forth: `POST
+/api/identity/match` (peek), `POST /api/identity/resolve` (commit),
+`POST /api/identity/feedback` (record `same` or `different`, with
+`different` becoming sticky). Input shape accepts both flat
+(`first_name`, `email`) and structured (`given_name`, `emails[]`,
+`address: {...}`) keys so missionIQ / ParentPoint pass through their
+native rows.
+
+### Phase 4 — richer profile fields
+
+`persons` table grew `employer_ct`, `title_ct`, `do_not_contact` flag,
+`do_not_contact_reason_ct`, `not_living_together` flag — all from
+missionIQ's contacts shape. Multi-address / multi-email / multi-phone
+were already well-modelled.
+
+### Phase 5 — docs + tests
+
+`test_suite.md` is new — a canonical map of all 202 tests across the
+24 test files. README + ARCHITECTURE_MEMO synced.
+
+**By the numbers.** 9 commits, ~2,400 lines net added. 3 new
+migrations (0007, 0008, 0009). 1 new module + 1 new API surface + 1
+new test file. 25 new tests; 202 total, all passing. Client builds
+clean.
+
+**The throughline.** v9 closed the gap between "Family Graph is
+conceptually inspired by missionIQ" and "Family Graph runs the
+literal missionIQ logic, with the architectural mistakes corrected."
+The next session should focus on the dashboard UI — the
+ColumnMapper exists but the conflict-queue view doesn't expose
+`resolution_notes` yet, and family detail hasn't been updated to show
+employer/title/do_not_contact.
+
+---
+
 *End of session notes*

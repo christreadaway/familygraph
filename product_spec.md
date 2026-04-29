@@ -217,6 +217,9 @@ calling app for audit purposes (defaults to `unknown_app`).
 | `POST` | `/api/import/fetch-sheet` | fetch a Google Sheets URL as CSV. Body: `{url}`. Returns `{content, content_type, byte_len, final_url, source_ref}`. Strict allowlist: host must be `docs.google.com`; redirects must stay on `*.google.com` / `*.googleusercontent.com`. Audited as `sheet_fetch`. |
 | `GET` | `/api/imports` | list past import runs (filter `?category=...`) |
 | `GET` | `/api/imports/:code` | one run + the affected family/person/address codes |
+| `POST` | `/api/identity/match` | external-app peek. Body: `{record}`. Returns `{action, confidence, reasons, definitive, candidate, thresholds}`. No write. |
+| `POST` | `/api/identity/resolve` | external-app commit. Body: `{record, source?, source_ref?}`. Runs the resolver, returns `{code, action, score, reasons, conflict?}`. The calling app keys its domain data by `code`. |
+| `POST` | `/api/identity/feedback` | external-app same/different decision. Body: `{left_code, right_code, decision: 'same'\|'different', winner_code?, notes?}`. `'different'` becomes a sticky non-match (suppresses future re-flagging). |
 
 Aliases are followed transparently: `GET /api/families/:loser` returns the
 surviving family's data with the surviving code in `family.code`.
@@ -225,18 +228,78 @@ surviving family's data with the surviving code in `family.code`.
 
 ## Identity resolver
 
-- **Blocking:** family-name HMAC. Falls back to given-name HMAC if no surname match.
-- **Score (per-person):** weighted sum of name + DOB similarity. Levenshtein-normalized similarity per field.
-- **Decisions:**
-  - score ≥ `autoMerge` (default 0.92) → attach to existing person; fill missing fields if any.
-  - score ≥ `review` (default 0.7) → create new person + open conflict-queue row.
-  - otherwise → create new person.
-- **Family attachment:** if 50%+ of incoming persons already belong to a single existing family, attach there; otherwise create a new family.
-- `rescorePerson(code)` re-runs the scorer for a single person — used for rescoring after manual edits.
+The resolver lives in `server/identity/resolver.js` and uses the pure
+matching primitives in `server/identity/matching.js` (vendored from
+missionIQ; see `session_notes.md` v9). The decision flow:
 
-The thresholds are tunable per env var or per call. Resolution rules
-(`resolution_rules` table) are wired into the schema for operator overrides;
-the rule UI is v1.x.
+**1. Candidate gathering (`findCandidates`).** Block on every
+deterministic signal we can hash:
+- Family-name HMAC (suffix-aware: also tries the suffix-stripped base
+  so `Smith Jr.` finds `Smith`).
+- Each email's HMAC (joined through `person_emails`).
+- Each phone's HMAC (each 10-digit number from `splitPhones` —
+  concatenated `+13143...+13145...` becomes two hashes).
+- Address HMAC (joined through `family_addresses`).
+- Last-resort: given-name HMAC, only when nothing above hit.
+
+Each candidate is enriched with its full email/phone/address history
+so the scorer compares multi-value fields against multi-value
+candidates.
+
+**2. Scoring (`matching.scoreMatch`).** For each candidate:
+- **Definitive signals (auto-merge at 0.95):**
+  - Exact email
+  - Exact phone
+  - Exact name + exact DOB (promoted to definitive because child
+    rosters frequently lack email/phone)
+  - Address line1 ≥ 0.85 similarity AND a name overlap
+- **Definitive vetoes** (cap below auto-merge):
+  - Different states
+  - Address similarity < 0.5
+  - Different zips AND address-similarity < 0.7
+- **Soft additive** (capped at 1.0):
+  - Last name suffix-aware: exact +0.30, similar +0.20
+  - First name compound/nickname/prefix-aware: exact +0.20, nickname
+    +0.18, similar +0.10, phonetic +0.05
+  - DOB exact +0.20 (bonus on top of definitive promotion)
+  - Address similar (>0.65) +0.15
+  - Zip match +0.05/+0.10
+  - City match +0.05
+
+**3. Decision gate (`decideMatch`).** Default thresholds:
+- definitive OR confidence ≥ `autoMerge` (default 0.85) → attach (auto-merge)
+- ≥ `review` (default 0.30) → enqueue conflict
+- otherwise → create new person
+
+Thresholds are tunable per institution via the `profiles` table.
+`resolution_rules` (operator-curated) are applied as a final adjustment
+to each candidate's score before the gate fires.
+
+**4. Sticky decisions.** Before opening a new conflict, the resolver
+checks `conflicts.hasStickyNonMatch(left, right)`. If the operator (or
+an external app via `/api/identity/feedback`) previously decided the
+pair is "different" (status `rejected` or `dismissed`), no new
+conflict is opened. The decision survives forever unless explicitly
+cleared. The `resolution_notes` column captures the operator's
+free-form reason.
+
+**5. Family attachment (`resolveOrCreateFamily`).** Two paths:
+- Person-overlap: if ≥50% of incoming persons already belong to one
+  existing family, attach there.
+- Address-overlap: if no person overlap but the incoming address
+  matches an existing family's primary address (line1 required to
+  avoid false positives on shared cities), attach there. This is the
+  "blended household / spouse keeping maiden name" case — same home,
+  different first name, same family.
+
+`rescorePerson(code)` re-runs the scorer for a single person — used
+after manual edits.
+
+**Critical correctness note.** missionIQ collapses two persons with
+unrelated first names at the same address into one person. Family
+Graph does NOT — Mary Escamilla and John Torre at 123 Main St are a
+couple, not duplicates. Address only becomes a person-merge signal
+when paired with a name overlap; otherwise it's a family signal.
 
 ---
 
@@ -379,7 +442,8 @@ client/src/
 
 ## Test surface
 
-`npm test` runs ~177 cases across:
+`npm test` runs **202 cases** (see `test_suite.md` for the full map)
+across:
 
 - `tests/identifiers.test.js` — code generation, validation, prefix disambiguation
 - `tests/encryption.test.js` — round-trip, tamper detection, IV randomness, normalize, HMAC determinism + key-binding
