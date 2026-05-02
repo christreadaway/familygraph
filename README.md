@@ -307,7 +307,17 @@ The full route table is in [`product_spec.md`](./product_spec.md#api-contract).
 In addition to the file-based ingest paths, Family Graph can pull rosters
 and household records directly from FACTS (school) and Ministry Platform
 (parish) on a schedule. Credentials are stored encrypted with the
-existing `dataKey`; the dashboard never displays plaintext.
+existing `dataKey`; neither the dashboard nor `/api/settings` ever
+displays plaintext (the settings endpoint reduces each ciphertext field
+to a `_set: true` flag).
+
+Configure from the dashboard at **Settings → Connectors** (or
+`/settings/connectors`). Each connector has a card with status pill +
+last-run timestamp, and a detail page where the operator pastes
+credentials, picks a schedule, runs Test connection, and triggers
+manual syncs. The status rail at the top of every screen shows a
+colored dot per configured connector — green/blue/red for ok / untested
+/ error.
 
 - `GET /api/connectors` — list configured connectors with last-run status.
 - `GET /api/connectors/:name` — detailed status (`facts`, `ministry_platform`).

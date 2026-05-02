@@ -89,6 +89,7 @@ async function runSync(db, secrets, thresholds, name, { trigger = 'manual', acto
         actor: actor || `connector:${name}`,
         category: reg.category,
         tags: ['connector', trigger],
+        trigger,
       });
       importRunCode = result.importRunCode;
       totals = result.totals;

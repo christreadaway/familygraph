@@ -195,8 +195,8 @@ function importBatch(db, secrets, thresholds, canonicalRows, ctx = {}) {
     ? null
     : (Array.isArray(ctx.tags) ? JSON.stringify(ctx.tags) : String(ctx.tags));
   db.prepare(
-    `INSERT INTO import_runs (code, source, source_ref, category, tags, rows, actor)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO import_runs (code, source, source_ref, category, tags, rows, actor, "trigger")
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     importRunCode,
     ctx.source || 'manual',
@@ -205,6 +205,7 @@ function importBatch(db, secrets, thresholds, canonicalRows, ctx = {}) {
     tagsJson,
     canonicalRows.length,
     ctx.actor || 'import',
+    ctx.trigger || 'file',
   );
 
   const totals = {

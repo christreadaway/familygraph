@@ -590,10 +590,63 @@ specified, with a few small deviations the implementing pass discovered:
    sync pipeline without touching the network. Production code never
    passes the parameter, so there's no runtime cost.
 
-Test coverage at end of Phase 1: 247 tests pass (was 206), covering
+Test coverage at end of Phase 1: 253 tests pass (was 206), covering
 credential round-trip, token caching, 401 retry, pagination, FACTS+MP
 canonicalization, end-to-end sync against mocked vendor APIs, concurrent-
 sync prevention, scheduler due-detection, cross-source auto-merge on
-exact-email evidence, and cross-source conflict generation when evidence
-is soft. The full test suite (`npm test`) is green on Node 20+.
+exact-email evidence, cross-source conflict generation when evidence is
+soft, the `/api/settings` filter that prevents connector ciphertext from
+ever surfacing on that endpoint, and the credential.set / credential.deleted
+log emission with redaction. The full test suite (`npm test`) is green
+on Node 20+.
+
+## Appendix B — Phase 1 follow-through (after the partial-build review)
+
+Items called out in PRD §4 / §11 that were completed in the second pass:
+
+- **Dashboard UI.** `client/src/views/Connectors.jsx` (list + detail
+  views) and `client/src/components/ConnectorCard.jsx` are built and
+  wired into the existing Settings flow. Operator can configure both
+  connectors entirely from the browser:
+    - `/settings/connectors` — list of cards, status pills, last-sync
+      timestamps, Configure buttons.
+    - `/settings/connectors/:name` — full configuration, including
+      Test connection, Run sync now, schedule selector, enable toggle,
+      delete-credentials with confirm, and a recent-runs table that
+      links each row to its `import_runs` detail page.
+  Sidebar gains a `Connectors` entry under the Posture group. The
+  existing Settings page surfaces a banner pointing to the new panel,
+  and adds the operator-email field used by the failure-notification
+  path.
+- **Status rail posture indicators.** `client/src/components/StatusRail.jsx`
+  now shows a colored dot per configured connector — green if the most
+  recent sync succeeded, blue if untested, red if the most recent run
+  errored. Hover text shows the failure reason. `GET /api/health`
+  returns the data via a new `connectors` array (empty when none are
+  configured). PRD §4.3.
+- **`import_runs.trigger` column.** Migration 0010 was extended to add
+  `trigger TEXT` to `import_runs`. `importBatch` accepts `ctx.trigger`
+  (defaults to `file`); the connector path passes `manual` /
+  `scheduled` / `cli`. The Imports list view renders the new column as
+  a colored pill so the operator can tell connector runs apart from
+  file uploads at a glance. PRD §4.2.
+- **`GET /api/settings` no longer leaks connector ciphertext.** The
+  PII surface filter in `server/api/settings.js` reduces every
+  `connector.<name>.<field>_ct` row to a `_set: true` flag (never the
+  base64 blob) before responding. Direct `PUT` against any
+  `connector.*` key is rejected with a 400 pointing the caller at
+  `/api/connectors/<name>`. PRD §5.1.
+- **`connector.credential.set` and `connector.credential.deleted` log
+  events.** Both events are emitted by `server/connectors/credentials.js`
+  using the structured logger, in addition to the existing audit
+  records. The log redactor was extended to strip `client_id`,
+  `client_secret`, `access_token`, `refresh_token`, and `bearer` so
+  the event carries no plaintext. PRD §11.1, §11.2.
+- **`operator_email` setting.** Added to the settings allow-list and
+  surfaced in the dashboard's Settings page. `connectors/index.js`
+  reads it when sending the three-failures-in-a-row notification.
+
+This is the full PRD as built. The remaining items in §8 (write-back to
+FACTS / MP, multi-tenancy, custom-field mapping editor, webhook
+receivers) are explicitly deferred and unchanged.
 

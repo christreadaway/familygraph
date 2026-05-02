@@ -20,6 +20,7 @@ import Settings from './views/Settings.jsx';
 import Search from './views/Search.jsx';
 import ExportView from './views/Export.jsx';
 import Notifications from './views/Notifications.jsx';
+import { ConnectorsList, ConnectorDetail } from './views/Connectors.jsx';
 
 const REASON_HINT = {
   no_bearer: 'No token sent. Paste your Bearer token below.',
@@ -179,6 +180,7 @@ export default function App() {
             <NavItem to="/profiles">Profiles</NavItem>
             <NavItem to="/keys">API keys</NavItem>
             <NavItem to="/settings">Settings</NavItem>
+            <NavItem to="/settings/connectors">Connectors</NavItem>
           </nav>
           <div className="sidebar-footer">
             {health ? (
@@ -245,6 +247,8 @@ export default function App() {
             <Route path="/profiles" element={<Profiles />} />
             <Route path="/keys" element={<Keys />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/settings/connectors" element={<ConnectorsList />} />
+            <Route path="/settings/connectors/:name" element={<ConnectorDetail />} />
           </Routes>
           <footer
             style={{

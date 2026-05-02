@@ -61,6 +61,23 @@ export default function StatusRail() {
         <span>actor=<span style={{ color: 'var(--ink)' }}>dashboard</span></span>
       </span>
       <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 12, alignItems: 'center' }}>
+        {(health?.connectors || []).map(c => {
+          // PRD §4.3: green dot if last sync succeeded, red dot if it
+          // errored. Only render connectors that are configured at all
+          // (the API only includes those — see api/health.js).
+          const colorVar = c.last_status === 'ok' ? 'var(--c-loopback)'
+                         : c.last_status === 'untested' ? 'var(--c-encrypted)'
+                         : 'var(--c-pii)';
+          const tip = c.last_reason
+            ? `${c.name}: ${c.last_status} — ${c.last_reason}`
+            : `${c.name}: ${c.last_status}`;
+          return (
+            <span key={c.name} className="faint" title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span className="dot" style={{ background: colorVar }} />
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{c.name === 'ministry_platform' ? 'mp' : c.name}</span>
+            </span>
+          );
+        })}
         {profile && <span className="faint">profile={profile}</span>}
         {counts && (
           <span className="faint tnum">

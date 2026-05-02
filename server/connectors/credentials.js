@@ -15,6 +15,7 @@
 
 const enc = require('../crypto/encryption');
 const audit = require('../audit');
+const log = require('../log');
 
 // Connectors recognised by the registry. Anything else is rejected at the
 // API boundary. Adding a connector means: register here, add a module under
@@ -157,6 +158,7 @@ function set(db, secrets, name, payload, opts = {}) {
       actor,
       metadata: { connector: name, fields: updated },
     });
+    log.info('connector.credential.set', { connector: name, actor, fields: updated });
   }
   return describe(db, secrets, name);
 }
@@ -176,6 +178,7 @@ function clear(db, secrets, name, opts = {}) {
     actor: opts.actor || 'operator',
     metadata: { connector: name },
   });
+  log.info('connector.credential.deleted', { connector: name, actor: opts.actor || 'operator' });
   return true;
 }
 

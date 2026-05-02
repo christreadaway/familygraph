@@ -30,8 +30,19 @@ exports.up = function up(db) {
     CREATE INDEX IF NOT EXISTS connector_runs_started_idx   ON connector_runs (started_at);
   `);
 
-  const cols = db.prepare(`PRAGMA table_info(conflicts)`).all().map(r => r.name);
-  if (!cols.includes('metadata')) {
+  const conflictCols = db.prepare(`PRAGMA table_info(conflicts)`).all().map(r => r.name);
+  if (!conflictCols.includes('metadata')) {
     db.exec(`ALTER TABLE conflicts ADD COLUMN metadata TEXT`);
+  }
+
+  // PRD §4.2: imports log gains a `trigger` field — `scheduled`, `manual`,
+  // `cli`, or `file` — so the operator can tell at a glance whether a run
+  // was a CSV upload vs. a connector sync vs. a CLI invocation. Existing
+  // file-based runs (pre-0010) are tagged `file` retroactively so the
+  // column never displays NULL.
+  const importCols = db.prepare(`PRAGMA table_info(import_runs)`).all().map(r => r.name);
+  if (!importCols.includes('trigger')) {
+    db.exec(`ALTER TABLE import_runs ADD COLUMN trigger TEXT`);
+    db.exec(`UPDATE import_runs SET trigger = 'file' WHERE trigger IS NULL`);
   }
 };

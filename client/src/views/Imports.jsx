@@ -63,6 +63,7 @@ export function ImportsList() {
             <tr>
               <th>When</th>
               <th>Source</th>
+              <th>Trigger</th>
               <th>Code</th>
               <th>Category</th>
               <th>Tags</th>
@@ -81,6 +82,11 @@ export function ImportsList() {
                     <span className="mono">{r.source}</span>
                   </span>
                 </td>
+                <td>
+                  <Pill state={r.trigger === 'scheduled' ? 'encrypted' : r.trigger === 'manual' || r.trigger === 'cli' ? 'loopback' : 'muted'}>
+                    {r.trigger || 'file'}
+                  </Pill>
+                </td>
                 <td><IdCode code={r.code} type="family" /></td>
                 <td>{r.category ? <Pill state="muted">{r.category}</Pill> : <span className="muted">—</span>}</td>
                 <td>
@@ -93,7 +99,7 @@ export function ImportsList() {
                 <td><Link to={`/imports/${r.code}`}>open →</Link></td>
               </tr>
             ))}
-            {items.length === 0 && <tr><td colSpan={8} className="muted">No imports yet.</td></tr>}
+            {items.length === 0 && <tr><td colSpan={9} className="muted">No imports yet.</td></tr>}
           </tbody>
         </table>
       </div>
