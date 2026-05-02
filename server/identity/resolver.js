@@ -33,6 +33,31 @@ const { newCode } = require('../crypto/identifiers');
 // from the resolver directly.
 const { similarity, scoreMatch } = matching;
 
+// Cross-source conflict detection. PRD §5.6: when a conflict is opened
+// and the candidate's most recent provenance source differs from the
+// incoming source, mark `cross_source: true` so the operator can filter
+// the conflicts queue to "school + parish" pairs. Returns null when the
+// information isn't available (no incoming source recorded, or the
+// candidate has no provenance), in which case the conflict is stored
+// with no metadata.
+function _crossSourceMetadata(db, candidateCode, incomingSource) {
+  if (!incomingSource) return null;
+  const row = db.prepare(
+    `SELECT sr.source AS source
+       FROM provenance p
+       JOIN source_records sr ON sr.code = p.source_code
+      WHERE p.entity_code = ?
+      ORDER BY sr.imported_at DESC
+      LIMIT 1`
+  ).get(candidateCode);
+  if (!row || !row.source) return null;
+  if (row.source === incomingSource) return null;
+  return {
+    cross_source: true,
+    sources: [row.source, incomingSource].sort(),
+  };
+}
+
 // ---------- candidate enrichment ----------
 
 // Decrypt a person row into the loose record shape that matching.scoreMatch
@@ -309,10 +334,15 @@ function resolveOrCreatePerson(db, secrets, thresholds, incoming, opts = {}) {
       };
     }
     const conflictCode = newCode('conflict');
+    const meta = _crossSourceMetadata(db, best.candidate.code, opts.source || null);
     db.prepare(
-      `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons)
-       VALUES (?, 'person', ?, ?, ?, ?)`
-    ).run(conflictCode, newPerson, best.candidate.code, decision.confidence, JSON.stringify(decision.reasons));
+      `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons, metadata)
+       VALUES (?, 'person', ?, ?, ?, ?, ?)`
+    ).run(
+      conflictCode, newPerson, best.candidate.code,
+      decision.confidence, JSON.stringify(decision.reasons),
+      meta ? JSON.stringify(meta) : null,
+    );
     audit.record(db, {
       action: 'resolver_enqueued',
       actor: opts.actor || 'resolver',

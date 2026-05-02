@@ -34,6 +34,8 @@ const buildRelationships = require('./api/relationships');
 const buildNotifications = require('./api/notifications');
 const buildScan = require('./api/scan');
 const buildIdentityApi = require('./api/identity');
+const buildConnectors = require('./api/connectors');
+const connectorScheduler = require('./connectors/scheduler');
 
 // method2scope: chooses one of two scoped middlewares depending on the HTTP
 // method. GET/HEAD use the read middleware; everything else uses the write
@@ -99,6 +101,8 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   // External-app identity API. Sibling apps (missionIQ, ParentPoint) call
   // these endpoints to delegate match/resolve to Family Graph.
   app.use('/api/identity', method2scope(bearerRead, bearerWrite), buildIdentityApi({ db, secrets, thresholds }));
+  app.use('/api/connectors', bearerImport, buildConnectors({ db, secrets, thresholds }));
+  app.use('/api/connector-runs', bearerRead, buildConnectors.buildRunsRouter({ db }));
 
   // Static client (built React UI).
   const clientDir = path.join(__dirname, '..', 'client', 'dist');
@@ -199,6 +203,15 @@ function start() {
     notifyInterval.unref();
   }
 
+  // Connector scheduler. Wakes every 60s, fires due syncs. Disable via
+  // FAMILY_GRAPH_DISABLE_CONNECTORS=1 (mirrors the notify dispatcher).
+  let connectorSched = null;
+  try {
+    connectorSched = connectorScheduler.start(db, secrets, thresholds);
+  } catch (e) {
+    log.error('connector.scheduler.start_failed', { message: e.message, stack: e.stack });
+  }
+
   let watcher = null;
   if (process.env.FAMILY_GRAPH_DISABLE_WATCH !== '1') {
     try {
@@ -220,6 +233,7 @@ function start() {
 
   function shutdown() {
     if (watcher) watcher.close();
+    if (connectorSched && connectorSched.stop) connectorSched.stop();
     server.close(() => process.exit(0));
   }
   process.on('SIGINT', shutdown);

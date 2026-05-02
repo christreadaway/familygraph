@@ -65,6 +65,7 @@ function importRow(db, secrets, thresholds, canonical, ctx = {}) {
     const incoming = canonical.persons[pi];
     const r = resolver.resolveOrCreatePerson(db, secrets, thresholds, incoming, {
       actor: ctx.actor || 'import',
+      source: ctx.source || null,
     });
     personOutcomes.push({ ...r, incoming });
     personCodes.push(r.code);

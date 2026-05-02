@@ -33,6 +33,9 @@ let minLevel = _resolveLevel(process.env.FAMILY_GRAPH_LOG_LEVEL);
 let _logFilePath = null;
 let _redactKeys = new Set([
   'authorization', 'token', 'master', 'secret', 'password',
+  // Connector OAuth credentials. Per PRD §11.2 — connector logs must
+  // never leak vendor credentials even when caller explicitly passes them.
+  'client_id', 'client_secret', 'access_token', 'refresh_token', 'bearer',
   'name', 'first_name', 'last_name', 'given_name', 'family_name',
   'email', 'phone', 'address', 'line1', 'line2', 'dob', 'date_of_birth',
   'plaintext', 'value',

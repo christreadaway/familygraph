@@ -515,3 +515,85 @@ tests/
 ---
 
 *End of PRD. Hand to Claude Code with this file + the existing `product_spec.md` and `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md` as the only required context. No additional briefing needed.*
+
+---
+
+## Appendix A — Phase 1 build notes (as-built deviations)
+
+The Phase 1 build (`server/connectors/*`, migration `0010_connector_runs`,
+`/api/connectors/*` routes, `tests/connectors-*`) lands the PRD as
+specified, with a few small deviations the implementing pass discovered:
+
+1. **`conflicts.metadata` is a real column.** §5.6 stated the cross-source
+   flag would live "in the existing `conflicts.metadata` JSON column — no
+   new database column needed." That column did not in fact exist; the
+   pre-PRD schema only had `reasons`, `resolution_notes`, `decided_by_rule`,
+   etc. Migration `0010_connector_runs` adds `metadata TEXT` to
+   `conflicts` alongside the new `connector_runs` table. The semantics
+   match the PRD: cross-source conflicts get
+   `{ cross_source: true, sources: ['facts_api', 'ministry_platform_api'] }`
+   stored as JSON, queryable via `json_extract`. Any future flag can ride
+   the same column without another migration.
+
+2. **Encryption helpers are `encrypt` / `decrypt`, not `encryptString` /
+   `decryptString`.** The PRD references the latter names, which don't
+   exist. `server/crypto/encryption.js` exports `encrypt(secrets, plaintext)
+   → Buffer` and `decrypt(secrets, blob) → string`. The connectors module
+   wraps these and base64-encodes the ciphertext blob into the existing
+   `settings.value_json` column — no schema change to `settings`, no
+   double-encoding gotchas.
+
+3. **`api_keys` scope name for connector endpoints is `import`.** The PRD
+   says "Bearer token with `import` or `*` scope." `/api/connectors/*` is
+   mounted behind `bearerImport`; `/api/connector-runs` is mounted behind
+   `bearerRead` (the read-only run history is parallel to
+   `/api/imports`). Master token satisfies both.
+
+4. **OneRoster `agents` linkage is the canonical join key.** §5.4 said the
+   FACTS connector "reuses field mappings from `server/sources/facts.js`."
+   The CSV handler joins parents+students by row position (parent_1_*,
+   parent_2_*, plus the student row), which doesn't translate to the API
+   shape. The API connector instead groups by each user's `agents[]`
+   array, falling back to `(familyName, address)` when agents are absent.
+   This is materially better — it resolves siblings into one household
+   even when their address fields drift, and it cleanly handles
+   parent-only rows for parishes that subscribe to OneRoster without a
+   student roster.
+
+5. **Ministry Platform OIDC discovery is not parsed.** The PRD listed
+   `jose` as a possible new dependency for OIDC discovery. In practice MP
+   exposes the token endpoint at the well-known path
+   `<api_base>/oauth/connect/token`, which the connector derives
+   automatically when `oauth_discovery_url` is left blank. No new
+   dependency was added; if a future MP version moves the endpoint or
+   requires JWT validation, that becomes a separate change.
+
+6. **Scheduler uses UTC anchor times, not local time.** §5.7's
+   `daily_2am` / `weekly_sun_2am` schedules fire at 02:00 **UTC**, not
+   local time. Across DST boundaries the run can drift by an hour
+   relative to the operator's wall clock — acceptable for an overnight
+   sync, and sidesteps the surprisingly hard problem of detecting the
+   operator's intended timezone from a server-side daemon.
+
+7. **Failure-notify recipient is the `operator_email` setting.** §5.8
+   specified that three consecutive failures emit a notification to the
+   operator email "configured in Settings." That setting key wasn't yet
+   defined. The connector uses `settings['operator_email']` if present
+   and notifications are enabled; if the operator hasn't set one, the
+   notification is logged but not enqueued. This is a soft dependency —
+   adding the setting to the dashboard is a one-line follow-up that
+   doesn't block the connector from working.
+
+8. **Test injection via `fetchImpl`.** Every connector function accepts an
+   optional `fetchImpl` parameter that defaults to the global `fetch`.
+   This is what lets `tests/connectors-*.test.js` exercise the full
+   sync pipeline without touching the network. Production code never
+   passes the parameter, so there's no runtime cost.
+
+Test coverage at end of Phase 1: 247 tests pass (was 206), covering
+credential round-trip, token caching, 401 retry, pagination, FACTS+MP
+canonicalization, end-to-end sync against mocked vendor APIs, concurrent-
+sync prevention, scheduler due-detection, cross-source auto-merge on
+exact-email evidence, and cross-source conflict generation when evidence
+is soft. The full test suite (`npm test`) is green on Node 20+.
+
