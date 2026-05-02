@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
+import StatPill, { StatPillGrid } from '../components/StatPill.jsx';
 
 const CATEGORY_OPTIONS = [
   { value: '', label: '(none)' },
@@ -32,17 +33,6 @@ function ScanThisImport({ importRunCode }) {
           {' '}<Link to="/conflicts">Open the conflict queue →</Link>
         </div>
       )}
-    </div>
-  );
-}
-
-function StatPill({ label, value, kind }) {
-  return (
-    <div className="panel" style={{ padding: '12px 16px', margin: 0, minWidth: 120 }}>
-      <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 600, color: kind === 'warn' ? 'var(--warn)' : kind === 'action' ? 'var(--accent-2)' : 'inherit' }}>
-        {value}
-      </div>
     </div>
   );
 }
@@ -575,20 +565,7 @@ export default function ImportView() {
               {' · '} <Link to={`/imports/${result.import_run}`}>view full report</Link>
               {' · '} <Link to="/families">browse families →</Link>
             </div>
-            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <StatPill label="Families created" value={result.totals.families_created} kind="action" />
-              <StatPill label="Families attached" value={result.totals.families_attached} />
-              <StatPill label="Persons created" value={result.totals.persons_created} kind="action" />
-              <StatPill label="Persons attached" value={result.totals.persons_attached} />
-              <StatPill label="New conflicts" value={result.totals.conflicts_opened} kind={result.totals.conflicts_opened > 0 ? 'warn' : null} />
-              <StatPill label="Addresses attached" value={result.totals.addresses_attached} />
-              <StatPill label="Emails attached" value={result.totals.emails_attached} />
-              <StatPill label="Phones attached" value={result.totals.phones_attached} />
-              <StatPill label="Memberships opened" value={result.totals.memberships_opened} />
-              {result.totals.rows_skipped_blank > 0 && (
-                <StatPill label="Rows skipped (blank)" value={result.totals.rows_skipped_blank} kind="warn" />
-              )}
-            </div>
+            <StatPillGrid totals={result.totals} />
             {result.totals.conflicts_opened > 0 && (
               <div className="panel warn" style={{ marginTop: 12, marginBottom: 0, background: 'rgba(240,181,81,.08)', borderColor: 'var(--warn)' }}>
                 {result.totals.conflicts_opened} new conflict{result.totals.conflicts_opened === 1 ? '' : 's'} need{result.totals.conflicts_opened === 1 ? 's' : ''} resolution.

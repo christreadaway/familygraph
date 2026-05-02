@@ -93,18 +93,29 @@ function build({ db, secrets, thresholds }) {
     }
   });
 
-  r.post('/:name/sync', async (req, res) => {
+  // POST /api/connectors/:name/sync — kicks off a sync in the background
+  // and returns 202 immediately with the run code. The dashboard polls
+  // /api/connector-runs/:code for live progress and the eventual final
+  // state. Pre-flight failures (bad name, missing credentials, already-
+  // running) are surfaced inline; everything else lives on the
+  // connector_runs row.
+  r.post('/:name/sync', (req, res) => {
     if (!credentials.isValidName(req.params.name)) {
       return res.status(404).json({ error: `unknown connector: ${req.params.name}` });
     }
     try {
-      const out = await registry.runSync(db, secrets, thresholds, req.params.name, {
+      const { run_code } = registry.startSyncBackground(db, secrets, thresholds, req.params.name, {
         trigger: 'manual',
         actor: req.auth?.actor || 'operator',
       });
-      res.status(out.ok ? 200 : 502).json(out);
+      res.status(202).json({ ok: true, run_code, status: 'running' });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      const reason = e.reason || 'http_error';
+      const code = reason === 'config_error' ? 400
+                 : reason === 'already_running' ? 409
+                 : reason === 'unknown_connector' ? 404
+                 : 400;
+      res.status(code).json({ ok: false, reason, error: String(e.message || e) });
     }
   });
 

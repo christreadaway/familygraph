@@ -25,9 +25,24 @@ function start(db, { connector, trigger }) {
   db.prepare(
     `INSERT INTO connector_runs (code, connector, trigger, status, started_at, metadata)
      VALUES (?, ?, ?, 'running', ?, ?)`
-  ).run(code, connector, trigger, now, JSON.stringify({}));
+  ).run(code, connector, trigger, now, JSON.stringify({ phase: 'starting' }));
   log.info('connector.run.started', { connector, trigger, run_code: code });
   return code;
+}
+
+// Merge a partial state into the run's metadata JSON. Used to publish
+// progress (current phase, page counts, etc.) so the dashboard can
+// render a live "students pulled: 100/—" indicator while the request is
+// in flight. Concurrency note: each call is a single UPDATE on a row
+// the caller already owns (only one running row per connector at a
+// time is enforced upstream), so a lock-free merge is safe.
+function updateProgress(db, code, patch) {
+  const row = db.prepare(`SELECT metadata FROM connector_runs WHERE code = ?`).get(code);
+  if (!row) return;
+  let cur = {};
+  try { cur = row.metadata ? JSON.parse(row.metadata) : {}; } catch (_) { cur = {}; }
+  const next = { ...cur, ...patch, updated_at: Date.now() };
+  db.prepare(`UPDATE connector_runs SET metadata = ? WHERE code = ?`).run(JSON.stringify(next), code);
 }
 
 function finish(db, code, { importRun = null, metadata = null } = {}) {
@@ -151,4 +166,5 @@ module.exports = {
   lastSuccessful,
   consecutiveFailures,
   reapStalled,
+  updateProgress,
 };

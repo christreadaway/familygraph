@@ -58,30 +58,54 @@ async function testConnection(db, secrets, name, opts = {}) {
   return out;
 }
 
-// Run a sync end-to-end. The optional `fetchImpl` lets tests inject a
-// mocked fetch without touching the network.
-async function runSync(db, secrets, thresholds, name, { trigger = 'manual', actor = 'operator', fetchImpl = null } = {}) {
+// startRun: synchronous gate that creates the connector_runs row and
+// returns its code. Returns null if the run can't start (unknown
+// connector, missing credentials, already running). Errors that block
+// the caller (config_error, unknown_connector) throw; transient gates
+// (already_running) return a sentinel object for the caller to inspect.
+function startRun(db, secrets, name, { trigger = 'manual' } = {}) {
   const reg = get(name);
   if (!reg) throw _err('unknown_connector', `unknown connector: ${name}`);
-  if (runs.isRunning(db, name)) {
-    return { skipped: true, reason: 'already_running' };
-  }
   if (!credentials.isComplete(db, secrets, name)) {
     throw _err('config_error', 'connector credentials are incomplete');
   }
+  if (runs.isRunning(db, name)) {
+    const e = new Error('a sync is already in progress for this connector');
+    e.reason = 'already_running';
+    throw e;
+  }
+  return runs.start(db, { connector: name, trigger });
+}
 
-  const runCode = runs.start(db, { connector: name, trigger });
-  const deadlineMs = Date.now() + SYNC_DEADLINE_MS;
+// executeRun: the async body of a sync. Caller has already created the
+// connector_runs row via startRun() and holds the runCode. This is
+// split out so the HTTP endpoint can return immediately with the
+// runCode while the work continues in the background — the dashboard
+// polls /api/connector-runs/:code for progress + final state.
+async function executeRun(db, secrets, thresholds, name, runCode, { trigger = 'manual', actor = 'operator', fetchImpl = null } = {}) {
+  const reg = get(name);
   const startedAt = Date.now();
+  const deadlineMs = startedAt + SYNC_DEADLINE_MS;
+
+  // onProgress: writes the current phase + counters into
+  // connector_runs.metadata so the dashboard's poll sees live progress.
+  const onProgress = (phase, details = {}) => {
+    try { runs.updateProgress(db, runCode, { phase, ...(details || {}) }); }
+    catch (_) { /* progress is best-effort; never fail the sync */ }
+  };
 
   try {
+    onProgress('authenticating');
     const creds = credentials.load(db, secrets, name);
     const cursor = creds.last_modified_cursor || null;
-    const { canonical, metadata } = await reg.module.pullCanonical({ creds, cursor, deadlineMs, fetchImpl });
+    const { canonical, metadata } = await reg.module.pullCanonical({
+      creds, cursor, deadlineMs, fetchImpl, onProgress,
+    });
 
     let importRunCode = null;
     let totals = null;
     if (canonical.length > 0) {
+      onProgress('importing', { rows_pulled: canonical.length });
       const cursorIso = new Date().toISOString();
       const result = importPipeline.importBatch(db, secrets, thresholds, canonical, {
         source: reg.sourceTag,
@@ -93,14 +117,16 @@ async function runSync(db, secrets, thresholds, name, { trigger = 'manual', acto
       });
       importRunCode = result.importRunCode;
       totals = result.totals;
-      // Move the cursor only on a successful import.
       credentials.setLastModifiedCursor(db, name, cursorIso);
+    } else {
+      onProgress('importing', { rows_pulled: 0 });
     }
     credentials.setLastSyncAt(db, name, Date.now());
 
     runs.finish(db, runCode, {
       importRun: importRunCode,
       metadata: {
+        phase: 'done',
         ...metadata,
         rows_pulled: canonical.length,
         ...(totals || {}),
@@ -124,7 +150,7 @@ async function runSync(db, secrets, thresholds, name, { trigger = 'manual', acto
     runs.fail(db, runCode, {
       reason,
       status: reason === 'timeout' ? 'timeout' : 'error',
-      metadata: { error_message: String(e.message || e) },
+      metadata: { phase: 'failed', error_message: String(e.message || e) },
     });
     audit.record(db, {
       action: 'connector_sync_error',
@@ -142,15 +168,59 @@ async function runSync(db, secrets, thresholds, name, { trigger = 'manual', acto
   }
 }
 
+// Run a sync end-to-end. The optional `fetchImpl` lets tests inject a
+// mocked fetch without touching the network. This is the synchronous
+// path used by the CLI and tests; the HTTP endpoint uses
+// startSyncBackground for non-blocking behavior.
+async function runSync(db, secrets, thresholds, name, opts = {}) {
+  let runCode;
+  try {
+    runCode = startRun(db, secrets, name, { trigger: opts.trigger || 'manual' });
+  } catch (e) {
+    if (e.reason === 'already_running') return { skipped: true, reason: 'already_running' };
+    throw e;
+  }
+  return executeRun(db, secrets, thresholds, name, runCode, opts);
+}
+
+// startSyncBackground: kick off a sync without awaiting it. Returns the
+// runCode immediately so the HTTP caller can return 202 and let the
+// dashboard poll. Any error during the run lands on the connector_runs
+// row, the same way a synchronous run would record it.
+function startSyncBackground(db, secrets, thresholds, name, opts = {}) {
+  const runCode = startRun(db, secrets, name, { trigger: opts.trigger || 'manual' });
+  // Fire-and-forget. .catch is defensive: executeRun already turns
+  // every error into a connector_runs.status='error' row, but a bug in
+  // the orchestrator itself shouldn't crash the process.
+  Promise.resolve().then(() => executeRun(db, secrets, thresholds, name, runCode, opts)).catch(e => {
+    log.error('connector.background.unhandled', { connector: name, run_code: runCode, message: String(e.message || e) });
+  });
+  return { run_code: runCode };
+}
+
+function _operatorEmail(db) {
+  const opSetting = db.prepare(`SELECT value_json FROM settings WHERE key = 'operator_email'`).get();
+  const to = opSetting ? _parseJson(opSetting.value_json) : null;
+  return (to && typeof to === 'string') ? to : null;
+}
+
 function _maybeNotifyFailures(db, name, reason) {
   try {
+    // PRD §5.9.1: a rate_limited failure is unusual enough that the
+    // operator should be notified on the FIRST occurrence, not after
+    // three. (Vendor enforcement of rate limits would imply we're
+    // pulling more aggressively than expected, or the vendor changed
+    // their published policy — either way, worth surfacing now.)
+    if (reason === 'rate_limited') {
+      _notifyRateLimited(db, name);
+      // Fall through so the 3-in-a-row path still tracks it.
+    }
     const failures = runs.consecutiveFailures(db, name);
     if (failures !== FAILURE_NOTIFY_THRESHOLD) return;
     const cfg = notify.effectiveConfig(db);
     if (!cfg.enabled) return;
-    const opSetting = db.prepare(`SELECT value_json FROM settings WHERE key = 'operator_email'`).get();
-    const to = opSetting ? _parseJson(opSetting.value_json) : null;
-    if (!to || typeof to !== 'string') return;
+    const to = _operatorEmail(db);
+    if (!to) return;
     notify.enqueue(db, {
       kind: 'expired',
       to,
@@ -163,6 +233,29 @@ function _maybeNotifyFailures(db, name, reason) {
     });
   } catch (e) {
     log.warn('connector.notify_skipped', { connector: name, error: String(e.message || e) });
+  }
+}
+
+function _notifyRateLimited(db, name) {
+  try {
+    const cfg = notify.effectiveConfig(db);
+    if (!cfg.enabled) return;
+    const to = _operatorEmail(db);
+    if (!to) return;
+    notify.enqueue(db, {
+      kind: 'expired',
+      to,
+      subject: `[Family Graph] ${name} connector hit a rate limit (HTTP 429)`,
+      text:
+        `The Family Graph ${name} connector received an HTTP 429 from the vendor twice in a row` +
+        ` and aborted the sync to be a polite client.\n\n` +
+        `No partial data was written. The next scheduled sync will run normally.\n\n` +
+        `If 429s become routine, the operator may want to lengthen the schedule (e.g. switch from\n` +
+        `Hourly to Daily) until the vendor confirms a higher rate budget.\n\n` +
+        `Open the dashboard at ${cfg.dashboardUrl}/settings/connectors/${name} to investigate.`,
+    });
+  } catch (e) {
+    log.warn('connector.rate_limit_notify_skipped', { connector: name, error: String(e.message || e) });
   }
 }
 
@@ -182,6 +275,9 @@ module.exports = {
   get,
   testConnection,
   runSync,
+  startSyncBackground,
+  startRun,
+  executeRun,
   SYNC_DEADLINE_MS,
   FAILURE_NOTIFY_THRESHOLD,
 };

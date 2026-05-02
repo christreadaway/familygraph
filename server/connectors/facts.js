@@ -151,7 +151,7 @@ function buildCanonical({ students = [], parents = [] }) {
 // Paginate against /users?role=… until the vendor stops sending more
 // rows. Honours the cursor (dateLastModified) for incremental syncs and
 // caps total wall time at the supplied deadline.
-async function _fetchUsers({ creds, role, cursor = null, deadlineMs = null, fetchImpl = null }) {
+async function _fetchUsers({ creds, role, cursor = null, deadlineMs = null, fetchImpl = null, onProgress = null }) {
   const params = new URLSearchParams();
   params.set('role', role);
   params.set('limit', String(PAGE_SIZE));
@@ -162,6 +162,8 @@ async function _fetchUsers({ creds, role, cursor = null, deadlineMs = null, fetc
   let offset = 0;
   const out = [];
   let pageCount = 0;
+  const phase = role === 'student' ? 'pulling_students' : 'pulling_parents';
+  if (onProgress) onProgress(phase, { [`${role}s_pulled`]: 0, page: 0 });
   while (true) {
     if (deadlineMs && Date.now() > deadlineMs) {
       const e = new Error('connector run exceeded 60-minute wall clock budget');
@@ -182,6 +184,7 @@ async function _fetchUsers({ creds, role, cursor = null, deadlineMs = null, fetc
     const users = (data && (data.users || data.data || [])) || [];
     out.push(...users);
     pageCount += 1;
+    if (onProgress) onProgress(phase, { [`${role}s_pulled`]: out.length, page: pageCount });
     if (users.length < PAGE_SIZE) break;
     offset += users.length;
     if (PAGE_DELAY_MS > 0) await http.sleep(PAGE_DELAY_MS);
@@ -215,9 +218,10 @@ async function testConnection({ creds, fetchImpl = null }) {
 }
 
 // Public: pull the full set of canonical rows. Used by sync().
-async function pullCanonical({ creds, cursor = null, deadlineMs = null, fetchImpl = null }) {
-  const students = await _fetchUsers({ creds, role: 'student', cursor, deadlineMs, fetchImpl });
-  const parents = await _fetchUsers({ creds, role: 'parent', cursor, deadlineMs, fetchImpl });
+async function pullCanonical({ creds, cursor = null, deadlineMs = null, fetchImpl = null, onProgress = null }) {
+  const students = await _fetchUsers({ creds, role: 'student', cursor, deadlineMs, fetchImpl, onProgress });
+  const parents = await _fetchUsers({ creds, role: 'parent', cursor, deadlineMs, fetchImpl, onProgress });
+  if (onProgress) onProgress('canonicalizing', { students_pulled: students.length, parents_pulled: parents.length });
   const canonical = buildCanonical({ students, parents });
   return {
     canonical,

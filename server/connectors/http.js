@@ -75,7 +75,10 @@ async function fetchToken({ connector, tokenUrl, clientId, clientSecret, scope =
   let payload = null;
   try { payload = await resp.json(); } catch (_) { /* leave null */ }
   if (!resp.ok) {
-    const reason = (resp.status === 401 || resp.status === 403) ? 'auth_failed' : 'token_endpoint_error';
+    let reason;
+    if (resp.status === 429) reason = 'rate_limited';
+    else if (resp.status === 401 || resp.status === 403) reason = 'auth_failed';
+    else reason = 'token_endpoint_error';
     log.error('connector.http.auth_failed', { connector, reason, status: resp.status });
     throw _httpError(reason, `token endpoint ${resp.status}: ${(payload && payload.error) || resp.statusText}`);
   }
@@ -104,18 +107,46 @@ async function getAccessToken({ connector, tokenUrl, clientId, clientSecret, sco
   return tok;
 }
 
-// authedFetch: GET (or any verb) the given URL with a Bearer token. On
-// 401, refresh the token once and retry. On any other failure, throw with
-// a structured reason. Returns the parsed JSON body on 2xx.
+// Parse a Retry-After header value. Per RFC 7231 it's either an integer
+// number of seconds or an HTTP-date. We accept either; bad values fall
+// back to a 60-second pause per PRD §5.9.1.
+function _parseRetryAfter(headerValue) {
+  if (!headerValue) return 60;
+  const n = Number(headerValue);
+  if (Number.isFinite(n) && n >= 0) return Math.min(Math.floor(n), 600);
+  const ts = Date.parse(String(headerValue));
+  if (!Number.isFinite(ts)) return 60;
+  const seconds = Math.ceil((ts - Date.now()) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 0) return 60;
+  return Math.min(seconds, 600);
+}
+
+// authedFetch: GET (or any verb) the given URL with a Bearer token.
+//   - 401 → refresh the token once and retry the same request once.
+//   - 429 → respect the Retry-After header (or 60s default), wait, retry
+//     once. A second 429 in a row fails the call with reason
+//     `rate_limited`. PRD §5.9.1.
+//   - 4xx/5xx → throw with a structured reason.
+// Returns the parsed JSON body on 2xx.
 async function authedFetch({
   connector, url, method = 'GET', body = null,
   tokenUrl, clientId, clientSecret, scope = null,
   extraHeaders = {}, fetchImpl = null,
+  // Test hook: replaces the real setTimeout-based wait so the
+  // rate-limit retry path doesn't add real wall-clock seconds to
+  // tests. Production uses sleep() unconditionally.
+  _sleep = null,
 }) {
   const _fetch = fetchImpl || globalThis.fetch;
   if (!_fetch) throw _httpError('fetch_unavailable', 'no fetch implementation');
+  const _waitFor = _sleep || sleep;
   let tok = await getAccessToken({ connector, tokenUrl, clientId, clientSecret, scope, fetchImpl });
-  for (let attempt = 0; attempt < 2; attempt++) {
+
+  let authRefreshed = false;
+  let rateLimitRetried = false;
+  // Cap the number of retry hops so a misbehaving server can't trap us
+  // here. Worst case: 401 → refresh → 429 → wait → retry. 4 hops.
+  for (let hop = 0; hop < 4; hop++) {
     const start = _now();
     let resp;
     try {
@@ -136,12 +167,27 @@ async function authedFetch({
     }
     const dur = _now() - start;
     _logHttp(connector, method, url, resp.status, dur);
-    if (resp.status === 401 && attempt === 0) {
+
+    if (resp.status === 401 && !authRefreshed) {
+      authRefreshed = true;
       tok = await getAccessToken({ connector, tokenUrl, clientId, clientSecret, scope, forceRefresh: true, fetchImpl });
       continue;
     }
     if (resp.status === 401 || resp.status === 403) {
       throw _httpError('auth_failed', `${url} returned ${resp.status}`);
+    }
+    if (resp.status === 429) {
+      if (rateLimitRetried) {
+        // PRD §5.9.1: a second 429 in a row fails the entire sync with
+        // reason rate_limited.
+        log.error('connector.http.rate_limited', { connector, status: 429, retried: true });
+        throw _httpError('rate_limited', `${url} returned 429 twice in a row`);
+      }
+      rateLimitRetried = true;
+      const retryAfterSec = _parseRetryAfter(resp.headers && (resp.headers.get ? resp.headers.get('retry-after') : resp.headers['retry-after']));
+      log.warn('connector.http.rate_limited', { connector, status: 429, retry_after_s: retryAfterSec });
+      await _waitFor(retryAfterSec * 1000);
+      continue;
     }
     if (!resp.ok) {
       let bodyText = '';
@@ -153,8 +199,7 @@ async function authedFetch({
     catch (e) { throw _httpError('parse_error', `parse failed: ${String(e.message || e)}`); }
     return payload;
   }
-  // Should never reach here.
-  throw _httpError('http_error', 'authedFetch fell through retry loop');
+  throw _httpError('http_error', 'authedFetch exhausted retry budget');
 }
 
 function _httpError(reason, message) {

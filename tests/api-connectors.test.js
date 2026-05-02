@@ -226,6 +226,82 @@ test('endpoints reject missing bearer with 401', async () => {
   }
 });
 
+test('POST /api/connectors/:name/sync returns 202 with run_code and writes connector_runs', async () => {
+  const { db, dir } = newDb();
+  const secrets = newSecrets();
+  // Configure FACTS so the pre-flight check passes.
+  const credentials = require('../server/connectors/credentials');
+  credentials.set(db, secrets, 'facts', {
+    api_base_url: 'https://x.test/api', access_token_url: 'https://x.test/token',
+    client_id: 'c', client_secret: 's', enabled: true, schedule: 'hourly',
+  });
+  const app = buildApp({ db, secrets, thresholds: defaultThresholds() });
+  const { server, port } = await listen(app);
+  try {
+    const r = await request(port, {
+      method: 'POST', path: '/api/connectors/facts/sync',
+      headers: { authorization: `Bearer ${secrets.master}` },
+    });
+    assert.equal(r.status, 202);
+    assert.equal(r.body.status, 'running');
+    assert.match(r.body.run_code || '', /^crun_/);
+    // The row exists immediately even though the sync is in flight.
+    const row = db.prepare(`SELECT status FROM connector_runs WHERE code = ?`).get(r.body.run_code);
+    assert.ok(row, 'connector_runs row should exist');
+  } finally {
+    await close(server);
+    db.close();
+    cleanup(dir);
+  }
+});
+
+test('POST /api/connectors/:name/sync returns 409 when one is already running', async () => {
+  const { db, dir } = newDb();
+  const secrets = newSecrets();
+  const credentials = require('../server/connectors/credentials');
+  const runs = require('../server/connectors/runs');
+  credentials.set(db, secrets, 'facts', {
+    api_base_url: 'https://x.test/api', access_token_url: 'https://x.test/token',
+    client_id: 'c', client_secret: 's', enabled: true, schedule: 'hourly',
+  });
+  // Pre-occupy the connector.
+  runs.start(db, { connector: 'facts', trigger: 'manual' });
+
+  const app = buildApp({ db, secrets, thresholds: defaultThresholds() });
+  const { server, port } = await listen(app);
+  try {
+    const r = await request(port, {
+      method: 'POST', path: '/api/connectors/facts/sync',
+      headers: { authorization: `Bearer ${secrets.master}` },
+    });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.reason, 'already_running');
+  } finally {
+    await close(server);
+    db.close();
+    cleanup(dir);
+  }
+});
+
+test('POST /api/connectors/:name/sync returns 400 when credentials incomplete', async () => {
+  const { db, dir } = newDb();
+  const secrets = newSecrets();
+  const app = buildApp({ db, secrets, thresholds: defaultThresholds() });
+  const { server, port } = await listen(app);
+  try {
+    const r = await request(port, {
+      method: 'POST', path: '/api/connectors/facts/sync',
+      headers: { authorization: `Bearer ${secrets.master}` },
+    });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.reason, 'config_error');
+  } finally {
+    await close(server);
+    db.close();
+    cleanup(dir);
+  }
+});
+
 test('GET /api/conflicts?cross_source=true filter works against the JSON column', async () => {
   const { db, dir } = newDb();
   const secrets = newSecrets();

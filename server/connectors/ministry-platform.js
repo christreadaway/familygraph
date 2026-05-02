@@ -112,9 +112,12 @@ function buildCanonical({ households = [], contacts = [], addresses = [] }) {
   return out;
 }
 
-async function _fetchTable({ creds, table, cursor = null, cursorField = null, deadlineMs = null, fetchImpl = null }) {
+async function _fetchTable({ creds, table, cursor = null, cursorField = null, deadlineMs = null, fetchImpl = null, onProgress = null }) {
   const out = [];
   let page = 0;
+  const phase = `pulling_${table.toLowerCase()}`;
+  const counterKey = `${table.toLowerCase()}_pulled`;
+  if (onProgress) onProgress(phase, { [counterKey]: 0, page: 0 });
   while (true) {
     if (deadlineMs && Date.now() > deadlineMs) {
       throw _err('timeout', 'connector run exceeded 60-minute wall clock budget');
@@ -136,8 +139,9 @@ async function _fetchTable({ creds, table, cursor = null, cursorField = null, de
     });
     const rows = Array.isArray(data) ? data : (data && (data.value || data.data || data.items)) || [];
     out.push(...rows);
-    if (rows.length < PAGE_SIZE) break;
     page += 1;
+    if (onProgress) onProgress(phase, { [counterKey]: out.length, page });
+    if (rows.length < PAGE_SIZE) break;
     if (PAGE_DELAY_MS > 0) await http.sleep(PAGE_DELAY_MS);
     if (page > 1000) {
       log.warn('connector.pagination_cap', { connector: 'ministry_platform', table, page });
@@ -165,18 +169,25 @@ async function testConnection({ creds, fetchImpl = null }) {
   return { ok: true, sample_count: rows.length };
 }
 
-async function pullCanonical({ creds, cursor = null, deadlineMs = null, fetchImpl = null }) {
+async function pullCanonical({ creds, cursor = null, deadlineMs = null, fetchImpl = null, onProgress = null }) {
   const households = await _fetchTable({
-    creds, table: 'Households', deadlineMs, fetchImpl,
+    creds, table: 'Households', deadlineMs, fetchImpl, onProgress,
     cursor, cursorField: cursor ? 'Date_Modified' : null,
   });
   const contacts = await _fetchTable({
-    creds, table: 'Contacts', deadlineMs, fetchImpl,
+    creds, table: 'Contacts', deadlineMs, fetchImpl, onProgress,
     cursor, cursorField: cursor ? 'Date_Modified' : null,
   });
   const addresses = await _fetchTable({
-    creds, table: 'Addresses', deadlineMs, fetchImpl,
+    creds, table: 'Addresses', deadlineMs, fetchImpl, onProgress,
   });
+  if (onProgress) {
+    onProgress('canonicalizing', {
+      households_pulled: households.length,
+      contacts_pulled: contacts.length,
+      addresses_pulled: addresses.length,
+    });
+  }
   const canonical = buildCanonical({ households, contacts, addresses });
   return {
     canonical,

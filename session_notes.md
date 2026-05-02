@@ -1389,4 +1389,237 @@ The next session should be Tauri/Electron desktop shell work
 
 ---
 
+## v10 — Live API connectors (FACTS SIS + Ministry Platform)
+
+Two new docs landed in the repo at the start of this session:
+`API_ACCESS_GUIDE.md` (operator walk-through for getting credentials
+from each vendor) and `PRD_LIVE_CONNECTORS.md` (the spec). The brief
+was "build against these — test comprehensively, fix anything broken,
+update the .md files." Then expanded mid-session: build the whole
+PRD including the React UI, achieve parity with the file-import
+experience, surface live progress as the sync runs, add a §5.9.1
+adaptive 429 backoff with operator notification, and from now on
+always update these notes.
+
+**Shape of the change.** Family Graph already had a robust file
+ingest path (CSV / Excel / Google Sheets / folder-watch) that flowed
+every row through `identity/import.importBatch` → resolver →
+conflicts queue. The connectors are two new "data sources" sitting
+alongside the file handlers, calling vendor REST APIs on a schedule
+and emitting the same canonical `{ family, persons[], address }`
+shape the existing pipeline already consumed. Nothing about the
+identity contract changes — the connectors are an alternate entry
+point, not a parallel pipeline.
+
+**Why the file-fallback wording matters.** The PRD is explicit that
+API and file ingest are co-equal at all times. Real Catholic schools
+and parishes don't always have IT staff who can keep API credentials
+fresh; if FACTS rotates a secret, the operator needs to be able to
+drop a CSV in `~/.family-graph/watch` the same day. The dashboard
+surfaces this in the connector setup help text.
+
+### What shipped, server side
+
+`server/connectors/` — six new modules. `credentials.js` stores
+plaintext URLs in `settings` and ciphertext for client_id /
+client_secret using the existing `dataKey` (no new keys, no schema
+change to `settings`; ciphertext is base64'd into the existing
+`value_json` column). `http.js` is a 200-line OAuth 2.0
+client_credentials helper with token caching, 401-refresh retry, and
+(per §5.9.1) 429 backoff that respects `Retry-After`, retries once,
+and throws `rate_limited` on a second 429. `runs.js` is the
+state-machine for the new `connector_runs` table. `facts.js` and
+`ministry-platform.js` are the vendor-specific connectors —
+pagination, canonical-row construction, test-connection. `index.js`
+orchestrates a sync end-to-end. `scheduler.js` is a 60-second tick
+loop that fires due syncs.
+
+`server/db/migrations/0010_connector_runs.js` adds the
+`connector_runs` table, `conflicts.metadata` (JSON column the PRD
+referenced as already-existing — it didn't), and
+`import_runs.trigger` (`scheduled` / `manual` / `cli` / `file`).
+Schema bumped to v10.
+
+`server/api/connectors.js` exposes the nine endpoints the PRD
+itemized. Sync was originally synchronous; the second pass changed
+it to fire-and-forget so the HTTP response returns 202 immediately
+and the dashboard can poll `GET /api/connector-runs/:code` for
+progress. `bearerImport` and `bearerRead` scopes, no new auth
+surface.
+
+`server/api/health.js` gained a `connectors` array so the status rail
+can render a colored dot per configured connector.
+
+`server/api/settings.js` filters `connector.<name>.<field>_ct` rows
+out of `GET /api/settings` and reduces them to `_set: true` flags;
+direct `PUT` against any `connector.*` key is rejected with a 400.
+Without this filter the base64 ciphertext was being returned, which
+leaks length and existence even though it's not plaintext.
+
+`server/identity/resolver.js` now annotates conflicts with
+`metadata.cross_source = true` plus the two source tags when the
+candidate's most recent provenance source differs from the incoming
+record's source. The conflicts API gained `?cross_source=true` for
+filtering. PRD §5.6.
+
+`server/log/index.js` redactor extended to strip `client_id`,
+`client_secret`, `access_token`, `refresh_token`, `bearer` so
+connector credentials never accidentally appear in logs.
+
+`server/connectors/credentials.js` emits `connector.credential.set`
+and `connector.credential.deleted` log events in addition to the
+existing audit records. PRD §11.1.
+
+`bin/family-graph.js` gained a `connector` subcommand
+(`status` / `test <name>` / `sync <name>`) for headless operation.
+
+### What shipped, client side
+
+`client/src/views/Connectors.jsx` — list view (cards) plus detail
+view. The detail view was rewritten in the second pass to:
+
+- Kick off sync as fire-and-forget; poll the run every 1.5 seconds.
+- Render a live "Authenticating… → Pulling 100 students… → Pulling
+  parents… → Importing 312 canonical rows… → Done" panel above the
+  button while the run is in flight. Counters update as pages come
+  back. The button is disabled and reads "Syncing…" until the run
+  lands.
+- On success, render the same `StatPillGrid` (Families created,
+  Persons attached, New conflicts, etc.) the file-import view uses,
+  with a rows-pulled tile prepended and a yellow warn panel pointing
+  to `/conflicts` when conflicts_opened > 0. Click-through links to
+  the matching `import_runs` detail for the per-row breakdown.
+- On failure, render a red panel with the structured reason
+  (`auth_failed` / `network_error` / `rate_limited` / `timeout`) and
+  a one-line operator nudge.
+
+`client/src/components/StatPill.jsx` — the StatPill from
+`Import.jsx` extracted into a shared component plus a `StatPillGrid`
+helper, so the connector view and the file-import view stay in sync
+forever. Visually identical post-run summary regardless of how the
+data arrived.
+
+`client/src/components/ConnectorCard.jsx` — list-page card that
+shows status pill, schedule, and (when a sync is running) the live
+phase + counter line. Polls every 5s in the list view so a sync
+started from the CLI or another tab lights up.
+
+`client/src/components/StatusRail.jsx` — colored connector dots
+along the right edge of the rail (green / blue / red). Driven by
+`/api/health.connectors`. Hover text shows the failure reason.
+
+`client/src/views/Imports.jsx` — Imports list table gained a
+Trigger column rendering scheduled / manual / cli / file as colored
+pills.
+
+`client/src/views/Settings.jsx` — banner pointing to the new
+connector panel, plus an `operator_email` field used by the
+failure-notify path.
+
+App routing: `/settings/connectors` and `/settings/connectors/:name`,
+with a sidebar entry under the Posture group.
+
+### Bugs caught, decisions made
+
+- **`conflicts.metadata` did not exist.** PRD §5.6 said it did.
+  Migration 0010 adds the column; the resolver writes
+  `{ cross_source: true, sources: [...] }` JSON; the conflicts
+  endpoint uses `json_extract` to filter. Future flags ride the
+  same column without a new migration.
+- **Encryption helpers are `encrypt` / `decrypt`, not
+  `encryptString` / `decryptString`.** PRD called the latter; they
+  don't exist. Connectors module wraps the actual exports.
+- **OneRoster's `parent_1_*` / `parent_2_*` row-position model
+  doesn't translate to the API.** API connector groups by each
+  user's `agents[]` array instead, falling back to (familyName,
+  address) if agents are absent. Materially better — handles
+  siblings sharing parents, parents with multiple kids, and
+  parent-only feeds.
+- **MP OIDC discovery JSON is not parsed.** The vendor convention is
+  `<api_base>/oauth/connect/token`; the connector auto-derives that
+  unless the operator supplies an explicit token URL. Avoids adding
+  `jose` as a dependency.
+- **UTC schedule anchors, not local-time.** "Daily 02:00" and
+  "Weekly Sun 02:00" fire at UTC. Across DST the run drifts by an
+  hour relative to wall clock — acceptable for an overnight sync,
+  sidesteps the surprisingly hard problem of detecting timezone from
+  a server-side daemon.
+- **Stalled `running` rows.** A crashed process would leave a row in
+  status `running` forever, permanently blocking new triggers. The
+  scheduler calls `runs.reapStalled(db)` on boot to mark anything
+  older than 60 minutes as `error`.
+- **`lastRun` / `consecutiveFailures` ordering tied on ms.** Two
+  back-to-back operations in tests landed on the same `started_at`
+  millisecond, so DESC ordering was non-deterministic and a "fail
+  fail fail then succeed" sequence sometimes reported 1 consecutive
+  failure instead of 0. Added `rowid DESC` as the tiebreaker.
+- **`/api/settings` was leaking connector ciphertext.** The base64
+  blobs were appearing in the response. PRD §5.1 says they should
+  reduce to `_set: true` flags. Fixed; direct PUT against connector
+  keys is also blocked.
+- **No `operator_email` setting existed.** The 3-strikes
+  notification path referred to it, but no allow-list entry
+  existed. Added; the Settings page exposes it.
+- **§5.9.1 was added mid-build.** The `Retry-After` parser handles
+  both integer-seconds and HTTP-date forms; bad values fall back to
+  60s; a second 429 throws `rate_limited`; both the request path
+  and the token-endpoint path recognize 429. A `rate_limited`
+  failure fires an immediate operator notification (separate from
+  the 3-strikes path) because vendor rate-limiting is unusual
+  enough to interrupt — either we're being more aggressive than
+  expected or the vendor changed their policy. Notification body
+  explains the no-partial-data guarantee and suggests lengthening
+  the schedule.
+
+### By the numbers (v10)
+
+- 263 server tests passing (was 206, +57).
+- 9 new HTTP endpoints (connectors + connector-runs).
+- 1 new migration (0010), 1 new schema version (10).
+- 17 new files across server, client, and tests.
+- React client builds clean (Vite v5.4.21 → 281 KB JS, 15 KB CSS).
+- Server boots clean on a fresh `~/.family-graph/` with the
+  scheduler enabled.
+
+### Throughline
+
+v10 is the first time Family Graph reaches outside the operator's
+machine on its own. Everything about the design — the encrypted
+credentials, the 60-minute wall-clock cap, the concurrent-sync gate,
+the no-partial-writes transaction discipline, the
+operator-notification on auth_failed and rate_limited, the
+file-fallback always-on guarantee — is shaped by the assumption that
+the operator's network or the vendor's API can fail at any time and
+the failure must be loud, recoverable, and never destructive. The
+posture is "ingest is an integration that happens to use the
+network," not "the network is the source of truth."
+
+The connector path is now visually identical to the file-import path
+post-run; the operator gets the same StatPill grid + yellow conflict
+callout regardless of how the data arrived. During the sync, the
+button reads "Syncing…", a live phase indicator updates as pages
+come back, and a colored dot in the status rail tracks each
+connector's last-known posture. If the vendor returns 429, the
+operator gets an email within 60 seconds explaining what happened
+and how to back off the schedule.
+
+### Convention added this session
+
+`CLAUDE.md` (new) codifies the working agreement for every future
+Claude Code session in this repo: bias toward action, no filler
+phrases, match the operator's writing voice, no shortcuts when
+debugging, log files by default, PII rules (no real institution
+names, paths, or credentials in committed files), the requirements-
+doc section order, the design-auditor and PDF-designer activation
+modes, and — explicit — always update `session_notes.md` at the end
+of every session. The journal is the institutional memory; if a
+decision isn't written down, it gets re-litigated.
+
+The next session should pick up either: (a) the deferred Tauri /
+Electron desktop shell from `CLAUDE_CODE_HANDOFF` §5, or (b) the v2
+write-back surface from `PRD_LIVE_CONNECTORS` §8.1 once the [pilot
+parish] confirms the read-only flow is solid.
+
+---
+
 *End of session notes*

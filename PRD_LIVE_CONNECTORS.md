@@ -188,6 +188,12 @@ What this prevents: Family Graph silently merging two families that happen to sh
 - Ministry Platform's published rate limit is generous; the connector still sets a max of 1 request/100ms.
 - A single sync is bounded to 60 minutes max wall-clock; longer runs are killed with a `timeout` reason.
 
+### 5.9.1 Adaptive backoff on 429 responses
+
+If either connector receives an HTTP 429 response, the connector pauses for the duration in the `Retry-After` header (or 60 seconds if no header is present), then retries the failed request once. A second 429 fails the entire sync with reason `rate_limited` and surfaces in the dashboard. The next scheduled sync runs normally; we do not implement long-term cooldown periods because we have no evidence that either FACTS or MP issues 429s under normal usage.
+
+A `rate_limited` failure also triggers an **immediate** operator notification (independent of the existing 3-consecutive-failures rule), because vendor rate limiting is unusual enough to be worth an interruption — either we're pulling more aggressively than expected, or the vendor changed their published policy. The notification names the connector, says no partial data was written, and points to the connector's setup page so the operator can lengthen the schedule if 429s become routine. After the immediate notification, the standard 3-strikes path still applies for follow-on failures.
+
 ---
 
 ## 6. Data requirements
@@ -649,4 +655,72 @@ Items called out in PRD §4 / §11 that were completed in the second pass:
 This is the full PRD as built. The remaining items in §8 (write-back to
 FACTS / MP, multi-tenancy, custom-field mapping editor, webhook
 receivers) are explicitly deferred and unchanged.
+
+## Appendix C — Parity, live progress, and 429 backoff
+
+A second review pass surfaced two more things: the connector post-sync
+result was a single line of text (the file-import view shows a 9-pill
+grid + a yellow conflict callout) and there was no in-flight progress
+indicator. Plus a new §5.9.1 calling for adaptive 429 backoff with
+operator notification. All shipped in this pass:
+
+- **Parity with file imports.** The file-import view's
+  `StatPill` definition was extracted into
+  `client/src/components/StatPill.jsx` and a `<StatPillGrid totals=…>`
+  helper that renders the standard 9-pill block. Both `Import.jsx` and
+  the new connector-detail view use it, so a successful sync produces
+  the same Families created · Families attached · Persons created ·
+  Persons attached · New conflicts · Addresses · Emails · Phones ·
+  Memberships breakdown either way. When `conflicts_opened > 0`, a
+  yellow warn panel ("N new conflicts need resolution → Open the
+  conflict queue") appears identically on both surfaces. Sync results
+  also link out to the matching `import_runs` detail page for the
+  per-row outcome.
+- **Live progress.** `connector_runs` rows now carry a `metadata.phase`
+  string (`starting → authenticating → pulling_students →
+  pulling_parents → canonicalizing → importing → done`) and per-phase
+  counters (`students_pulled`, `parents_pulled`, `households_pulled`,
+  etc.) that are written as the sync makes progress. The HTTP
+  endpoint `POST /api/connectors/:name/sync` was changed from
+  blocking-await to fire-and-forget: it returns `202` with the
+  `run_code` immediately, and the dashboard polls
+  `GET /api/connector-runs/:code` every 1.5 seconds to render a live
+  status panel. The connector card on `/settings/connectors` shows a
+  pulsing `syncing…` pill with the current phase + counters as long as
+  a run is in flight, even if the operator started the sync from
+  another tab or from the CLI. The sync-now button is disabled while
+  one is running, with a `409 already_running` from the API as the
+  authoritative gate.
+- **§5.9.1 adaptive backoff on 429.** `server/connectors/http.js` now
+  parses `Retry-After` (integer seconds or HTTP-date), waits, and
+  retries once. A second 429 throws `reason: 'rate_limited'`, which
+  marks the sync `error` and writes the reason on `connector_runs`.
+  Token-endpoint 429s are also recognized and surfaced under the same
+  reason. A `rate_limited` failure fires an **immediate** operator
+  notification (separate from the 3-consecutive-failures path) using
+  the existing notify dispatcher and the `operator_email` setting; the
+  notification body explains that no partial data was written and
+  suggests lengthening the schedule.
+- **Splitting `runSync`.** The internal orchestrator was split into
+  `startRun(db, secrets, name, opts)` (synchronous gate that creates
+  the `connector_runs` row and returns the code) and `executeRun(db,
+  secrets, thresholds, name, runCode, opts)` (the async body). A new
+  `startSyncBackground(...)` returns the run code immediately while
+  the sync continues; the existing `runSync(...)` (still used by the
+  CLI and tests) just chains them with `await`.
+- **Test coverage in this pass.** 10 new tests, total 263 passing:
+  - 429 with `Retry-After` header → waits exactly that long, retries once.
+  - 429 without header → defaults to 60s.
+  - Two 429s in a row → throws `rate_limited`.
+  - Mixed 401-then-429 sequence → handled correctly (auth refresh +
+    rate-limit retry, both within budget).
+  - End-to-end runSync against a 429-only mock → surfaces
+    `rate_limited` and queues an operator notification.
+  - `startSyncBackground` returns immediately while the run is gated;
+    the `connector_runs` row reads `running` until the gate is released.
+  - `onProgress` writes the expected phase + counters into
+    `connector_runs.metadata` over the course of a sync.
+  - HTTP integration: `POST /api/connectors/facts/sync` returns `202`
+    with a `crun_…` code; pre-flight returns `409 already_running` and
+    `400 config_error` correctly.
 
