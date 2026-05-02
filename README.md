@@ -170,6 +170,9 @@ Alternatively, register a Scheduled Task that runs at logon with
 | `node bin/family-graph.js list-backups` | Lists files in the backups directory. |
 | `node bin/family-graph.js prune-backups [keep=10]` | Keeps the most recent N backups, deletes older. |
 | `node bin/family-graph.js restore <passphrase> <src> <dest>` | Restores an encrypted backup to a new sqlite path. |
+| `node bin/family-graph.js connector status` | Prints last-run timestamps + outcomes for FACTS / Ministry Platform connectors. |
+| `node bin/family-graph.js connector test <facts\|ministry_platform>` | Runs the test-connection flow without writing data. |
+| `node bin/family-graph.js connector sync <facts\|ministry_platform>` | Runs a full sync immediately (same path the scheduler uses). |
 
 `npm run start`, `npm run dev`, `npm run status`, `npm run backup`,
 `npm run rotate-secret`, and `npm test` are equivalent shortcuts and
@@ -298,6 +301,57 @@ reason in the token banner; the same string also appears in
 `server.log` next to the matching `auth.reject` line.
 
 The full route table is in [`product_spec.md`](./product_spec.md#api-contract).
+
+### Live connectors (FACTS SIS · Ministry Platform)
+
+In addition to the file-based ingest paths, Family Graph can pull rosters
+and household records directly from FACTS (school) and Ministry Platform
+(parish) on a schedule. Credentials are stored encrypted with the
+existing `dataKey`; neither the dashboard nor `/api/settings` ever
+displays plaintext (the settings endpoint reduces each ciphertext field
+to a `_set: true` flag).
+
+Configure from the dashboard at **Settings → Connectors** (or
+`/settings/connectors`). Each connector has a card with status pill +
+last-run timestamp, and a detail page where the operator pastes
+credentials, picks a schedule, runs Test connection, and triggers
+manual syncs. The status rail at the top of every screen shows a
+colored dot per configured connector — green/blue/red for ok / untested
+/ error.
+
+- `GET /api/connectors` — list configured connectors with last-run status.
+- `GET /api/connectors/:name` — detailed status (`facts`, `ministry_platform`).
+- `POST /api/connectors/:name/credentials` — set credentials (encrypted at rest).
+- `DELETE /api/connectors/:name/credentials` — clear credentials, disable.
+- `PATCH /api/connectors/:name` — update `enabled` / `schedule`
+  (one of `off`, `hourly`, `daily_2am`, `weekly_sun_2am`).
+- `POST /api/connectors/:name/test` — verify credentials + endpoint reachability
+  without writing.
+- `POST /api/connectors/:name/sync` — trigger an immediate sync. The pipeline
+  is the same one file ingest uses, so the resolver, conflicts queue, and
+  audit trail behave identically. The `import_runs` row is tagged with
+  `source = facts_api` or `ministry_platform_api` and `tags = [connector, manual]`
+  / `[connector, scheduled]`.
+- `GET /api/connector-runs` / `GET /api/connector-runs/:code` — per-run history.
+
+A 60-second in-process scheduler triggers due syncs from `last_sync_at`.
+Concurrent syncs of the same connector are blocked by a `connector_runs.status='running'`
+gate; cross-connector concurrency is allowed. Set
+`FAMILY_GRAPH_DISABLE_CONNECTORS=1` to disable the scheduler entirely
+(parallel to `FAMILY_GRAPH_DISABLE_NOTIFY` / `FAMILY_GRAPH_DISABLE_WATCH`).
+
+API and file ingest are co-equal — enabling a connector never disables the
+matching CSV / Sheets / folder-watch path. If FACTS rotates a secret, the
+operator can drop a CSV in the watch folder while they re-issue
+credentials and the data flows through the same resolver.
+
+Cross-source conflicts (a record in both FACTS and MP that's similar but
+not definitive) are flagged with `metadata.cross_source = true` and the
+two source tags; filter via `GET /api/conflicts?cross_source=true`.
+
+Operator setup walkthrough lives in
+[`API_ACCESS_GUIDE.md`](./API_ACCESS_GUIDE.md). PRD lives in
+[`PRD_LIVE_CONNECTORS.md`](./PRD_LIVE_CONNECTORS.md).
 
 ### External-app identity API
 

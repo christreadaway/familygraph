@@ -13,6 +13,7 @@ function build({ db, secrets }) {
         limit: req.query.limit ? Number(req.query.limit) : 100,
         assignedTo: req.query.assigned_to || null,
         assigned: req.query.assigned || null,
+        crossSource: 'cross_source' in req.query ? req.query.cross_source : null,
       }),
       ttl_options: [...conflicts.ALLOWED_TTL_HOURS],
     });

@@ -131,11 +131,85 @@ switch (cmd) {
   backups on disk: ${backups}`);
     break;
   }
+  case 'connector': {
+    const sub = process.argv[3];
+    const target = process.argv[4];
+    const config = require('../server/config');
+    const dbm = require('../server/db');
+    const secret = require('../server/crypto/secret');
+    const credentials = require('../server/connectors/credentials');
+    const runsMod = require('../server/connectors/runs');
+    const registry = require('../server/connectors');
+
+    if (!['test', 'sync', 'status'].includes(sub)) {
+      // eslint-disable-next-line no-console
+      console.error('usage: family-graph connector <test|sync|status> [name]');
+      process.exit(2);
+    }
+    const db = dbm.init(config.dbPath);
+    const secrets = secret.load(config.secretPath);
+
+    function fmtMs(ms) {
+      if (!ms) return '(never)';
+      return new Date(Number(ms)).toISOString();
+    }
+
+    if (sub === 'status') {
+      for (const name of registry.names()) {
+        const c = credentials.describe(db, secrets, name);
+        const last = runsMod.lastRun(db, name);
+        const lastOk = runsMod.lastSuccessful(db, name);
+        // eslint-disable-next-line no-console
+        console.log(`${name}`);
+        console.log(`  enabled:           ${c.enabled}`);
+        console.log(`  schedule:          ${c.schedule}`);
+        console.log(`  last attempt:      ${last ? `${fmtMs(last.started_at)} (${last.status}${last.reason ? ': ' + last.reason : ''})` : '(none)'}`);
+        console.log(`  last successful:   ${lastOk ? fmtMs(lastOk.started_at) : '(none)'}`);
+        if (last && last.metadata && typeof last.metadata === 'object') {
+          if (last.metadata.rows_pulled != null) console.log(`  rows pulled:       ${last.metadata.rows_pulled}`);
+          if (last.metadata.families_created != null) console.log(`  families created:  ${last.metadata.families_created}`);
+          if (last.metadata.families_attached != null) console.log(`  families attached: ${last.metadata.families_attached}`);
+          if (last.metadata.conflicts_opened != null) console.log(`  conflicts opened:  ${last.metadata.conflicts_opened}`);
+        }
+      }
+      db.close();
+      break;
+    }
+
+    if (!target || !credentials.isValidName(target)) {
+      // eslint-disable-next-line no-console
+      console.error(`invalid connector name: ${target || '(missing)'}`);
+      console.error(`valid names: ${[...credentials.CONNECTORS].join(', ')}`);
+      process.exit(2);
+    }
+
+    const thresholds = config.resolverThresholds;
+    (async () => {
+      try {
+        if (sub === 'test') {
+          const out = await registry.testConnection(db, secrets, target, { actor: 'cli' });
+          // eslint-disable-next-line no-console
+          console.log(`ok (sample_count=${out.sample_count || 0})`);
+        } else if (sub === 'sync') {
+          const out = await registry.runSync(db, secrets, thresholds, target, { trigger: 'cli', actor: 'cli' });
+          // eslint-disable-next-line no-console
+          console.log(JSON.stringify(out, null, 2));
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error(`error: ${e.reason || ''} ${e.message || e}`);
+        process.exitCode = 1;
+      } finally {
+        db.close();
+      }
+    })();
+    break;
+  }
   default: {
     // eslint-disable-next-line no-console
     console.error(`unknown command: ${cmd}`);
     // eslint-disable-next-line no-console
-    console.error('commands: start | status | rotate-secret | backup [passphrase] | restore <passphrase> <src> <dest> | show-token | list-backups | prune-backups [keep=10]');
+    console.error('commands: start | status | rotate-secret | backup [passphrase] | restore <passphrase> <src> <dest> | show-token | list-backups | prune-backups [keep=10] | connector <test|sync|status> [name]');
     process.exit(2);
   }
 }

@@ -18,25 +18,44 @@ function _validEmail(s) {
   return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
 
-function list(db, { status = 'open', limit = 100, assignedTo = null, assigned = null } = {}) {
+function list(db, { status = 'open', limit = 100, assignedTo = null, assigned = null, crossSource = null } = {}) {
   const filters = [];
   const params = [];
   if (status) { filters.push('status = ?'); params.push(status); }
   if (assignedTo) { filters.push('assigned_to = ?'); params.push(String(assignedTo).trim().toLowerCase()); }
   if (assigned === 'unassigned') filters.push('assigned_to IS NULL');
   if (assigned === 'assigned') filters.push('assigned_to IS NOT NULL');
+  // Cross-source filter: conflicts whose metadata JSON has cross_source=true.
+  // Use a JSON predicate so the filter is server-side rather than per-row in JS.
+  if (crossSource === true || crossSource === 'true') {
+    filters.push("metadata IS NOT NULL AND json_extract(metadata, '$.cross_source') = 1");
+  } else if (crossSource === false || crossSource === 'false') {
+    filters.push("(metadata IS NULL OR json_extract(metadata, '$.cross_source') IS NOT 1)");
+  }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   params.push(Math.max(1, Math.min(1000, Number(limit) || 100)));
   return db
     .prepare(`SELECT * FROM conflicts ${where} ORDER BY score DESC, created_at ASC LIMIT ?`)
     .all(...params)
-    .map(r => ({ ...r, reasons: r.reasons ? JSON.parse(r.reasons) : [] }));
+    .map(r => ({
+      ...r,
+      reasons: r.reasons ? JSON.parse(r.reasons) : [],
+      metadata: r.metadata ? _safeJson(r.metadata) : null,
+    }));
 }
 
 function get(db, code) {
   const row = db.prepare('SELECT * FROM conflicts WHERE code = ?').get(code);
   if (!row) return null;
-  return { ...row, reasons: row.reasons ? JSON.parse(row.reasons) : [] };
+  return {
+    ...row,
+    reasons: row.reasons ? JSON.parse(row.reasons) : [],
+    metadata: row.metadata ? _safeJson(row.metadata) : null,
+  };
+}
+
+function _safeJson(s) {
+  try { return JSON.parse(s); } catch (_) { return null; }
 }
 
 function resolveMerge(db, secrets, conflictCode, { winnerCode, actor = 'operator', notes = null } = {}) {

@@ -154,4 +154,18 @@ export const api = {
   addRelationship: body => request('POST', '/api/relationships', body),
   listRelationships: code => request('GET', `/api/relationships/${code}`),
   removeRelationship: code => request('DELETE', `/api/relationships/${code}`),
+
+  // Live API connectors (FACTS, Ministry Platform).
+  listConnectors: () => request('GET', '/api/connectors'),
+  getConnector: name => request('GET', `/api/connectors/${name}`),
+  setConnectorCredentials: (name, body) => request('POST', `/api/connectors/${name}/credentials`, body),
+  deleteConnectorCredentials: name => request('DELETE', `/api/connectors/${name}/credentials`),
+  patchConnector: (name, body) => request('PATCH', `/api/connectors/${name}`, body),
+  testConnector: name => request('POST', `/api/connectors/${name}/test`),
+  syncConnector: name => request('POST', `/api/connectors/${name}/sync`),
+  listConnectorRuns: params => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/connector-runs${qs ? `?${qs}` : ''}`);
+  },
+  getConnectorRun: code => request('GET', `/api/connector-runs/${code}`),
 };

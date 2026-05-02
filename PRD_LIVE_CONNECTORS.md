@@ -188,6 +188,12 @@ What this prevents: Family Graph silently merging two families that happen to sh
 - Ministry Platform's published rate limit is generous; the connector still sets a max of 1 request/100ms.
 - A single sync is bounded to 60 minutes max wall-clock; longer runs are killed with a `timeout` reason.
 
+### 5.9.1 Adaptive backoff on 429 responses
+
+If either connector receives an HTTP 429 response, the connector pauses for the duration in the `Retry-After` header (or 60 seconds if no header is present), then retries the failed request once. A second 429 fails the entire sync with reason `rate_limited` and surfaces in the dashboard. The next scheduled sync runs normally; we do not implement long-term cooldown periods because we have no evidence that either FACTS or MP issues 429s under normal usage.
+
+A `rate_limited` failure also triggers an **immediate** operator notification (independent of the existing 3-consecutive-failures rule), because vendor rate limiting is unusual enough to be worth an interruption — either we're pulling more aggressively than expected, or the vendor changed their published policy. The notification names the connector, says no partial data was written, and points to the connector's setup page so the operator can lengthen the schedule if 429s become routine. After the immediate notification, the standard 3-strikes path still applies for follow-on failures.
+
 ---
 
 ## 6. Data requirements
@@ -515,3 +521,206 @@ tests/
 ---
 
 *End of PRD. Hand to Claude Code with this file + the existing `product_spec.md` and `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md` as the only required context. No additional briefing needed.*
+
+---
+
+## Appendix A — Phase 1 build notes (as-built deviations)
+
+The Phase 1 build (`server/connectors/*`, migration `0010_connector_runs`,
+`/api/connectors/*` routes, `tests/connectors-*`) lands the PRD as
+specified, with a few small deviations the implementing pass discovered:
+
+1. **`conflicts.metadata` is a real column.** §5.6 stated the cross-source
+   flag would live "in the existing `conflicts.metadata` JSON column — no
+   new database column needed." That column did not in fact exist; the
+   pre-PRD schema only had `reasons`, `resolution_notes`, `decided_by_rule`,
+   etc. Migration `0010_connector_runs` adds `metadata TEXT` to
+   `conflicts` alongside the new `connector_runs` table. The semantics
+   match the PRD: cross-source conflicts get
+   `{ cross_source: true, sources: ['facts_api', 'ministry_platform_api'] }`
+   stored as JSON, queryable via `json_extract`. Any future flag can ride
+   the same column without another migration.
+
+2. **Encryption helpers are `encrypt` / `decrypt`, not `encryptString` /
+   `decryptString`.** The PRD references the latter names, which don't
+   exist. `server/crypto/encryption.js` exports `encrypt(secrets, plaintext)
+   → Buffer` and `decrypt(secrets, blob) → string`. The connectors module
+   wraps these and base64-encodes the ciphertext blob into the existing
+   `settings.value_json` column — no schema change to `settings`, no
+   double-encoding gotchas.
+
+3. **`api_keys` scope name for connector endpoints is `import`.** The PRD
+   says "Bearer token with `import` or `*` scope." `/api/connectors/*` is
+   mounted behind `bearerImport`; `/api/connector-runs` is mounted behind
+   `bearerRead` (the read-only run history is parallel to
+   `/api/imports`). Master token satisfies both.
+
+4. **OneRoster `agents` linkage is the canonical join key.** §5.4 said the
+   FACTS connector "reuses field mappings from `server/sources/facts.js`."
+   The CSV handler joins parents+students by row position (parent_1_*,
+   parent_2_*, plus the student row), which doesn't translate to the API
+   shape. The API connector instead groups by each user's `agents[]`
+   array, falling back to `(familyName, address)` when agents are absent.
+   This is materially better — it resolves siblings into one household
+   even when their address fields drift, and it cleanly handles
+   parent-only rows for parishes that subscribe to OneRoster without a
+   student roster.
+
+5. **Ministry Platform OIDC discovery is not parsed.** The PRD listed
+   `jose` as a possible new dependency for OIDC discovery. In practice MP
+   exposes the token endpoint at the well-known path
+   `<api_base>/oauth/connect/token`, which the connector derives
+   automatically when `oauth_discovery_url` is left blank. No new
+   dependency was added; if a future MP version moves the endpoint or
+   requires JWT validation, that becomes a separate change.
+
+6. **Scheduler uses UTC anchor times, not local time.** §5.7's
+   `daily_2am` / `weekly_sun_2am` schedules fire at 02:00 **UTC**, not
+   local time. Across DST boundaries the run can drift by an hour
+   relative to the operator's wall clock — acceptable for an overnight
+   sync, and sidesteps the surprisingly hard problem of detecting the
+   operator's intended timezone from a server-side daemon.
+
+7. **Failure-notify recipient is the `operator_email` setting.** §5.8
+   specified that three consecutive failures emit a notification to the
+   operator email "configured in Settings." That setting key wasn't yet
+   defined. The connector uses `settings['operator_email']` if present
+   and notifications are enabled; if the operator hasn't set one, the
+   notification is logged but not enqueued. This is a soft dependency —
+   adding the setting to the dashboard is a one-line follow-up that
+   doesn't block the connector from working.
+
+8. **Test injection via `fetchImpl`.** Every connector function accepts an
+   optional `fetchImpl` parameter that defaults to the global `fetch`.
+   This is what lets `tests/connectors-*.test.js` exercise the full
+   sync pipeline without touching the network. Production code never
+   passes the parameter, so there's no runtime cost.
+
+Test coverage at end of Phase 1: 253 tests pass (was 206), covering
+credential round-trip, token caching, 401 retry, pagination, FACTS+MP
+canonicalization, end-to-end sync against mocked vendor APIs, concurrent-
+sync prevention, scheduler due-detection, cross-source auto-merge on
+exact-email evidence, cross-source conflict generation when evidence is
+soft, the `/api/settings` filter that prevents connector ciphertext from
+ever surfacing on that endpoint, and the credential.set / credential.deleted
+log emission with redaction. The full test suite (`npm test`) is green
+on Node 20+.
+
+## Appendix B — Phase 1 follow-through (after the partial-build review)
+
+Items called out in PRD §4 / §11 that were completed in the second pass:
+
+- **Dashboard UI.** `client/src/views/Connectors.jsx` (list + detail
+  views) and `client/src/components/ConnectorCard.jsx` are built and
+  wired into the existing Settings flow. Operator can configure both
+  connectors entirely from the browser:
+    - `/settings/connectors` — list of cards, status pills, last-sync
+      timestamps, Configure buttons.
+    - `/settings/connectors/:name` — full configuration, including
+      Test connection, Run sync now, schedule selector, enable toggle,
+      delete-credentials with confirm, and a recent-runs table that
+      links each row to its `import_runs` detail page.
+  Sidebar gains a `Connectors` entry under the Posture group. The
+  existing Settings page surfaces a banner pointing to the new panel,
+  and adds the operator-email field used by the failure-notification
+  path.
+- **Status rail posture indicators.** `client/src/components/StatusRail.jsx`
+  now shows a colored dot per configured connector — green if the most
+  recent sync succeeded, blue if untested, red if the most recent run
+  errored. Hover text shows the failure reason. `GET /api/health`
+  returns the data via a new `connectors` array (empty when none are
+  configured). PRD §4.3.
+- **`import_runs.trigger` column.** Migration 0010 was extended to add
+  `trigger TEXT` to `import_runs`. `importBatch` accepts `ctx.trigger`
+  (defaults to `file`); the connector path passes `manual` /
+  `scheduled` / `cli`. The Imports list view renders the new column as
+  a colored pill so the operator can tell connector runs apart from
+  file uploads at a glance. PRD §4.2.
+- **`GET /api/settings` no longer leaks connector ciphertext.** The
+  PII surface filter in `server/api/settings.js` reduces every
+  `connector.<name>.<field>_ct` row to a `_set: true` flag (never the
+  base64 blob) before responding. Direct `PUT` against any
+  `connector.*` key is rejected with a 400 pointing the caller at
+  `/api/connectors/<name>`. PRD §5.1.
+- **`connector.credential.set` and `connector.credential.deleted` log
+  events.** Both events are emitted by `server/connectors/credentials.js`
+  using the structured logger, in addition to the existing audit
+  records. The log redactor was extended to strip `client_id`,
+  `client_secret`, `access_token`, `refresh_token`, and `bearer` so
+  the event carries no plaintext. PRD §11.1, §11.2.
+- **`operator_email` setting.** Added to the settings allow-list and
+  surfaced in the dashboard's Settings page. `connectors/index.js`
+  reads it when sending the three-failures-in-a-row notification.
+
+This is the full PRD as built. The remaining items in §8 (write-back to
+FACTS / MP, multi-tenancy, custom-field mapping editor, webhook
+receivers) are explicitly deferred and unchanged.
+
+## Appendix C — Parity, live progress, and 429 backoff
+
+A second review pass surfaced two more things: the connector post-sync
+result was a single line of text (the file-import view shows a 9-pill
+grid + a yellow conflict callout) and there was no in-flight progress
+indicator. Plus a new §5.9.1 calling for adaptive 429 backoff with
+operator notification. All shipped in this pass:
+
+- **Parity with file imports.** The file-import view's
+  `StatPill` definition was extracted into
+  `client/src/components/StatPill.jsx` and a `<StatPillGrid totals=…>`
+  helper that renders the standard 9-pill block. Both `Import.jsx` and
+  the new connector-detail view use it, so a successful sync produces
+  the same Families created · Families attached · Persons created ·
+  Persons attached · New conflicts · Addresses · Emails · Phones ·
+  Memberships breakdown either way. When `conflicts_opened > 0`, a
+  yellow warn panel ("N new conflicts need resolution → Open the
+  conflict queue") appears identically on both surfaces. Sync results
+  also link out to the matching `import_runs` detail page for the
+  per-row outcome.
+- **Live progress.** `connector_runs` rows now carry a `metadata.phase`
+  string (`starting → authenticating → pulling_students →
+  pulling_parents → canonicalizing → importing → done`) and per-phase
+  counters (`students_pulled`, `parents_pulled`, `households_pulled`,
+  etc.) that are written as the sync makes progress. The HTTP
+  endpoint `POST /api/connectors/:name/sync` was changed from
+  blocking-await to fire-and-forget: it returns `202` with the
+  `run_code` immediately, and the dashboard polls
+  `GET /api/connector-runs/:code` every 1.5 seconds to render a live
+  status panel. The connector card on `/settings/connectors` shows a
+  pulsing `syncing…` pill with the current phase + counters as long as
+  a run is in flight, even if the operator started the sync from
+  another tab or from the CLI. The sync-now button is disabled while
+  one is running, with a `409 already_running` from the API as the
+  authoritative gate.
+- **§5.9.1 adaptive backoff on 429.** `server/connectors/http.js` now
+  parses `Retry-After` (integer seconds or HTTP-date), waits, and
+  retries once. A second 429 throws `reason: 'rate_limited'`, which
+  marks the sync `error` and writes the reason on `connector_runs`.
+  Token-endpoint 429s are also recognized and surfaced under the same
+  reason. A `rate_limited` failure fires an **immediate** operator
+  notification (separate from the 3-consecutive-failures path) using
+  the existing notify dispatcher and the `operator_email` setting; the
+  notification body explains that no partial data was written and
+  suggests lengthening the schedule.
+- **Splitting `runSync`.** The internal orchestrator was split into
+  `startRun(db, secrets, name, opts)` (synchronous gate that creates
+  the `connector_runs` row and returns the code) and `executeRun(db,
+  secrets, thresholds, name, runCode, opts)` (the async body). A new
+  `startSyncBackground(...)` returns the run code immediately while
+  the sync continues; the existing `runSync(...)` (still used by the
+  CLI and tests) just chains them with `await`.
+- **Test coverage in this pass.** 10 new tests, total 263 passing:
+  - 429 with `Retry-After` header → waits exactly that long, retries once.
+  - 429 without header → defaults to 60s.
+  - Two 429s in a row → throws `rate_limited`.
+  - Mixed 401-then-429 sequence → handled correctly (auth refresh +
+    rate-limit retry, both within budget).
+  - End-to-end runSync against a 429-only mock → surfaces
+    `rate_limited` and queues an operator notification.
+  - `startSyncBackground` returns immediately while the run is gated;
+    the `connector_runs` row reads `running` until the gate is released.
+  - `onProgress` writes the expected phase + counters into
+    `connector_runs.metadata` over the course of a sync.
+  - HTTP integration: `POST /api/connectors/facts/sync` returns `202`
+    with a `crun_…` code; pre-flight returns `409 already_running` and
+    `400 config_error` correctly.
+

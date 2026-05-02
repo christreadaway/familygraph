@@ -17,7 +17,8 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //   7 — import_runs.rows_skipped_blank.
 //   8 — conflicts.resolution_notes + decided_by_rule (sticky decisions).
 //   9 — persons.employer / title / do_not_contact / not_living_together.
-const SCHEMA_VERSION = 9;
+//  10 — connector_runs table + conflicts.metadata + import_runs.trigger.
+const SCHEMA_VERSION = 10;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

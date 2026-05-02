@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 
 const KNOWN = [
   { key: 'institution_name', label: 'Institution name', placeholder: 'St. Theresa Catholic School' },
   { key: 'operator_name', label: 'Operator name', placeholder: 'Jane Doe' },
+  { key: 'operator_email', label: 'Operator email (connector failure alerts)', placeholder: 'admin@yourdomain.org' },
   { key: 'audit_retention_days', label: 'Audit retention (days, tier 1 only)', placeholder: '365', kind: 'number' },
   { key: 'dashboard_url', label: 'Dashboard URL (used in outgoing emails)', placeholder: 'https://family-graph.example.org' },
   { key: 'notifications.enabled', label: 'Notifications enabled (true/false)', placeholder: 'false', kind: 'bool' },
@@ -46,6 +48,15 @@ export default function Settings() {
     <>
       <h2>Settings</h2>
       {error && <div className="panel error">{error}</div>}
+      <div className="panel">
+        <h3>Live API connectors</h3>
+        <p className="muted" style={{ fontSize: 'var(--t-small)' }}>
+          Configure FACTS SIS and Ministry Platform credentials to pull rosters and households on a schedule.
+        </p>
+        <Link to="/settings/connectors" className="primary" style={{
+          textDecoration: 'none', display: 'inline-block', padding: '6px 12px',
+        }}>Open connector panel →</Link>
+      </div>
       <div className="panel">
         {KNOWN.map(def => (
           <div key={def.key} style={{ marginBottom: 12 }}>

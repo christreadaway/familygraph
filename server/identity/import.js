@@ -65,6 +65,7 @@ function importRow(db, secrets, thresholds, canonical, ctx = {}) {
     const incoming = canonical.persons[pi];
     const r = resolver.resolveOrCreatePerson(db, secrets, thresholds, incoming, {
       actor: ctx.actor || 'import',
+      source: ctx.source || null,
     });
     personOutcomes.push({ ...r, incoming });
     personCodes.push(r.code);
@@ -194,8 +195,8 @@ function importBatch(db, secrets, thresholds, canonicalRows, ctx = {}) {
     ? null
     : (Array.isArray(ctx.tags) ? JSON.stringify(ctx.tags) : String(ctx.tags));
   db.prepare(
-    `INSERT INTO import_runs (code, source, source_ref, category, tags, rows, actor)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO import_runs (code, source, source_ref, category, tags, rows, actor, "trigger")
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     importRunCode,
     ctx.source || 'manual',
@@ -204,6 +205,7 @@ function importBatch(db, secrets, thresholds, canonicalRows, ctx = {}) {
     tagsJson,
     canonicalRows.length,
     ctx.actor || 'import',
+    ctx.trigger || 'file',
   );
 
   const totals = {

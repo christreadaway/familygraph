@@ -228,3 +228,28 @@ Total active time on the operator's part: about 30 minutes for MP (same day), ab
 ---
 
 *If anything in this guide is wrong or out of date when you actually go to do this, file an issue or update the doc. The vendors change their UIs more often than they update their public documentation.*
+
+---
+
+## Note on the underlying implementation
+
+As of Phase 1 (PRD `PRD_LIVE_CONNECTORS.md`), the connector code is
+shipped — what's left is the operator-side credential dance described
+above. The CLI exposes the same operations the dashboard does, so you
+can verify a connector before opening a browser:
+
+```sh
+node bin/family-graph.js connector status
+node bin/family-graph.js connector test facts
+node bin/family-graph.js connector sync facts
+```
+
+`connector test` issues a single read against the vendor (FACTS `/orgs`
+or MP `/tables/Households` with `$top=1`) and writes nothing. `connector
+sync` runs the full pull through the same import pipeline that file
+ingest uses; it's safe to run repeatedly because the resolver
+deduplicates by definitive signal (exact email/phone/strong address). If
+something breaks, the most recent attempt is always one row in
+`connector_runs` and one matching `import_runs` row, both visible from
+the dashboard's Imports log.
+

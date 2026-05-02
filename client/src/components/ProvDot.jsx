@@ -5,10 +5,12 @@ import React from 'react';
 const MAP = {
   facts: 'facts',
   FACTS: 'facts',
+  facts_api: 'facts',
   renweb: 'renweb',
   RenWeb: 'renweb',
   ministry_platform: 'mp',
   'Ministry Platform': 'mp',
+  ministry_platform_api: 'mp',
   mp: 'mp',
   sheets: 'sheets',
   'Google Sheets': 'sheets',
