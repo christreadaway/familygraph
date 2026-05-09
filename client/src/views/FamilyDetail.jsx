@@ -70,6 +70,10 @@ export default function FamilyDetail() {
   const [rels, setRels] = useState([]);
   const [newRel, setNewRel] = useState({ to: '', kind: 'related_household', detail: '' });
   const [dncReason, setDncReason] = useState('');
+  const [familyMinistries, setFamilyMinistries] = useState([]);
+  const [ministryCatalog, setMinistryCatalog] = useState([]);
+  const [newAssignmentMinistry, setNewAssignmentMinistry] = useState('');
+  const [newAssignmentRole, setNewAssignmentRole] = useState('member');
 
   const { view } = useFG();
   const pseudo = view === 'pseudonym';
@@ -81,6 +85,8 @@ export default function FamilyDetail() {
     }).catch(e => setError(e.message));
     api.membershipHistoryFamily(code).then(d => setHistory(d.items || [])).catch(() => {});
     api.listRelationships(code).then(d => setRels(d.items || [])).catch(() => {});
+    api.ministriesForFamily(code).then(d => setFamilyMinistries(d.items || [])).catch(() => {});
+    api.listMinistries().then(d => setMinistryCatalog(d.items || [])).catch(() => {});
   }
 
   useEffect(load, [code]);
@@ -408,6 +414,57 @@ export default function FamilyDetail() {
           </select>
           <input placeholder="optional note" value={newRel.detail} onChange={e => setNewRel({ ...newRel, detail: e.target.value })} />
           <button>Link</button>
+        </form>
+      </div>
+
+      <div className="panel">
+        <h3>Volunteer ministries</h3>
+        <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+          Whole-family rotations like Coffee &amp; Donuts or hospitality. Per-individual rosters
+          (Lectors, Cantors) live on each person's detail page.
+        </p>
+        {familyMinistries.length === 0 ? (
+          <p className="muted" style={{ fontSize: 13 }}>No active family rotations.</p>
+        ) : (
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {familyMinistries.map(a => {
+              const m = ministryCatalog.find(x => x.code === a.ministry_code);
+              return (
+                <li key={a.code} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #eee' }}>
+                  <span>
+                    <strong>{m ? m.name : a.ministry_code}</strong>
+                    <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>· {a.role}</span>
+                  </span>
+                  <button onClick={async () => { await api.endMinistryAssignment(a.code); load(); }}>End</button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <form
+          className="row"
+          style={{ marginTop: 10 }}
+          onSubmit={async e => {
+            e.preventDefault();
+            if (!newAssignmentMinistry) return;
+            await api.assignMinistry(newAssignmentMinistry, { family_code: code, role: newAssignmentRole });
+            setNewAssignmentMinistry('');
+            setNewAssignmentRole('member');
+            load();
+          }}
+        >
+          <select value={newAssignmentMinistry} onChange={e => setNewAssignmentMinistry(e.target.value)} style={{ flex: 1 }}>
+            <option value="">— pick a ministry —</option>
+            {ministryCatalog.map(m => (
+              <option key={m.code} value={m.code}>{m.name}</option>
+            ))}
+          </select>
+          <select value={newAssignmentRole} onChange={e => setNewAssignmentRole(e.target.value)}>
+            <option value="member">member</option>
+            <option value="coordinator">coordinator</option>
+            <option value="lead">lead</option>
+          </select>
+          <button>Add</button>
         </form>
       </div>
 

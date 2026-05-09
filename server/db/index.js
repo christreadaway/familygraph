@@ -18,7 +18,8 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //   8 — conflicts.resolution_notes + decided_by_rule (sticky decisions).
 //   9 — persons.employer / title / do_not_contact / not_living_together.
 //  10 — connector_runs table + conflicts.metadata + import_runs.trigger.
-const SCHEMA_VERSION = 10;
+//  11 — persons.eim_* fields + ministries / ministry_assignments tables.
+const SCHEMA_VERSION = 11;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

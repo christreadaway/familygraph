@@ -13,6 +13,10 @@ export default function PersonDetail() {
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [mergeWinner, setMergeWinner] = useState('');
+  const [ministryAssignments, setMinistryAssignments] = useState([]);
+  const [ministryCatalog, setMinistryCatalog] = useState([]);
+  const [newAssignmentMinistry, setNewAssignmentMinistry] = useState('');
+  const [newAssignmentRole, setNewAssignmentRole] = useState('member');
 
   function load() {
     api
@@ -29,9 +33,15 @@ export default function PersonDetail() {
           do_not_contact: !!d.person.do_not_contact,
           do_not_contact_reason: d.person.do_not_contact_reason || '',
           not_living_together: !!d.person.not_living_together,
+          eim_status: d.person.eim_status || '',
+          eim_completed_on: d.person.eim_completed_on || '',
+          eim_expires_on: d.person.eim_expires_on || '',
+          eim_notes: d.person.eim_notes || '',
         });
       })
       .catch(e => setError(e.message));
+    api.ministriesForPerson(code).then(d => setMinistryAssignments(d.items || [])).catch(() => {});
+    api.listMinistries().then(d => setMinistryCatalog(d.items || [])).catch(() => {});
   }
   useEffect(load, [code]);
 
@@ -61,6 +71,32 @@ export default function PersonDetail() {
     if (!mergeWinner) return;
     await api.mergePerson(code, mergeWinner);
     nav(`/people/${mergeWinner}`);
+  }
+  async function addMinistryAssignment(e) {
+    e.preventDefault();
+    if (!newAssignmentMinistry) return;
+    await api.assignMinistry(newAssignmentMinistry, { person_code: code, role: newAssignmentRole });
+    setNewAssignmentMinistry('');
+    setNewAssignmentRole('member');
+    load();
+  }
+  async function endMinistryAssignment(assignmentCode) {
+    await api.endMinistryAssignment(assignmentCode);
+    load();
+  }
+  function ministryName(mc) {
+    const found = ministryCatalog.find(m => m.code === mc);
+    return found ? found.name : mc;
+  }
+  function eimBadge() {
+    const s = person.eim_status;
+    if (!s) return <span className="muted" style={{ fontSize: 12 }}>not on file</span>;
+    const colorMap = { certified: '#1f7a1f', pending: '#a07000', expired: '#a01010' };
+    return (
+      <span style={{ background: colorMap[s] || '#555', color: 'white', padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
+        {s.toUpperCase()}
+      </span>
+    );
   }
 
   return (
@@ -126,6 +162,102 @@ export default function PersonDetail() {
         </div>
 
         <div style={{ marginTop: 12 }}><button className="primary" onClick={save}>Save</button></div>
+      </div>
+
+      <div className="panel">
+        <h3>EIM (Ethics & Integrity in Ministry) {eimBadge()}</h3>
+        <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: 12 }}>
+          Catholic safe-environment cert, required for adults serving on most ministries. Set the
+          completion date and the dashboard auto-fills the expiration using the diocesan renewal
+          interval (default 3 years; configurable in Settings as <code>eim.renewal_years</code>).
+        </p>
+        <div className="split">
+          <div>
+            <label>Status</label>
+            <select
+              value={form.eim_status}
+              onChange={e => setForm({ ...form, eim_status: e.target.value })}
+            >
+              <option value="">— not on file —</option>
+              <option value="pending">pending</option>
+              <option value="certified">certified</option>
+              <option value="expired">expired</option>
+            </select>
+          </div>
+          <div>
+            <label>Completed on</label>
+            <input
+              value={form.eim_completed_on}
+              onChange={e => setForm({ ...form, eim_completed_on: e.target.value })}
+              placeholder="YYYY-MM-DD"
+            />
+          </div>
+          <div>
+            <label>Expires on</label>
+            <input
+              value={form.eim_expires_on}
+              onChange={e => setForm({ ...form, eim_expires_on: e.target.value })}
+              placeholder="YYYY-MM-DD (auto-filled)"
+            />
+          </div>
+          <div>
+            <label>Notes</label>
+            <input
+              value={form.eim_notes}
+              onChange={e => setForm({ ...form, eim_notes: e.target.value })}
+              placeholder="e.g., diocese, vendor, waiver"
+            />
+          </div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <button className="primary" onClick={save}>Save EIM</button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h3>Ministries</h3>
+        <p className="muted" style={{ marginTop: 0, marginBottom: 12, fontSize: 12 }}>
+          Volunteer or staff rosters this person is currently on. Whole-family rosters
+          (e.g., Coffee &amp; Donuts) live on the family detail page instead.
+        </p>
+        {ministryAssignments.length === 0 ? (
+          <p className="muted" style={{ fontSize: 13 }}>Not on any active rosters.</p>
+        ) : (
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {ministryAssignments.map(a => (
+              <li key={a.code} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #eee' }}>
+                <span>
+                  <strong>{ministryName(a.ministry_code)}</strong>
+                  <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>· {a.role}</span>
+                </span>
+                <button onClick={() => endMinistryAssignment(a.code)}>End</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form onSubmit={addMinistryAssignment} className="row" style={{ marginTop: 10 }}>
+          <select
+            value={newAssignmentMinistry}
+            onChange={e => setNewAssignmentMinistry(e.target.value)}
+            style={{ flex: 1 }}
+          >
+            <option value="">— pick a ministry —</option>
+            {ministryCatalog.map(m => (
+              <option key={m.code} value={m.code}>
+                {m.name}{m.requires_eim ? ' (EIM required)' : ''}
+              </option>
+            ))}
+          </select>
+          <select
+            value={newAssignmentRole}
+            onChange={e => setNewAssignmentRole(e.target.value)}
+          >
+            <option value="member">member</option>
+            <option value="coordinator">coordinator</option>
+            <option value="lead">lead</option>
+          </select>
+          <button>Add</button>
+        </form>
       </div>
 
       <div className="panel">

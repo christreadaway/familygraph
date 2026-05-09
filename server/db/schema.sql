@@ -76,6 +76,14 @@ CREATE TABLE IF NOT EXISTS persons (
   do_not_contact   INTEGER NOT NULL DEFAULT 0,
   do_not_contact_reason_ct BLOB,
   not_living_together INTEGER NOT NULL DEFAULT 0,
+  -- Ethics and Integrity in Ministry (Catholic safe-environment training).
+  -- Status + completion + expiration are queryable plaintext so the dashboard
+  -- can surface "expiring in 30 days" without decrypting the persons table.
+  -- Notes go encrypted because they may name a diocese, vendor, or waiver.
+  eim_status       TEXT,                       -- pending | certified | expired | NULL
+  eim_completed_on TEXT,                       -- ISO-8601 date issued
+  eim_expires_on   TEXT,                       -- ISO-8601 date the cert lapses
+  eim_notes_ct     BLOB,                       -- ciphertext of operator notes
   status           TEXT NOT NULL DEFAULT 'active',
   merged_into      TEXT,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -87,6 +95,8 @@ CREATE INDEX IF NOT EXISTS persons_family_name_hash_idx ON persons (family_name_
 CREATE INDEX IF NOT EXISTS persons_given_name_hash_idx  ON persons (given_name_hash);
 CREATE INDEX IF NOT EXISTS persons_status_idx           ON persons (status);
 CREATE INDEX IF NOT EXISTS persons_merged_into_idx      ON persons (merged_into);
+CREATE INDEX IF NOT EXISTS persons_eim_expires_idx      ON persons (eim_expires_on);
+CREATE INDEX IF NOT EXISTS persons_eim_status_idx       ON persons (eim_status);
 
 -------------------------------------------------------------------------------
 -- Family memberships (history-tracking)
@@ -445,3 +455,54 @@ CREATE INDEX IF NOT EXISTS notifications_status_idx          ON notifications (s
 CREATE INDEX IF NOT EXISTS notifications_kind_idx            ON notifications (kind);
 CREATE INDEX IF NOT EXISTS notifications_next_attempt_idx    ON notifications (status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS notifications_to_email_idx        ON notifications (to_email);
+
+-------------------------------------------------------------------------------
+-- Ministries / volunteer rosters (v1.x)
+-------------------------------------------------------------------------------
+-- A ministry is any volunteer or staff list the parish maintains: Lectors,
+-- Eucharistic Ministers, Ushers, Faith Formation aides, Coffee & Donuts. The
+-- catalog row carries a `requires_eim` flag so the dashboard can flag
+-- assignments to expired EIM certs. Assignments may target a person OR a
+-- whole family (e.g., the Smith family signs up for monthly Coffee &
+-- Donuts) but never both at the same time.
+
+CREATE TABLE IF NOT EXISTS ministries (
+  code           TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  description    TEXT,
+  requires_eim   INTEGER NOT NULL DEFAULT 0,
+  status         TEXT NOT NULL DEFAULT 'active',
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (status IN ('active','archived'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ministries_name_idx ON ministries (name);
+CREATE INDEX IF NOT EXISTS ministries_status_idx ON ministries (status);
+
+CREATE TABLE IF NOT EXISTS ministry_assignments (
+  code           TEXT PRIMARY KEY,
+  ministry_code  TEXT NOT NULL REFERENCES ministries(code) ON DELETE CASCADE,
+  person_code    TEXT REFERENCES persons(code)  ON DELETE CASCADE,
+  family_code    TEXT REFERENCES families(code) ON DELETE CASCADE,
+  role           TEXT NOT NULL DEFAULT 'member',
+  started_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  ended_at       TEXT,
+  notes_ct       BLOB,
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (role IN ('member','coordinator','lead')),
+  CHECK (
+    (person_code IS NOT NULL AND family_code IS NULL)
+    OR (person_code IS NULL AND family_code IS NOT NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS ministry_assignments_ministry_idx ON ministry_assignments (ministry_code);
+CREATE INDEX IF NOT EXISTS ministry_assignments_person_idx   ON ministry_assignments (person_code);
+CREATE INDEX IF NOT EXISTS ministry_assignments_family_idx   ON ministry_assignments (family_code);
+CREATE INDEX IF NOT EXISTS ministry_assignments_active_idx   ON ministry_assignments (ministry_code, ended_at);
+CREATE UNIQUE INDEX IF NOT EXISTS ministry_assignments_active_person_uniq
+  ON ministry_assignments (ministry_code, person_code) WHERE ended_at IS NULL AND person_code IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ministry_assignments_active_family_uniq
+  ON ministry_assignments (ministry_code, family_code) WHERE ended_at IS NULL AND family_code IS NOT NULL;

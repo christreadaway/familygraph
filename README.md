@@ -353,6 +353,52 @@ Operator setup walkthrough lives in
 [`API_ACCESS_GUIDE.md`](./API_ACCESS_GUIDE.md). PRD lives in
 [`PRD_LIVE_CONNECTORS.md`](./PRD_LIVE_CONNECTORS.md).
 
+### EIM certification + volunteer ministries
+
+Family Graph tracks Ethics and Integrity in Ministry (EIM) status
+per person and ministry / volunteer rosters either per person or per
+family. Both surface together because most parishes need to ask "is
+this Lector still EIM-current?" on the same screen as the roster.
+
+Per-person EIM fields (returned on every `/api/people/:code` and
+editable via PATCH):
+
+- `eim_status` — `pending` / `certified` / `expired` / null.
+- `eim_completed_on` — ISO date the cert was issued.
+- `eim_expires_on` — ISO date the cert lapses. Auto-derived from
+  the completion date using the diocesan renewal cycle when the
+  caller doesn't provide it. Explicit values always win.
+- `eim_notes` — encrypted free-form notes (waiver, vendor, diocese).
+
+Renewal cycle is configurable. Set `eim.renewal_years` (default `3`)
+and `eim.expiring_soon_days` (default `60`) under `/api/settings`
+or in the dashboard Settings page.
+
+A daily sweep runs at boot and every 24h, flipping `certified` rows
+whose `eim_expires_on` has passed into `expired`. The operator can
+also force a sweep via the dashboard or
+`POST /api/ministries/eim/recompute`.
+
+- `GET /api/ministries` / `?status=archived|all` — catalog list.
+- `POST /api/ministries` — create (name, description, requires_eim).
+- `GET /api/ministries/:code` — ministry + its active assignments.
+- `PATCH /api/ministries/:code` — edit catalog row.
+- `DELETE /api/ministries/:code` — archive.
+- `POST /api/ministries/:code/assignments` — assign a person OR a
+  family (exactly one of `person_code`, `family_code`).
+- `DELETE /api/ministries/assignments/:code` — end an assignment.
+- `GET /api/ministries/by-person/:code` / `by-family/:code` —
+  rosters this person/family is on.
+- `GET /api/ministries/eim/expiring?window_days=N` — codes whose
+  certs lapse inside the window. Response is intentionally PII-free.
+- `POST /api/ministries/eim/recompute` — manual sweep trigger.
+
+Whole-family rosters (Coffee & Donuts: the Smith family) are a
+first-class shape — assignments toggle between person-level and
+family-level on a per-row basis instead of forcing one mode for
+the whole ministry. Person merges and family merges carry active
+assignments onto the winning code.
+
 ### External-app identity API
 
 Sibling apps (missionIQ, ParentPoint, future tools) bring in their own

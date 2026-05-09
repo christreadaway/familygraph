@@ -21,6 +21,7 @@ import Search from './views/Search.jsx';
 import ExportView from './views/Export.jsx';
 import Notifications from './views/Notifications.jsx';
 import { ConnectorsList, ConnectorDetail } from './views/Connectors.jsx';
+import Ministries from './views/Ministries.jsx';
 
 const REASON_HINT = {
   no_bearer: 'No token sent. Paste your Bearer token below.',
@@ -167,6 +168,7 @@ export default function App() {
               Conflict queue
             </NavItem>
             <NavItem to="/rules">Resolution rules</NavItem>
+            <NavItem to="/ministries">Ministries &amp; EIM</NavItem>
           </nav>
           <div className="sidebar-eyebrow" style={{ marginTop: 12 }}>Egress</div>
           <nav>
@@ -237,6 +239,7 @@ export default function App() {
             <Route path="/people/:code" element={<PersonDetail />} />
             <Route path="/conflicts" element={<Conflicts />} />
             <Route path="/rules" element={<Rules />} />
+            <Route path="/ministries" element={<Ministries />} />
             <Route path="/import" element={<ImportView />} />
             <Route path="/imports" element={<ImportsList />} />
             <Route path="/imports/:code" element={<ImportDetail />} />

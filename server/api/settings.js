@@ -19,6 +19,14 @@ const ALLOWED_KEYS = new Set([
   'dashboard_url',                  // base URL the recipient clicks back to
   'postmark.from',                  // verified sender address
   'postmark.message_stream',        // default 'outbound'
+  // EIM (Ethics and Integrity in Ministry) — Catholic safe-environment cert.
+  // Renewal cycle varies by diocese; common values are 3 (default) or 5
+  // years. The dashboard auto-fills eim_expires_on from eim_completed_on
+  // using this number when the operator only provides a completion date.
+  'eim.renewal_years',
+  // How many days ahead the dashboard treats a cert as "expiring soon" so
+  // the operator gets a heads-up before the lapse date arrives.
+  'eim.expiring_soon_days',
 ]);
 
 // Connector credentials live under `connector.<name>.<field>` in the
