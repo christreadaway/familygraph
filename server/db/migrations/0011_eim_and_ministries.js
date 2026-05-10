@@ -56,7 +56,8 @@ exports.up = function up(db) {
       updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       CHECK (status IN ('active','archived'))
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS ministries_name_idx ON ministries (name);
+    CREATE UNIQUE INDEX IF NOT EXISTS ministries_name_active_uniq
+      ON ministries (name) WHERE status = 'active';
     CREATE INDEX IF NOT EXISTS ministries_status_idx ON ministries (status);
   `);
 

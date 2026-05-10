@@ -477,7 +477,12 @@ CREATE TABLE IF NOT EXISTS ministries (
   CHECK (status IN ('active','archived'))
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS ministries_name_idx ON ministries (name);
+-- Unique name only among active ministries — archived rows can keep the
+-- same name as their replacement so historical data isn't corrupted by a
+-- rename, and the operator can re-introduce a roster they previously
+-- archived without picking a synonym.
+CREATE UNIQUE INDEX IF NOT EXISTS ministries_name_active_uniq
+  ON ministries (name) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS ministries_status_idx ON ministries (status);
 
 CREATE TABLE IF NOT EXISTS ministry_assignments (

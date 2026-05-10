@@ -20,7 +20,12 @@ function build({ db, secrets, includePii }) {
   });
 
   r.post('/', (req, res) => {
-    const code = people.create(db, secrets, req.body || {});
+    let code;
+    try {
+      code = people.create(db, secrets, req.body || {});
+    } catch (e) {
+      return res.status(400).json({ error: String(e.message || e) });
+    }
     audit.record(db, {
       action: 'person_create',
       actor: req.auth?.actor || 'unknown',
@@ -51,7 +56,12 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(req.params.code, 'person')) {
       return res.status(400).json({ error: 'invalid person code' });
     }
-    const code = people.update(db, secrets, req.params.code, req.body || {});
+    let code;
+    try {
+      code = people.update(db, secrets, req.params.code, req.body || {});
+    } catch (e) {
+      return res.status(400).json({ error: String(e.message || e) });
+    }
     if (!code) return res.status(404).json({ error: 'not found' });
     audit.record(db, {
       action: 'person_update',

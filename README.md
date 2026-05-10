@@ -399,6 +399,19 @@ family-level on a per-row basis instead of forcing one mode for
 the whole ministry. Person merges and family merges carry active
 assignments onto the winning code.
 
+Notes on the catalog:
+
+- Ministry names are unique among **active** rows only. Archive
+  one and you can later re-introduce a roster with the same name;
+  the historical row keeps its assignments untouched.
+- Archived ministries reject new assignments (the roster is
+  retired). Existing assignments stay on the archived row so the
+  audit trail survives.
+- `eim_status` accepts only `pending` / `certified` / `expired` /
+  empty (clears). `eim_completed_on` and `eim_expires_on` must be
+  ISO-8601 dates (`YYYY-MM-DD`). Bad input gets a 400 with a
+  message naming the offending field.
+
 ### External-app identity API
 
 Sibling apps (missionIQ, ParentPoint, future tools) bring in their own

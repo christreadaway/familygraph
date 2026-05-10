@@ -1715,15 +1715,49 @@ operator override.
 
 ### By the numbers (v11)
 
-- 277 server tests passing (was 263, +14 in
-  `tests/eim-ministries.test.js`).
+- 296 server tests passing (was 263, +14 in
+  `tests/eim-ministries.test.js` and +19 in
+  `tests/eim-ministries-edges.test.js`).
 - 11 new HTTP endpoints under `/api/ministries`.
 - 1 new migration (0011), 1 new schema version (11), 2 new ID
   prefixes (`min_`, `ma_`).
-- 5 new files (`server/identity/ministries.js`,
+- 6 new files (`server/identity/ministries.js`,
   `server/identity/eim.js`, `server/api/ministries.js`,
   `client/src/views/Ministries.jsx`,
-  `tests/eim-ministries.test.js`).
+  `tests/eim-ministries.test.js`,
+  `tests/eim-ministries-edges.test.js`).
+
+### Bugs caught and fixed during the second pass
+
+After the first cut shipped, an edges-test pass surfaced three
+issues:
+
+**1. Unique ministry name index was global.** `ministries_name_idx`
+was a plain unique index, so archiving "Choir" then trying to
+re-create "Choir" hit a constraint violation. Fix: rebuilt as a
+partial unique index `WHERE status = 'active'`. Now the operator
+can archive a roster and re-introduce one with the same name
+later (the historical row stays put). Both the migration and
+`schema.sql` were updated; on a fresh DB the partial index applies
+from the start.
+
+**2. Archived ministries accepted new assignments.** The
+`assign()` path checked that the ministry existed but not that it
+was active, so a roster the operator deliberately retired could
+quietly grow. Fix: `assign()` now throws `ministry is archived;
+un-archive before adding new assignments` and the API returns
+400. Existing assignments on an archived ministry are preserved
+(separate test confirms).
+
+**3. Date / status validation returned 500 instead of 400.** The
+people POST/PATCH paths didn't catch the validation throws from
+`normalizeIsoDate` and `normalizeEimStatus`, so a typo in the
+date format produced an opaque "internal error" instead of a
+useful message. Fix: both routes now wrap the call in try/catch
+and return 400 with the validator's message.
+
+Ran the full suite again (all 296 passing) and confirmed the
+client builds clean (Vite v5.4.21 → 297 KB JS, 15 KB CSS).
 
 ### Throughline
 

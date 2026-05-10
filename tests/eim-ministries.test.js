@@ -112,14 +112,15 @@ test('eim > expiring endpoint surfaces certs lapsing inside the window', async t
   assert.ok(r.body.items.find(it => it.code === code), 'expected lapsing person to surface');
 });
 
-test('eim > invalid status is rejected', async t => {
+test('eim > invalid status is rejected with a 400', async t => {
   const { port, secrets } = await makeServer(t);
   const auth = { authorization: `Bearer ${secrets.master}` };
   const r = await req(port, {
     method: 'POST', path: '/api/people', headers: auth,
     body: { given_name: 'Bad', family_name: 'Status', eim_status: 'platinum' },
   });
-  assert.equal(r.status, 500);
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /eim_status/);
 });
 
 test('ministries > create + list catalog', async t => {

@@ -123,6 +123,9 @@ function assign(db, secrets, ministryCode, input) {
   }
   const ministry = db.prepare(`SELECT * FROM ministries WHERE code = ?`).get(ministryCode);
   if (!ministry) throw new Error('ministry not found');
+  if (ministry.status !== 'active') {
+    throw new Error('ministry is archived; un-archive before adding new assignments');
+  }
 
   const personCode = input.person_code || null;
   const familyCode = input.family_code || null;
