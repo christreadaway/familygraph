@@ -3,6 +3,7 @@
 const enc = require('../crypto/encryption');
 const { newCode, isValidCode } = require('../crypto/identifiers');
 const aliases = require('./aliases');
+const eim = require('./eim');
 
 function row2person(row, secrets, { includePii }) {
   if (!row) return null;
@@ -19,15 +20,27 @@ function row2person(row, secrets, { includePii }) {
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+  // EIM fields are queryable plaintext (status + dates) so the dashboard can
+  // surface "expiring soon" without decrypting every row. They flow through
+  // the safe surface too — knowing that someone holds a current cert is not
+  // PII on its own, and ministry coordinators need that signal even when
+  // they're not reading PII columns.
+  const eim = {
+    eim_status: row.eim_status || null,
+    eim_completed_on: row.eim_completed_on || null,
+    eim_expires_on: row.eim_expires_on || null,
+  };
   if (!includePii) {
     return {
       ...base,
+      ...eim,
       do_not_contact: !!row.do_not_contact,
       not_living_together: !!row.not_living_together,
     };
   }
   return {
     ...base,
+    ...eim,
     given_name: enc.decrypt(secrets, row.given_name_ct),
     family_name: enc.decrypt(secrets, row.family_name_ct),
     middle_name: enc.decrypt(secrets, row.middle_name_ct),
@@ -42,7 +55,28 @@ function row2person(row, secrets, { includePii }) {
     do_not_contact: !!row.do_not_contact,
     do_not_contact_reason: enc.decrypt(secrets, row.do_not_contact_reason_ct),
     not_living_together: !!row.not_living_together,
+    eim_notes: enc.decrypt(secrets, row.eim_notes_ct),
   };
+}
+
+const EIM_STATUSES = new Set(['pending', 'certified', 'expired']);
+
+function normalizeEimStatus(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const s = String(v).toLowerCase();
+  if (!EIM_STATUSES.has(s)) {
+    throw new Error(`invalid eim_status: ${v}`);
+  }
+  return s;
+}
+
+function normalizeIsoDate(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const s = String(v).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new Error(`invalid date (want YYYY-MM-DD): ${v}`);
+  }
+  return s;
 }
 
 function buildDisplayName(input) {
@@ -56,13 +90,18 @@ function buildDisplayName(input) {
 function create(db, secrets, input) {
   const code = newCode('person');
   const display = input.display_name || buildDisplayName(input);
+  const enriched = eim.deriveExpiration(db, input);
+  const eimStatus = normalizeEimStatus(enriched.eim_status);
+  const eimCompleted = normalizeIsoDate(enriched.eim_completed_on);
+  const eimExpires = normalizeIsoDate(enriched.eim_expires_on);
   const stmt = db.prepare(
     `INSERT INTO persons (
        code, given_name_ct, family_name_ct, middle_name_ct, prefix_ct, suffix_ct,
        display_name_ct, given_name_hash, family_name_hash,
        date_of_birth_ct, gender_ct, notes_ct,
-       employer_ct, title_ct, do_not_contact, do_not_contact_reason_ct, not_living_together
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       employer_ct, title_ct, do_not_contact, do_not_contact_reason_ct, not_living_together,
+       eim_status, eim_completed_on, eim_expires_on, eim_notes_ct
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   stmt.run(
     code,
@@ -82,6 +121,10 @@ function create(db, secrets, input) {
     input.do_not_contact ? 1 : 0,
     enc.encrypt(secrets, input.do_not_contact_reason),
     input.not_living_together ? 1 : 0,
+    eimStatus,
+    eimCompleted,
+    eimExpires,
+    enc.encrypt(secrets, input.eim_notes),
   );
   return code;
 }
@@ -131,6 +174,16 @@ function update(db, secrets, code, patch) {
   };
   const dnc = 'do_not_contact' in patch ? (patch.do_not_contact ? 1 : 0) : (existing.do_not_contact || 0);
   const nlt = 'not_living_together' in patch ? (patch.not_living_together ? 1 : 0) : (existing.not_living_together || 0);
+  // Auto-derive expiration when the operator updates only the completion
+  // date. If they explicitly clear or override eim_expires_on, the patch
+  // wins.
+  const eimPatch = eim.deriveExpiration(db, patch);
+  const eimStatus = 'eim_status' in eimPatch ? normalizeEimStatus(eimPatch.eim_status) : (existing.eim_status || null);
+  const eimCompleted = 'eim_completed_on' in eimPatch ? normalizeIsoDate(eimPatch.eim_completed_on) : (existing.eim_completed_on || null);
+  const eimExpires = 'eim_expires_on' in eimPatch ? normalizeIsoDate(eimPatch.eim_expires_on) : (existing.eim_expires_on || null);
+  const eimNotesCt = 'eim_notes' in patch
+    ? enc.encrypt(secrets, patch.eim_notes)
+    : existing.eim_notes_ct;
   const display = patch.display_name || buildDisplayName(merged);
   db.prepare(
     `UPDATE persons SET
@@ -138,6 +191,7 @@ function update(db, secrets, code, patch) {
        suffix_ct = ?, display_name_ct = ?, given_name_hash = ?, family_name_hash = ?,
        date_of_birth_ct = ?, gender_ct = ?, notes_ct = ?,
        employer_ct = ?, title_ct = ?, do_not_contact = ?, do_not_contact_reason_ct = ?, not_living_together = ?,
+       eim_status = ?, eim_completed_on = ?, eim_expires_on = ?, eim_notes_ct = ?,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
      WHERE code = ?`
   ).run(
@@ -157,6 +211,10 @@ function update(db, secrets, code, patch) {
     dnc,
     enc.encrypt(secrets, merged.do_not_contact_reason),
     nlt,
+    eimStatus,
+    eimCompleted,
+    eimExpires,
+    eimNotesCt,
     target
   );
   return target;
@@ -201,6 +259,12 @@ function merge(db, secrets, loserCode, winnerCode) {
     db.prepare('UPDATE OR IGNORE person_addresses SET person_code = ? WHERE person_code = ?').run(winner, loser);
     db.prepare('DELETE FROM person_addresses WHERE person_code = ?').run(loser);
     db.prepare('UPDATE provenance SET entity_code = ? WHERE entity_code = ?').run(winner, loser);
+
+    // Move ministry assignments. The active-row uniqueness index on
+    // ministry_assignments would reject a stacked second active row, so
+    // duplicates get ended on the loser before the rest get re-pointed.
+    const ministries = require('./ministries');
+    ministries.repointPersonAssignments(db, loser, winner);
 
     db.prepare(
       `UPDATE persons SET status = 'merged', merged_into = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`

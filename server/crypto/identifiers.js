@@ -16,6 +16,8 @@ const PREFIXES = {
   audit: 'au_',
   rule: 'rule_',
   profile: 'prof_',
+  ministry: 'min_',
+  ministry_assignment: 'ma_',
 };
 
 const PREFIX_TO_KIND = Object.fromEntries(

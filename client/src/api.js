@@ -156,6 +156,31 @@ export const api = {
   removeRelationship: code => request('DELETE', `/api/relationships/${code}`),
 
   // Live API connectors (FACTS, Ministry Platform).
+  // Volunteer ministries and EIM (Ethics and Integrity in Ministry) cert.
+  listMinistries: (params) => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/ministries${qs ? `?${qs}` : ''}`);
+  },
+  getMinistry: code => request('GET', `/api/ministries/${code}`),
+  createMinistry: body => request('POST', '/api/ministries', body),
+  updateMinistry: (code, body) => request('PATCH', `/api/ministries/${code}`, body),
+  archiveMinistry: code => request('DELETE', `/api/ministries/${code}`),
+  assignMinistry: (code, body) => request('POST', `/api/ministries/${code}/assignments`, body),
+  endMinistryAssignment: (code, body) => request('DELETE', `/api/ministries/assignments/${code}`, body),
+  ministriesForPerson: (code, params) => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/ministries/by-person/${code}${qs ? `?${qs}` : ''}`);
+  },
+  ministriesForFamily: (code, params) => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/ministries/by-family/${code}${qs ? `?${qs}` : ''}`);
+  },
+  eimExpiring: params => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/ministries/eim/expiring${qs ? `?${qs}` : ''}`);
+  },
+  eimRecompute: () => request('POST', '/api/ministries/eim/recompute'),
+
   listConnectors: () => request('GET', '/api/connectors'),
   getConnector: name => request('GET', `/api/connectors/${name}`),
   setConnectorCredentials: (name, body) => request('POST', `/api/connectors/${name}/credentials`, body),

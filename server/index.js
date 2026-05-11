@@ -35,7 +35,9 @@ const buildNotifications = require('./api/notifications');
 const buildScan = require('./api/scan');
 const buildIdentityApi = require('./api/identity');
 const buildConnectors = require('./api/connectors');
+const buildMinistries = require('./api/ministries');
 const connectorScheduler = require('./connectors/scheduler');
+const eim = require('./identity/eim');
 
 // method2scope: chooses one of two scoped middlewares depending on the HTTP
 // method. GET/HEAD use the read middleware; everything else uses the write
@@ -103,6 +105,9 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/identity', method2scope(bearerRead, bearerWrite), buildIdentityApi({ db, secrets, thresholds }));
   app.use('/api/connectors', bearerImport, buildConnectors({ db, secrets, thresholds }));
   app.use('/api/connector-runs', bearerRead, buildConnectors.buildRunsRouter({ db }));
+  // Volunteer ministries + EIM. Reads are gated on pii.read because per-
+  // assignment notes can contain operator commentary; writes need pii.write.
+  app.use('/api/ministries', method2scope(bearerRead, bearerWrite), buildMinistries({ db, secrets, includePii: true }));
 
   // Static client (built React UI).
   const clientDir = path.join(__dirname, '..', 'client', 'dist');
@@ -173,6 +178,17 @@ function start() {
     if (days) audit.sweep(db, days);
   }, 24 * 60 * 60 * 1000);
   sweepInterval.unref();
+
+  // Daily EIM expiration sweep. Flips certified rows whose eim_expires_on
+  // has passed into 'expired' so the dashboard surfaces lapses without
+  // waiting for an operator action. Runs once at boot, then every 24h.
+  try { eim.recomputeStatus(db); } catch (_) { /* boot-safe */ }
+  const eimSweep = setInterval(() => {
+    try { eim.recomputeStatus(db); } catch (e) {
+      log.error('eim.recompute_failed', { message: e.message, stack: e.stack });
+    }
+  }, 24 * 60 * 60 * 1000);
+  eimSweep.unref();
 
   // Conflict-assignment expiry sweep. Runs every 15 minutes; on first start we
   // also run it once so a process restart doesn't leave expired assignments

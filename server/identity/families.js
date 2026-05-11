@@ -176,6 +176,11 @@ function merge(db, secrets, loserCode, winnerCode) {
     db.prepare('UPDATE relationships SET to_code = ? WHERE to_code = ?').run(winner, loser);
     db.prepare('UPDATE provenance SET entity_code = ? WHERE entity_code = ?').run(winner, loser);
 
+    // Carry the loser's ministry assignments onto the winner. Whole-family
+    // rosters (Coffee & Donuts: the Smith family) survive the merge.
+    const ministries = require('./ministries');
+    ministries.repointFamilyAssignments(db, loser, winner);
+
     db.prepare(
       `UPDATE families SET status = 'merged', merged_into = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
     ).run(winner, loser);

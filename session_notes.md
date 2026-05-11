@@ -1622,4 +1622,156 @@ parish] confirms the read-only flow is solid.
 
 ---
 
+## v11 follow-up — EIM certification + volunteer ministry rosters
+
+The operator at the pilot parish kept asking the same question
+off-band: who on this Lectors list still has a current EIM cert?
+The ministry rosters lived in spreadsheets and the cert-tracking
+lived in a binder, so every Sunday morning came with a "is Mary
+still good?" stall. v11 puts both into Family Graph.
+
+### What shipped
+
+**Schema migration 0011** adds four EIM fields to `persons` and
+two new tables. Status, completion date, and expiration date are
+plaintext on persons (queryable - the dashboard needs to ask "who
+expires in 30 days?" without decrypting the whole table); only
+the free-form notes column lands as ciphertext.
+`eim_expires_on` and `eim_status` are indexed for the
+expiring-soon report.
+
+`ministries` is a catalog row per volunteer roster (Lectors,
+Eucharistic Ministers, Coffee & Donuts, etc.), with a
+`requires_eim` flag the dashboard can join against to flag stale
+certs. `ministry_assignments` puts a person OR a family on a
+ministry — never both — with a partial unique index that prevents
+duplicate active assignments. Whole-family rotations were a
+deliberate choice; the operator already keeps "the Smith family"
+on hospitality rotations and forcing one-or-the-other distorts
+the data they actually keep.
+
+**Renewal cycle** is configurable in settings as
+`eim.renewal_years` (default 3, common diocesan value). When the
+operator supplies only a completion date, the people identity
+layer auto-fills `eim_expires_on = completed_on + renewal_years`
+via `server/identity/eim.js`. Explicit expiration always wins
+over auto-derivation, so a one-off shorter cert (a six-month
+provisional, say) doesn't get clobbered.
+
+**Daily expiration sweep** runs at boot and every 24h: any
+`certified` row whose `eim_expires_on` is past today flips to
+`expired`. Implemented as a cheap UPDATE on the indexed column;
+runs alongside the existing audit-retention sweep.
+
+**API surface** mounts at `/api/ministries` under the same
+`pii.read` / `pii.write` scope split as people and families.
+Endpoints: catalog CRUD, assignment create/end, by-person and
+by-family listings, plus `/eim/expiring` (no PII fields in the
+response — safe for any read scope) and an explicit
+`/eim/recompute` trigger so the operator can force a sweep
+without waiting 24h.
+
+**Person merge** carries ministry assignments onto the winner.
+If the loser was already on the same ministry as the winner, the
+loser's row is ended rather than stacked, mirroring how
+memberships handle the same conflict. Same treatment for
+`family.merge` and family-level rosters.
+
+**Client UI**: PersonDetail gains an EIM panel (status badge in
+the header, completed/expires date inputs, encrypted notes field)
+and a Ministries panel listing the person's active rosters with
+inline End buttons and an Add form sourced from the catalog.
+FamilyDetail gets the family-level Ministries panel for
+whole-household rotations. New `/ministries` route lists the
+catalog, surfaces certs expiring soon, and exposes the manual
+recompute button.
+
+### Design trade-offs
+
+**Why plaintext EIM dates.** The convention in this repo is
+encrypt-by-default for anything personal, and this rule was worth
+breaking. The "expiring in 30 days" report is the whole point of
+tracking the cert; if the date column is encrypted we either
+decrypt every row on every dashboard load (slow, leaky) or we
+never get the report. The dates aren't personally identifying on
+their own — they're a flag and two dates that say "compliant /
+not." The diocese-and-vendor commentary that *would* be PII goes
+into `eim_notes_ct`, encrypted.
+
+**Why "exactly one of person_code or family_code".** Some
+parishes track Coffee & Donuts as "the Smiths" rather than
+picking a member. Other ministries (Lectors, Cantors) only make
+sense per-person. Letting the row toggle keeps the data shape
+honest to how the operator already files it, and the partial
+unique indexes keep the "active assignment" invariant clean.
+
+**Why `eim_status` as text rather than derived.** It feels
+redundant with the dates, but the operator needs a way to mark
+someone as `pending` (paperwork in flight) before any dates
+exist, and to manually flip to `expired` for a cert revocation
+that wasn't a normal calendar lapse. The boot-time sweep handles
+the common certified→expired transition; the column lets the
+operator override.
+
+### By the numbers (v11)
+
+- 296 server tests passing (was 263, +14 in
+  `tests/eim-ministries.test.js` and +19 in
+  `tests/eim-ministries-edges.test.js`).
+- 11 new HTTP endpoints under `/api/ministries`.
+- 1 new migration (0011), 1 new schema version (11), 2 new ID
+  prefixes (`min_`, `ma_`).
+- 6 new files (`server/identity/ministries.js`,
+  `server/identity/eim.js`, `server/api/ministries.js`,
+  `client/src/views/Ministries.jsx`,
+  `tests/eim-ministries.test.js`,
+  `tests/eim-ministries-edges.test.js`).
+
+### Bugs caught and fixed during the second pass
+
+After the first cut shipped, an edges-test pass surfaced three
+issues:
+
+**1. Unique ministry name index was global.** `ministries_name_idx`
+was a plain unique index, so archiving "Choir" then trying to
+re-create "Choir" hit a constraint violation. Fix: rebuilt as a
+partial unique index `WHERE status = 'active'`. Now the operator
+can archive a roster and re-introduce one with the same name
+later (the historical row stays put). Both the migration and
+`schema.sql` were updated; on a fresh DB the partial index applies
+from the start.
+
+**2. Archived ministries accepted new assignments.** The
+`assign()` path checked that the ministry existed but not that it
+was active, so a roster the operator deliberately retired could
+quietly grow. Fix: `assign()` now throws `ministry is archived;
+un-archive before adding new assignments` and the API returns
+400. Existing assignments on an archived ministry are preserved
+(separate test confirms).
+
+**3. Date / status validation returned 500 instead of 400.** The
+people POST/PATCH paths didn't catch the validation throws from
+`normalizeIsoDate` and `normalizeEimStatus`, so a typo in the
+date format produced an opaque "internal error" instead of a
+useful message. Fix: both routes now wrap the call in try/catch
+and return 400 with the validator's message.
+
+Ran the full suite again (all 296 passing) and confirmed the
+client builds clean (Vite v5.4.21 → 297 KB JS, 15 KB CSS).
+
+### Throughline
+
+v11 is the first time Family Graph carries operational state
+beyond identity — who someone *is* gets a sibling now, *what
+role they play this Sunday*. The encryption and audit conventions
+held: the only field that landed as ciphertext was the free-form
+notes on a cert (potentially "completed via [diocese] with a
+waiver because [reason]"), and every assignment write goes to
+`audit_events` so the operator can replay how a roster came to
+look the way it does. The expiring-soon endpoint deliberately
+returns no PII so a future "send a renewal nudge" workflow can
+read it from a less-trusted scope.
+
+---
+
 *End of session notes*
