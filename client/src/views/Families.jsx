@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useFG } from '../store.js';
@@ -64,20 +64,10 @@ export default function Families() {
     }
   }
 
-  // Server already filters via family_name_hash when ?q is set. Keep an
-  // additional client-side display_name pass for cases where the operator
-  // types a partial household label that doesn't match a member's surname.
-  const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(f => {
-      const dn = (f.display_name || '').toLowerCase();
-      const code = (f.code || '').toLowerCase();
-      // Server-side surname match already in items[]; this just narrows
-      // further when the operator's query contains punctuation/spaces.
-      return dn.includes(q) || code.includes(q) || items.length;
-    });
-  }, [items, filter]);
+  // Server filters via family_name_hash when ?q is set, so items[] is
+  // already the right list. We do not double-filter on the client — a
+  // family whose display_name is null would otherwise vanish even though
+  // the surname hash matched.
 
   return (
     <>
@@ -85,7 +75,7 @@ export default function Families() {
       {error && <div className="panel error">Error: {error}</div>}
 
       <div className="panel">
-        <h3>{filtered.length} of {items.length}{pseudo ? ' · pseudonym surface' : ''}</h3>
+        <h3>{items.length}{pseudo ? ' · pseudonym surface' : ''}</h3>
         <div className="row" style={{ marginBottom: 12 }}>
           <input
             placeholder={pseudo ? 'Search by code (f_…)' : 'Search by family name (e.g., "Smith")'}
@@ -93,15 +83,22 @@ export default function Families() {
             onChange={e => setFilter(e.target.value)}
             style={{ flex: 1 }}
             data-testid="families-search"
+            aria-label="Search families"
           />
           {filter && <button onClick={() => setFilter('')}>Clear</button>}
         </div>
 
         {items.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>
-            No families yet. <Link to="/import">Import a roster</Link> to populate the directory,
-            or add one manually below.
-          </p>
+          filter ? (
+            <p className="muted" style={{ margin: 0 }}>
+              No families match &quot;{filter}&quot;. Try a shorter prefix or clear the search.
+            </p>
+          ) : (
+            <p className="muted" style={{ margin: 0 }}>
+              No families yet. <Link to="/import">Import a roster</Link> to populate the directory,
+              or add one manually below.
+            </p>
+          )
         ) : (
           <table>
             <thead>
@@ -115,7 +112,7 @@ export default function Families() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(f => {
+              {items.map(f => {
                 const onDnc = !!f.do_not_contact_any;
                 return (
                   <tr key={f.code}>
@@ -155,9 +152,6 @@ export default function Families() {
                   </tr>
                 );
               })}
-              {filtered.length === 0 && (
-                <tr><td colSpan={6} className="muted">No families match "{filter}".</td></tr>
-              )}
             </tbody>
           </table>
         )}
