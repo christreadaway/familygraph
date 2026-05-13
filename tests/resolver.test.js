@@ -154,3 +154,68 @@ test('resolver > similarity edge cases', () => {
   assert.ok(resolver.similarity('abc', 'abc') === 1);
   assert.ok(resolver.similarity('Smith', 'Smyth') > 0.6);
 });
+
+test('resolver > rescorePerson tags cross-source metadata when sources differ', t => {
+  const { db, dir } = newDb();
+  const s = newSecrets();
+  t.after(() => { db.close(); cleanup(dir); });
+  const t_ = defaultThresholds();
+
+  // Import the same person from two different sources so each row carries
+  // provenance pointing at a distinct source. rescorePerson should pick that
+  // up and tag the conflict as cross_source.
+  const row1 = {
+    persons: [{ given_name: 'Pio', family_name: 'Pietrelcina', role: 'parent' }],
+    family: { display_name: 'Pietrelcina' },
+  };
+  const row2 = {
+    persons: [{ given_name: 'Pio', family_name: 'Pietrelcina', role: 'parent' }],
+    family: { display_name: 'Pietrelcina' },
+  };
+  const r1 = importPipeline.importRow(db, s, t_, row1, { source: 'school_roster' });
+  const r2 = importPipeline.importRow(db, s, t_, row2, { source: 'parish_directory' });
+
+  const matches = resolver.rescorePerson(db, s, t_, r2.persons[0].code);
+  assert.ok(matches.length >= 1);
+  const open = conflictsMod.list(db, { status: 'open' });
+  // r1 imported as same display_name and identical persons — already
+  // enqueued a conflict on the import path. rescorePerson is idempotent
+  // and skips that. Look for any open conflict that links the two codes.
+  const pair = open.find(c =>
+    (c.left_code === r1.persons[0].code && c.right_code === r2.persons[0].code) ||
+    (c.left_code === r2.persons[0].code && c.right_code === r1.persons[0].code)
+  );
+  assert.ok(pair, 'an open conflict for the pair exists');
+  assert.ok(pair.metadata, 'cross-source metadata is set');
+  assert.equal(pair.metadata.cross_source, true);
+  assert.deepEqual(
+    pair.metadata.sources.slice().sort(),
+    ['parish_directory', 'school_roster'].sort(),
+  );
+});
+
+test('resolver > sticky non-match prevents rescorePerson re-flagging', t => {
+  const { db, dir } = newDb();
+  const s = newSecrets();
+  t.after(() => { db.close(); cleanup(dir); });
+  const t_ = defaultThresholds();
+
+  const a = people.create(db, s, { given_name: 'Pio', family_name: 'Pietrelcina' });
+  const b = people.create(db, s, { given_name: 'Pio', family_name: 'Pietrelcina' });
+
+  // First scan opens a conflict.
+  resolver.rescorePerson(db, s, t_, b);
+  const open = conflictsMod.list(db, { status: 'open' });
+  assert.equal(open.length, 1);
+
+  // Operator rejects — sticky non-match recorded.
+  conflictsMod.resolveReject(db, open[0].code, { actor: 'operator', notes: 'father and son' });
+  assert.equal(conflictsMod.list(db, { status: 'open' }).length, 0);
+
+  // Re-running the scan must not re-open the same pair.
+  resolver.rescorePerson(db, s, t_, b);
+  assert.equal(
+    conflictsMod.list(db, { status: 'open' }).length, 0,
+    'sticky non-match suppresses re-flagging',
+  );
+});

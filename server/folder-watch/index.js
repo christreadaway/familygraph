@@ -8,6 +8,7 @@ const sources = require('../sources');
 const importPipeline = require('../identity/import');
 const sanitize = require('../sanitize');
 const audit = require('../audit');
+const log = require('../log');
 
 // Folder-watch agent. Two modes per file:
 //   *.in.csv | *.in.xlsx | drop directly  -> import into the registry.
@@ -23,6 +24,23 @@ function classify(filePath) {
   return 'unknown';
 }
 
+// Cross-device fallback for rename. fs.renameSync throws EXDEV when source
+// and destination live on different mounts (common in containerized
+// deployments where the watch dir is a bind-mounted volume). Fall back to
+// copy + unlink so the move still completes.
+function _renameOrCopy(from, to) {
+  try {
+    fs.renameSync(from, to);
+  } catch (e) {
+    if (e && e.code === 'EXDEV') {
+      fs.copyFileSync(from, to);
+      fs.unlinkSync(from);
+    } else {
+      throw e;
+    }
+  }
+}
+
 function safeMove(from, toDir) {
   fs.mkdirSync(toDir, { recursive: true, mode: 0o700 });
   const base = path.basename(from);
@@ -34,8 +52,39 @@ function safeMove(from, toDir) {
     target = path.join(toDir, `${stem}.${i}${ext}`);
     i += 1;
   }
-  fs.renameSync(from, target);
+  _renameOrCopy(from, target);
   return target;
+}
+
+// Write a sidecar without clobbering an existing one. Same numbering scheme
+// as safeMove so a re-run lands `roster.csv.import-summary.1.json` instead of
+// overwriting the prior summary.
+function _safeSidecar(dir, baseName, content) {
+  let target = path.join(dir, baseName);
+  let i = 1;
+  while (fs.existsSync(target)) {
+    const ext = path.extname(baseName);
+    const stem = baseName.slice(0, baseName.length - ext.length);
+    target = path.join(dir, `${stem}.${i}${ext}`);
+    i += 1;
+  }
+  fs.writeFileSync(target, content);
+  return target;
+}
+
+// Classify a thrown error into a short category so operators can scan
+// folder-watch errors without reading the stack. EACCES/EPERM → permissions.
+// ENOENT → file vanished between detection and processing.
+function _errorCategory(e) {
+  if (!e) return 'unknown';
+  const code = e.code || (e.cause && e.cause.code);
+  if (code === 'EACCES' || code === 'EPERM') return 'permission_denied';
+  if (code === 'ENOENT') return 'file_missing';
+  if (code === 'EISDIR') return 'is_directory';
+  if (code === 'EMFILE' || code === 'ENFILE') return 'too_many_open_files';
+  if (code === 'EXDEV') return 'cross_device';
+  if (/parse|CSV|delimiter|encoding/i.test(String(e.message || ''))) return 'malformed_input';
+  return 'other';
 }
 
 function processFile(db, secrets, thresholds, filePath, opts = {}) {
@@ -43,7 +92,10 @@ function processFile(db, secrets, thresholds, filePath, opts = {}) {
   const outDir = opts.outDir;
   const processedDir = path.join(outDir, 'processed');
   const errorDir = path.join(outDir, 'errors');
+  const baseName = path.basename(filePath);
   fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
+
+  log.info('folder_watch_file_seen', { file: baseName, kind });
 
   try {
     if (kind === 'csv' || kind === 'excel') {
@@ -66,56 +118,85 @@ function processFile(db, secrets, thresholds, filePath, opts = {}) {
           persons: r.persons.map(p => ({ code: p.code, action: p.action })),
         })),
       };
-      const sidecar = path.join(outDir, `${path.basename(filePath)}.import-summary.json`);
-      fs.writeFileSync(sidecar, JSON.stringify(summary, null, 2));
+      const sidecar = _safeSidecar(outDir, `${baseName}.import-summary.json`, JSON.stringify(summary, null, 2));
       safeMove(filePath, processedDir);
       audit.record(db, {
         action: 'folder_watch_import',
         actor: 'folder_watch',
-        metadata: { file: parsed.fileName, rows: parsed.canonical.length },
+        metadata: {
+          file: parsed.fileName,
+          rows: parsed.canonical.length,
+          import_run: batch.importRunCode,
+          totals: batch.totals,
+        },
+      });
+      log.info('folder_watch_imported', {
+        file: baseName,
+        rows: parsed.canonical.length,
+        import_run: batch.importRunCode,
+        sidecar: path.basename(sidecar),
       });
       return { ok: true, kind: 'import', summary };
     }
     if (kind === 'text') {
       const content = fs.readFileSync(filePath, 'utf8');
       const r = sanitize.sanitizeText(db, secrets, content, { actor: 'folder_watch' });
-      const base = path.basename(filePath);
-      const ext = path.extname(base);
-      const stem = base.slice(0, base.length - ext.length);
-      const sanitizedPath = path.join(outDir, `${stem}.sanitized${ext}`);
-      const sidecarPath = path.join(outDir, `${stem}.token-set.json`);
-      fs.writeFileSync(sanitizedPath, r.sanitized);
-      fs.writeFileSync(
-        sidecarPath,
-        JSON.stringify({ tokenSet: r.tokenSet, file: base }, null, 2)
-      );
+      const ext = path.extname(baseName);
+      const stem = baseName.slice(0, baseName.length - ext.length);
+      const sanitizedPath = _safeSidecar(outDir, `${stem}.sanitized${ext}`, r.sanitized);
+      _safeSidecar(outDir, `${stem}.token-set.json`, JSON.stringify({ tokenSet: r.tokenSet, file: baseName }, null, 2));
       safeMove(filePath, processedDir);
+      log.info('folder_watch_sanitized', { file: baseName, sanitized: path.basename(sanitizedPath) });
       return { ok: true, kind: 'sanitize', sanitized: sanitizedPath, tokenSet: r.tokenSet };
     }
     // Unknown: move to errors with note.
     const dest = safeMove(filePath, errorDir);
     fs.writeFileSync(dest + '.error.txt', 'Unsupported file type for folder-watch agent.');
+    log.warn('folder_watch_unsupported', { file: baseName });
     return { ok: false, kind: 'unknown' };
   } catch (e) {
+    const category = _errorCategory(e);
     fs.mkdirSync(errorDir, { recursive: true, mode: 0o700 });
     let dest;
     try { dest = safeMove(filePath, errorDir); } catch { dest = filePath; }
-    fs.writeFileSync(dest + '.error.txt', String(e && e.stack ? e.stack : e));
+    try { fs.writeFileSync(dest + '.error.txt', String(e && e.stack ? e.stack : e)); }
+    catch (_writeErr) { /* swallow — disk errors here are documented in the log line below */ }
     audit.record(db, {
       action: 'folder_watch_error',
       actor: 'folder_watch',
-      metadata: { file: path.basename(filePath), error: String(e.message || e) },
+      metadata: { file: baseName, error: String(e.message || e), category, code: e && e.code || null },
     });
-    return { ok: false, kind: 'error', error: String(e.message || e) };
+    log.error('folder_watch_error', {
+      file: baseName,
+      kind,
+      category,
+      code: e && e.code || null,
+      error: String(e.message || e),
+    });
+    return { ok: false, kind: 'error', category, code: e && e.code || null, error: String(e.message || e) };
   }
 }
 
 function start(db, secrets, thresholds, opts) {
-  const watchDir = opts.watchDir;
-  const outDir = opts.outDir;
+  const watchDir = path.resolve(opts.watchDir);
+  const outDir = path.resolve(opts.outDir);
   const onProcessed = typeof opts.onProcessed === 'function' ? opts.onProcessed : null;
+
+  // Refuse to start if outDir is the same as watchDir or sits inside it.
+  // The sidecars we write (.import-summary.json, .sanitized, .token-set.json)
+  // land directly in outDir; if outDir == watchDir, chokidar's depth-0
+  // listener will re-detect them and loop forever. Even with depth > 0,
+  // nesting outDir inside watchDir is a foot-gun that's better caught at boot.
+  if (outDir === watchDir) {
+    throw new Error('folder-watch: outDir must not equal watchDir (would re-process sidecar files)');
+  }
+  if (outDir.startsWith(watchDir + path.sep)) {
+    throw new Error('folder-watch: outDir must not be inside watchDir (would re-process sidecar files)');
+  }
   fs.mkdirSync(watchDir, { recursive: true, mode: 0o700 });
   fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
+
+  log.info('folder_watch_started', { watchDir, outDir, processExisting: !!opts.processExisting });
 
   // Optionally process whatever is already in the watch dir at startup. Useful
   // when files were dropped while Family Graph was down. Off by default — a fresh
@@ -145,6 +226,9 @@ function start(db, secrets, thresholds, opts) {
     if (path.basename(filePath).startsWith('.')) return;
     const r = processFile(db, secrets, thresholds, filePath, { outDir, ...opts });
     if (onProcessed && r && r.ok !== false) onProcessed(r);
+  });
+  watcher.on('error', e => {
+    log.error('folder_watch_watcher_error', { error: String(e && e.message || e), code: e && e.code || null });
   });
   return { watcher, processFile: fp => processFile(db, secrets, thresholds, fp, { outDir, ...opts }) };
 }

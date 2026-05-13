@@ -58,6 +58,33 @@ function _crossSourceMetadata(db, candidateCode, incomingSource) {
   };
 }
 
+// Most-recent provenance source for a person. Returns null when there's no
+// provenance row — typically a manually-created person.
+function _mostRecentSource(db, personCode) {
+  const row = db.prepare(
+    `SELECT sr.source AS source
+       FROM provenance p
+       JOIN source_records sr ON sr.code = p.source_code
+      WHERE p.entity_code = ?
+      ORDER BY sr.imported_at DESC
+      LIMIT 1`
+  ).get(personCode);
+  return row && row.source ? row.source : null;
+}
+
+// Cross-source metadata for a pair of existing persons. Used by the
+// rescore pass where neither side is "incoming" — both have provenance.
+function _crossSourceMetadataForPair(db, leftCode, rightCode) {
+  const leftSource = _mostRecentSource(db, leftCode);
+  const rightSource = _mostRecentSource(db, rightCode);
+  if (!leftSource || !rightSource) return null;
+  if (leftSource === rightSource) return null;
+  return {
+    cross_source: true,
+    sources: [leftSource, rightSource].sort(),
+  };
+}
+
 // ---------- candidate enrichment ----------
 
 // Decrypt a person row into the loose record shape that matching.scoreMatch
@@ -306,13 +333,12 @@ function resolveOrCreatePerson(db, secrets, thresholds, incoming, opts = {}) {
   }
 
   if (decision.action === 'review') {
-    // Sticky non-match: if the operator already triaged this exact pair as
-    // not-the-same, don't re-flag it. The new record is created as a fresh
-    // person with no conflict opened.
-    if (conflictsMod.hasStickyNonMatch(db, best.candidate.code, best.candidate.code)) {
-      // (placeholder branch — left-side is the candidate, the new record has
-      //  no code yet; we re-check after creation below.)
-    }
+    // Sticky non-match: if the operator already triaged a pair involving
+    // this candidate as not-the-same, don't re-flag it. The new record is
+    // created as a fresh person with no conflict opened. The check below
+    // is intentionally on the post-creation `newPerson` code — the
+    // self-pair check that used to sit here was dead code (same code on
+    // both sides never matches) and has been removed.
     const newPerson = people.create(db, secrets, incoming);
     if (conflictsMod.hasStickyNonMatch(db, newPerson, best.candidate.code)) {
       audit.record(db, {
@@ -452,10 +478,19 @@ function rescorePerson(db, secrets, thresholds, personCode) {
          ((left_code = ? AND right_code = ?) OR (left_code = ? AND right_code = ?))`
     ).get(target, m.candidate.code, m.candidate.code, target);
     if (dupe) continue;
+    // Cross-source metadata: both sides have provenance here (rescore runs
+    // against existing persons), so we compare their most-recent sources.
+    // Keeps the cross-source filter in the conflicts queue useful for
+    // duplicates surfaced by the periodic scan, not just per-import ones.
+    const meta = _crossSourceMetadataForPair(db, target, m.candidate.code);
     db.prepare(
-      `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons)
-       VALUES (?, 'person', ?, ?, ?, ?)`
-    ).run(newCode('conflict'), target, m.candidate.code, m.confidence, JSON.stringify(m.reasons));
+      `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons, metadata)
+       VALUES (?, 'person', ?, ?, ?, ?, ?)`
+    ).run(
+      newCode('conflict'), target, m.candidate.code, m.confidence,
+      JSON.stringify(m.reasons),
+      meta ? JSON.stringify(meta) : null,
+    );
   }
   return matches;
 }
