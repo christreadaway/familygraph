@@ -437,11 +437,23 @@ through whatever its native rows look like.
 
 ### ParentPoint × FamilyGraph contract (`/v1/...`)
 
-A separate, versioned API surface for the ParentPoint integration. The
-contract (read / write objects, webhook shape, idempotency rules,
-versioning) is documented in
-[`FAMILYGRAPH_INTEGRATION.md`](./FAMILYGRAPH_INTEGRATION.md); the
-as-built endpoints are summarised in Appendix A + Appendix B of that file.
+A separate, versioned API surface for the ParentPoint integration.
+
+**Documentation map:**
+- [`FAMILYGRAPH_INTEGRATION.md`](./FAMILYGRAPH_INTEGRATION.md) — the
+  contract spec. Read this first. Appendices A / B / C document the
+  v0.1 launch, v0.2 additions (per-school overrides, dioceses,
+  restorable deletions), and the audit-pass bug fixes.
+- [`INTEGRATION_GUIDE.md`](./INTEGRATION_GUIDE.md) — generic,
+  app-agnostic reference for any sibling app that wants to consume
+  FamilyGraph as the identity layer. Use this when wiring a future
+  app (parish faith-formation, school-events, etc.) on top of the
+  same hub.
+- [`PARENTPOINT_INTEGRATION_GUIDE.md`](./PARENTPOINT_INTEGRATION_GUIDE.md)
+  — ParentPoint-specific implementation guide. Step-by-step on the
+  PP side: HTTP client, read flows, write flows, per-school consent
+  overrides, diocesan EIM, webhook handlers, archive / reinstate,
+  standalone → connected migration, common pitfalls.
 
 Quick sketch:
 
