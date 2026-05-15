@@ -204,15 +204,33 @@ function householdObject(db, secrets, familyCode) {
 }
 
 // Consent object for §6.3. Always returns a record — a missing row reads
-// as 'allow' for both fields (the doc's default).
-function consentObject(db, personCode) {
+// as 'allow' for both fields (the doc's default). When schoolId is
+// supplied, the effective consent (override-or-base) is returned and
+// the base values ride along under `base*` keys so the caller can
+// surface "this school override is masking the global setting" in UI.
+function consentObject(db, personCode, schoolId = null) {
   const target = aliases.resolveAlias(db, personCode);
-  const row = consentsMod.get(db, target);
+  if (!schoolId) {
+    const row = consentsMod.get(db, target);
+    return {
+      personId: target,
+      photoConsent: row.photo_consent,
+      directoryListing: row.directory_listing,
+      updatedAt: row.updated_at,
+      schoolId: null,
+      overrideApplied: false,
+    };
+  }
+  const eff = consentsMod.effective(db, target, schoolId);
   return {
     personId: target,
-    photoConsent: row.photo_consent,
-    directoryListing: row.directory_listing,
-    updatedAt: row.updated_at,
+    schoolId,
+    photoConsent: eff.photo_consent,
+    directoryListing: eff.directory_listing,
+    updatedAt: eff.updated_at,
+    overrideApplied: !!eff.override_applied,
+    basePhotoConsent: eff.base_photo_consent || null,
+    baseDirectoryListing: eff.base_directory_listing || null,
   };
 }
 

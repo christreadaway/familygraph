@@ -42,6 +42,8 @@ const certifications = pp.certifications;
 const schoolContext = pp.schoolContext;
 const webhooks = pp.webhooks;
 const changes = pp.changes;
+const dioceses = pp.dioceses;
+const history = require('../identity/history');
 
 const CONTRACT_VERSION = 'v0.1';
 const ACCEPTED_VERSIONS = new Set([CONTRACT_VERSION]);
@@ -57,11 +59,11 @@ function sendWithEtag(res, body, { cacheSeconds = READ_CACHE_SECONDS } = {}) {
 }
 
 // Helper: emit a webhook for an entity change. Best-effort; the webhook
-// dispatcher will retry pending deliveries on its next tick if no
-// subscriptions are registered we silently no-op.
-function emitWebhook(db, secrets, { event, personCode = null, familyCode = null, schoolHints = [] }) {
+// dispatcher will retry pending deliveries on its next tick. If no
+// subscription matches the event/school combination, we silently no-op.
+function emitWebhook(db, secrets, { event, personCode = null, familyCode = null, schoolHints = [], extra = null }) {
   try {
-    webhooks.enqueue(db, secrets, { event, personCode, familyCode, schoolHints });
+    webhooks.enqueue(db, secrets, { event, personCode, familyCode, schoolHints, extra });
   } catch (e) {
     log.warn('pp_webhook.enqueue_failed', { event, error: String(e && e.message || e) });
   }
@@ -356,16 +358,39 @@ function build({ db, secrets }) {
   });
 
   // POST /v1/persons/:id/photoConsent — update consent.
+  // When the body or query carries a `schoolId`, the write targets the
+  // per-school override row (migration 0013). When `schoolId` is absent,
+  // the identity-level base is updated as before.
   r.post('/persons/:personId/photoConsent', (req, res) => {
     if (!isValidCode(req.params.personId, 'person')) {
       return res.status(400).json({ error: 'invalid_person_id' });
     }
     const body = req.body || {};
+    const schoolId = body.schoolId || body.school_id || req.query.schoolId || null;
+    const auditMeta = {
+      photo_consent: body.photoConsent || null,
+      directory_listing: body.directoryListing || null,
+    };
+    const audCtx = {
+      actor: req.auth?.actor || 'parentpoint',
+      actorKind: req.auth?.kind || null,
+      requestId: req.ppContract.requestId || null,
+    };
     try {
-      consents.set(db, req.params.personId, {
-        photoConsent: body.photoConsent || body.photo_consent,
-        directoryListing: body.directoryListing || body.directory_listing,
-      });
+      if (schoolId) {
+        consents.setOverride(db, req.params.personId, schoolId, {
+          photoConsent: body.photoConsent || body.photo_consent,
+          directoryListing: body.directoryListing || body.directory_listing,
+        }, audCtx);
+        auditMeta.school_id = schoolId;
+        auditMeta.scope = 'school_override';
+      } else {
+        consents.set(db, req.params.personId, {
+          photoConsent: body.photoConsent || body.photo_consent,
+          directoryListing: body.directoryListing || body.directory_listing,
+        }, audCtx);
+        auditMeta.scope = 'identity_base';
+      }
     } catch (e) {
       const m = String(e.message || e);
       if (/not found/.test(m)) return res.status(404).json({ error: 'not_found' });
@@ -376,17 +401,59 @@ function build({ db, secrets }) {
       actor: req.auth?.actor || 'parentpoint',
       entityCode: req.params.personId,
       entityKind: 'person',
-      metadata: {
-        photo_consent: body.photoConsent || null,
-        directory_listing: body.directoryListing || null,
-      },
+      metadata: auditMeta,
     });
     emitWebhook(db, secrets, {
       event: 'consent.updated',
       personCode: req.params.personId,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: schoolId ? [schoolId]
+        : (req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : []),
+      extra: schoolId ? { schoolId } : null,
     });
-    return res.json({ consent: objects.consentObject(db, req.params.personId) });
+    const responseConsent = objects.consentObject(db, req.params.personId, schoolId || null);
+    return res.json({ consent: responseConsent });
+  });
+
+  // DELETE /v1/persons/:id/photoConsent?schoolId=... — clear a per-school override.
+  r.delete('/persons/:personId/photoConsent', (req, res) => {
+    if (!isValidCode(req.params.personId, 'person')) {
+      return res.status(400).json({ error: 'invalid_person_id' });
+    }
+    const schoolId = req.query.schoolId || req.query.school_id;
+    if (!schoolId) return res.status(400).json({ error: 'schoolId required to clear an override' });
+    try {
+      consents.clearOverride(db, req.params.personId, schoolId, {
+        actor: req.auth?.actor || 'parentpoint',
+        actorKind: req.auth?.kind || null,
+        requestId: req.ppContract.requestId || null,
+      });
+    } catch (e) {
+      const m = String(e.message || e);
+      if (/not found/.test(m)) return res.status(404).json({ error: 'not_found' });
+      return res.status(400).json({ error: m });
+    }
+    audit.record(db, {
+      action: 'pp_consent_override_clear',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: req.params.personId, entityKind: 'person',
+      metadata: { school_id: schoolId },
+    });
+    emitWebhook(db, secrets, {
+      event: 'consent.updated', personCode: req.params.personId,
+      schoolHints: [schoolId], extra: { schoolId },
+    });
+    return res.status(204).end();
+  });
+
+  // GET /v1/persons/:id/consent/overrides — list every per-school override
+  // that's active for this person. Useful for the operator UI that wants
+  // to render "Annie has 2 overrides — at St Theresa and St John's".
+  r.get('/persons/:personId/consent/overrides', (req, res) => {
+    if (!isValidCode(req.params.personId, 'person')) {
+      return res.status(400).json({ error: 'invalid_person_id' });
+    }
+    const items = consents.listOverridesForPerson(db, req.params.personId);
+    return sendWithEtag(res, { items });
   });
 
   // POST /v1/persons/:id/eimCertifications — add/extend EIM cert.
@@ -447,6 +514,84 @@ function build({ db, secrets }) {
     });
     const stored = schoolContext.getOne(db, req.params.personId, body.schoolId || body.school_id);
     return res.status(201).json({ schoolContext: stored });
+  });
+
+  // POST /v1/persons/:id/archive — soft-delete. Status flips to
+  // 'archived'; the row stays in place and the entity_changes log
+  // captures the pre-archive snapshot. Fires a `person.deleted` webhook.
+  r.post('/persons/:personId/archive', (req, res) => {
+    if (!isValidCode(req.params.personId, 'person')) {
+      return res.status(400).json({ error: 'invalid_person_id' });
+    }
+    let result;
+    try {
+      result = people.archive(db, req.params.personId, {
+        actor: req.auth?.actor || 'parentpoint',
+        actorKind: req.auth?.kind || null,
+        reason: req.body?.reason || null,
+        requestId: req.ppContract.requestId || null,
+      });
+    } catch (e) {
+      return res.status(400).json({ error: String(e.message || e) });
+    }
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    audit.record(db, {
+      action: 'pp_person_archive',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: result.code, entityKind: 'person',
+      metadata: { noop: !!result.noop, reason: req.body?.reason || null },
+    });
+    emitWebhook(db, secrets, {
+      event: 'person.deleted',
+      personCode: result.code,
+      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+    });
+    return res.json({ person: objects.personObject(db, secrets, result.code), noop: !!result.noop });
+  });
+
+  // POST /v1/persons/:id/reinstate — reverse an archive. Fires a
+  // `person.updated` webhook so PP caches reload the (now active) record.
+  r.post('/persons/:personId/reinstate', (req, res) => {
+    if (!isValidCode(req.params.personId, 'person')) {
+      return res.status(400).json({ error: 'invalid_person_id' });
+    }
+    let result;
+    try {
+      result = people.reinstate(db, req.params.personId, {
+        actor: req.auth?.actor || 'parentpoint',
+        actorKind: req.auth?.kind || null,
+        reason: req.body?.reason || null,
+        requestId: req.ppContract.requestId || null,
+      });
+    } catch (e) {
+      return res.status(400).json({ error: String(e.message || e) });
+    }
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    audit.record(db, {
+      action: 'pp_person_reinstate',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: result.code, entityKind: 'person',
+      metadata: { noop: !!result.noop, reason: req.body?.reason || null },
+    });
+    emitWebhook(db, secrets, {
+      event: 'person.updated',
+      personCode: result.code,
+      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+    });
+    return res.json({ person: objects.personObject(db, secrets, result.code), noop: !!result.noop });
+  });
+
+  // GET /v1/persons/:id/history — entity_changes log scoped to this person.
+  // Returns full snapshot rows so the caller can render a timeline of
+  // changes (and ask "show me what this person looked like before May 1").
+  r.get('/persons/:personId/history', (req, res) => {
+    if (!isValidCode(req.params.personId, 'person')) {
+      return res.status(400).json({ error: 'invalid_person_id' });
+    }
+    const items = history.listFor(db, 'person', req.params.personId, {
+      limit: Number(req.query.limit) || 100,
+    });
+    return sendWithEtag(res, { items }, { cacheSeconds: 5 });
   });
 
   // ===========================================================================
@@ -570,15 +715,198 @@ function build({ db, secrets }) {
     res.status(201).json({ household: obj, membership_code: mc });
   });
 
+  // POST /v1/households/:id/archive — soft-delete the household.
+  r.post('/households/:householdId/archive', (req, res) => {
+    if (!isValidCode(req.params.householdId, 'family')) {
+      return res.status(400).json({ error: 'invalid_household_id' });
+    }
+    let result;
+    try {
+      result = families.archive(db, req.params.householdId, {
+        actor: req.auth?.actor || 'parentpoint',
+        actorKind: req.auth?.kind || null,
+        reason: req.body?.reason || null,
+        requestId: req.ppContract.requestId || null,
+      });
+    } catch (e) {
+      return res.status(400).json({ error: String(e.message || e) });
+    }
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    audit.record(db, {
+      action: 'pp_household_archive',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: result.code, entityKind: 'family',
+      metadata: { noop: !!result.noop, reason: req.body?.reason || null },
+    });
+    emitWebhook(db, secrets, {
+      event: 'household.deleted', familyCode: result.code,
+      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+    });
+    return res.json({ household: objects.householdObject(db, secrets, result.code), noop: !!result.noop });
+  });
+
+  r.post('/households/:householdId/reinstate', (req, res) => {
+    if (!isValidCode(req.params.householdId, 'family')) {
+      return res.status(400).json({ error: 'invalid_household_id' });
+    }
+    let result;
+    try {
+      result = families.reinstate(db, req.params.householdId, {
+        actor: req.auth?.actor || 'parentpoint',
+        actorKind: req.auth?.kind || null,
+        reason: req.body?.reason || null,
+        requestId: req.ppContract.requestId || null,
+      });
+    } catch (e) {
+      return res.status(400).json({ error: String(e.message || e) });
+    }
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    audit.record(db, {
+      action: 'pp_household_reinstate',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: result.code, entityKind: 'family',
+      metadata: { noop: !!result.noop, reason: req.body?.reason || null },
+    });
+    emitWebhook(db, secrets, {
+      event: 'household.updated', familyCode: result.code,
+      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+    });
+    return res.json({ household: objects.householdObject(db, secrets, result.code), noop: !!result.noop });
+  });
+
+  r.get('/households/:householdId/history', (req, res) => {
+    if (!isValidCode(req.params.householdId, 'family')) {
+      return res.status(400).json({ error: 'invalid_household_id' });
+    }
+    const items = history.listFor(db, 'family', req.params.householdId, {
+      limit: Number(req.query.limit) || 100,
+    });
+    return sendWithEtag(res, { items }, { cacheSeconds: 5 });
+  });
+
+  // ===========================================================================
+  // DIOCESES — system-of-record for EIM
+  // ===========================================================================
+
+  r.get('/dioceses', (req, res) => {
+    const status = req.query.status || 'active';
+    const items = dioceses.list(db, secrets, {
+      status,
+      includeNotes: req.query.includeNotes === '1' || req.query.include_notes === '1',
+    });
+    return sendWithEtag(res, { items });
+  });
+
+  r.post('/dioceses', (req, res) => {
+    let code;
+    try {
+      code = dioceses.create(db, secrets, req.body || {}, {
+        actor: req.auth?.actor || 'parentpoint',
+        actorKind: req.auth?.kind || null,
+        requestId: req.ppContract.requestId || null,
+      });
+    } catch (e) {
+      return res.status(400).json({ error: String(e.message || e) });
+    }
+    audit.record(db, {
+      action: 'pp_diocese_create',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: code, entityKind: 'diocese',
+    });
+    res.status(201).json({ diocese: dioceses.get(db, secrets, code, { includeNotes: true }) });
+  });
+
+  r.get('/dioceses/:code', (req, res) => {
+    if (!isValidCode(req.params.code, 'diocese')) {
+      return res.status(400).json({ error: 'invalid_diocese_code' });
+    }
+    const obj = dioceses.get(db, secrets, req.params.code, {
+      includeNotes: req.query.includeNotes === '1' || req.query.include_notes === '1',
+    });
+    if (!obj) return res.status(404).json({ error: 'not_found' });
+    return sendWithEtag(res, { diocese: obj });
+  });
+
+  r.patch('/dioceses/:code', (req, res) => {
+    if (!isValidCode(req.params.code, 'diocese')) {
+      return res.status(400).json({ error: 'invalid_diocese_code' });
+    }
+    const current = dioceses.get(db, secrets, req.params.code);
+    if (!current) return res.status(404).json({ error: 'not_found' });
+    const ifMatch = req.get('if-match');
+    if (ifMatch) {
+      const currentTag = etag.compute({ diocese: current });
+      if (!etag.matches(ifMatch, currentTag)) {
+        return res.status(412).json({ error: 'precondition_failed', detail: 'ETag mismatch — re-fetch and retry' });
+      }
+    }
+    const ok = dioceses.update(db, secrets, req.params.code, req.body || {}, {
+      actor: req.auth?.actor || 'parentpoint',
+      actorKind: req.auth?.kind || null,
+      requestId: req.ppContract.requestId || null,
+    });
+    if (!ok) return res.status(404).json({ error: 'not_found' });
+    audit.record(db, {
+      action: 'pp_diocese_update',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: req.params.code, entityKind: 'diocese',
+    });
+    return res.json({ diocese: dioceses.get(db, secrets, req.params.code, { includeNotes: true }) });
+  });
+
+  r.post('/dioceses/:code/archive', (req, res) => {
+    if (!isValidCode(req.params.code, 'diocese')) {
+      return res.status(400).json({ error: 'invalid_diocese_code' });
+    }
+    const result = dioceses.archive(db, req.params.code, {
+      actor: req.auth?.actor || 'parentpoint',
+      actorKind: req.auth?.kind || null,
+      reason: req.body?.reason || null,
+      requestId: req.ppContract.requestId || null,
+    });
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    audit.record(db, {
+      action: 'pp_diocese_archive',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: req.params.code, entityKind: 'diocese',
+    });
+    return res.json({ diocese: dioceses.get(db, secrets, req.params.code, { includeNotes: true }), noop: !!result.noop });
+  });
+
+  r.post('/dioceses/:code/reinstate', (req, res) => {
+    if (!isValidCode(req.params.code, 'diocese')) {
+      return res.status(400).json({ error: 'invalid_diocese_code' });
+    }
+    const result = dioceses.reinstate(db, req.params.code, {
+      actor: req.auth?.actor || 'parentpoint',
+      actorKind: req.auth?.kind || null,
+      reason: req.body?.reason || null,
+      requestId: req.ppContract.requestId || null,
+    });
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    audit.record(db, {
+      action: 'pp_diocese_reinstate',
+      actor: req.auth?.actor || 'parentpoint',
+      entityCode: req.params.code, entityKind: 'diocese',
+    });
+    return res.json({ diocese: dioceses.get(db, secrets, req.params.code, { includeNotes: true }), noop: !!result.noop });
+  });
+
   // ===========================================================================
   // CONSENTS (read-side)
   // ===========================================================================
 
+  // GET /v1/persons/:id/consent — identity-level base by default.
+  // GET /v1/persons/:id/consent?schoolId=... — effective consent with
+  // the per-school override merged in. The base values ride along under
+  // `basePhotoConsent` / `baseDirectoryListing` so the caller knows
+  // which fields were overridden.
   r.get('/persons/:personId/consent', (req, res) => {
     if (!isValidCode(req.params.personId, 'person')) {
       return res.status(400).json({ error: 'invalid_person_id' });
     }
-    const obj = objects.consentObject(db, req.params.personId);
+    const schoolId = req.query.schoolId || req.query.school_id || null;
+    const obj = objects.consentObject(db, req.params.personId, schoolId);
     return sendWithEtag(res, { consent: obj });
   });
 

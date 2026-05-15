@@ -38,6 +38,7 @@ const buildConnectors = require('./api/connectors');
 const buildMinistries = require('./api/ministries');
 const connectorScheduler = require('./connectors/scheduler');
 const eim = require('./identity/eim');
+const entityHistory = require('./identity/history');
 const buildParentPointApi = require('./api/parentpoint');
 const ppWebhooks = require('./parentpoint/webhooks');
 const ppIdempotency = require('./parentpoint/idempotency');
@@ -191,6 +192,15 @@ function start() {
   }, 24 * 60 * 60 * 1000);
   sweepInterval.unref();
 
+  // Daily entity_changes sweep. Default: keep forever (the contract
+  // explicitly supports restoring soft-archived records). Operators
+  // who want a hard cap set `entity_changes_retention_days` in settings.
+  const entityChangesSweep = setInterval(() => {
+    const days = entityHistory.effectiveRetentionDays(db, null);
+    if (days) entityHistory.sweep(db, days);
+  }, 24 * 60 * 60 * 1000);
+  entityChangesSweep.unref();
+
   // Daily EIM expiration sweep. Flips certified rows whose eim_expires_on
   // has passed into 'expired' so the dashboard surfaces lapses without
   // waiting for an operator action. Runs once at boot, then every 24h.
@@ -286,6 +296,7 @@ function start() {
     if (connectorSched && connectorSched.stop) connectorSched.stop();
     if (ppWebhookDispatcher && ppWebhookDispatcher.stop) ppWebhookDispatcher.stop();
     clearInterval(idemSweep);
+    clearInterval(entityChangesSweep);
     server.close(() => process.exit(0));
   }
   process.on('SIGINT', shutdown);

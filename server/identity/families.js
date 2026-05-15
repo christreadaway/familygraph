@@ -3,6 +3,7 @@
 const enc = require('../crypto/encryption');
 const { newCode, isValidCode } = require('../crypto/identifiers');
 const aliases = require('./aliases');
+const history = require('./history');
 
 function row2family(row, secrets, { includePii }) {
   if (!row) return null;
@@ -104,6 +105,68 @@ function touchUpdatedAt(db, code) {
     `UPDATE families SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
   ).run(target);
   return target;
+}
+
+// Soft-archive a household. Status flips to 'archived'; the row stays
+// in place. Active memberships ride along under the archived parent (a
+// `members(activeOnly: true)` call still returns them, which is what
+// reinstate needs to put things back).
+function archive(db, code, { actor = 'system', actorKind = null, reason = null, requestId = null } = {}) {
+  const literal = db.prepare('SELECT status FROM families WHERE code = ?').get(code);
+  if (literal && literal.status === 'merged') {
+    throw new Error('cannot archive a merged family; merge owns the row');
+  }
+  const target = aliases.resolveAlias(db, code);
+  const before = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
+  if (!before) return null;
+  if (before.status === 'merged') {
+    throw new Error('cannot archive a merged family; merge owns the row');
+  }
+  if (before.status === 'archived') {
+    history.record(db, {
+      entityKind: 'family', entityCode: target, operation: 'archive',
+      before, after: before, actor, actorKind, requestId, reason,
+    });
+    return { code: target, before, after: before, noop: true };
+  }
+  db.prepare(
+    `UPDATE families SET status = 'archived', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+  ).run(target);
+  const after = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
+  history.record(db, {
+    entityKind: 'family', entityCode: target, operation: 'archive',
+    before, after, actor, actorKind, requestId, reason,
+  });
+  return { code: target, before, after };
+}
+
+function reinstate(db, code, { actor = 'system', actorKind = null, reason = null, requestId = null } = {}) {
+  const literal = db.prepare('SELECT status FROM families WHERE code = ?').get(code);
+  if (literal && literal.status === 'merged') {
+    throw new Error('cannot reinstate a merged family; un-merge is a manual operator workflow');
+  }
+  const target = aliases.resolveAlias(db, code);
+  const before = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
+  if (!before) return null;
+  if (before.status === 'merged') {
+    throw new Error('cannot reinstate a merged family; un-merge is a manual operator workflow');
+  }
+  if (before.status === 'active') {
+    history.record(db, {
+      entityKind: 'family', entityCode: target, operation: 'reinstate',
+      before, after: before, actor, actorKind, requestId, reason,
+    });
+    return { code: target, before, after: before, noop: true };
+  }
+  db.prepare(
+    `UPDATE families SET status = 'active', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+  ).run(target);
+  const after = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
+  history.record(db, {
+    entityKind: 'family', entityCode: target, operation: 'reinstate',
+    before, after, actor, actorKind, requestId, reason,
+  });
+  return { code: target, before, after };
 }
 
 function members(db, secrets, code, { activeOnly = true, includePii = false } = {}) {
@@ -243,4 +306,4 @@ function split(db, secrets, familyCode, personCodes, { displayName = null, notes
   return newFamily;
 }
 
-module.exports = { create, get, list, update, members, addMember, endMembership, merge, split, touchUpdatedAt };
+module.exports = { create, get, list, update, members, addMember, endMembership, merge, split, touchUpdatedAt, archive, reinstate };

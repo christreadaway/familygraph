@@ -722,3 +722,148 @@ the v0.1 answer.
 Migration 0012 + the contract surface + scenario tests added 80 cases.
 The full suite went from 310 → 390 passing (1 skipped on root, as before).
 
+---
+
+## Appendix B — v0.2 additions: per-school overrides, dioceses, change log (2026-05-15)
+
+The follow-up to Appendix A picked up the three §11 open questions the
+operator wanted resolved beyond v0.1:
+
+- **Q5 (per-school photo consent)** — implemented in FG, not just PP.
+  Identity-level base remains the source of truth; a school can
+  override either field (photo or directory) and the effective value
+  for `(person, school)` is `override-or-base`.
+- **Q6 (diocese as system of record for EIM)** — implemented as a
+  `dioceses` catalog with optional per-diocese renewal interval. Cached
+  EIM certs point back via `diocese_code` + `diocese_record_id` so the
+  operator can reconcile against the diocesan record.
+- **Architectural: restorable deletions** — added the `entity_changes`
+  log with full row snapshots and an archive/reinstate workflow that
+  replaces hard deletes. Merges still produce alias rows (the harder
+  "un-merge" needs a separate operator workflow; it's a manual replay
+  of the change log).
+
+### Migration 0013 schema additions
+
+New columns:
+
+- `eim_certifications.diocese_code` — soft FK to `dioceses.code`.
+- `eim_certifications.diocese_record_id` — external id from the
+  diocese's own system (paper form number, vendor record id).
+
+New tables:
+
+- `dioceses` — `code` / `name` / `region` / `contact_url` /
+  `eim_program_name` / `eim_renewal_years` / encrypted `notes_ct` /
+  `status: active|archived`. Partial unique index on `name` where
+  `status = 'active'` so a re-introduced diocese name doesn't collide
+  with an archived one.
+- `person_consent_overrides` — `(person_code, school_id)` composite
+  PK; each consent column independently nullable so a school can
+  override only one field. Cleared automatically when both override
+  columns end up null.
+- `entity_changes` — append-only log of every meaningful write.
+  Columns: `entity_kind`, `entity_code`, `operation` (one of
+  `create | update | archive | reinstate | merge | split | delete`),
+  `before_json`, `after_json`, `actor`, `actor_kind`, `request_id`,
+  `related_codes` (JSON array, e.g. `[winner_code]` on merge),
+  `reason`. BLOB columns in the snapshots ride through as
+  base64-encoded strings, so the dataKey is still required to decrypt
+  PII.
+
+New identifier prefixes:
+
+- `dio_` — diocese (`dio_xxxxxxxx`)
+- `chg_` — entity change row (`chg_xxxxxxxx`)
+
+### New / updated HTTP surface
+
+| Verb + path | Purpose | Notes |
+|---|---|---|
+| `POST /v1/persons/:id/photoConsent` | Update consent | Body / query `schoolId` writes the per-school override; absent = identity-level base |
+| `DELETE /v1/persons/:id/photoConsent?schoolId=` | Clear an override | Falls back to the base |
+| `GET /v1/persons/:id/consent?schoolId=` | Effective consent | Includes `basePhotoConsent` / `baseDirectoryListing` when an override is applied |
+| `GET /v1/persons/:id/consent/overrides` | List active overrides | One row per school |
+| `GET /v1/dioceses` | List dioceses | `?status=archived` to see archived ones; `?includeNotes=1` to decrypt notes |
+| `POST /v1/dioceses` | Create | Body: `{ name, region?, contact_url?, eim_program_name?, eim_renewal_years?, notes? }` |
+| `GET /v1/dioceses/:code` | Read | |
+| `PATCH /v1/dioceses/:code` | Update | Honors `If-Match` |
+| `POST /v1/dioceses/:code/archive` | Soft-delete | Writes a change row + audit row |
+| `POST /v1/dioceses/:code/reinstate` | Reverse archive | |
+| `POST /v1/persons/:id/eimCertifications` | Add/extend EIM cert | Now accepts `dioceseCode` + `dioceseRecordId`; per-diocese renewal interval supersedes the global setting for auto-derivation |
+| `POST /v1/persons/:id/archive` | Soft-delete | Emits `person.deleted` webhook |
+| `POST /v1/persons/:id/reinstate` | Reverse archive | Emits `person.updated` webhook |
+| `GET /v1/persons/:id/history` | Entity change log | Reverse chronological |
+| `POST /v1/households/:id/archive` | Soft-delete | Emits `household.deleted` |
+| `POST /v1/households/:id/reinstate` | Reverse archive | Emits `household.updated` |
+| `GET /v1/households/:id/history` | Entity change log | |
+
+### Webhook payload additions
+
+`consent.updated` events now carry `schoolId` in the body when the change
+was school-scoped:
+
+```jsonc
+{
+  "event": "consent.updated",
+  "personId": "p_a7b3c91d",
+  "updatedAt": "2026-05-15T14:35:11.012Z",
+  "schoolHints": ["st-theresa"],
+  "schoolId": "st-theresa"
+}
+```
+
+A consent change at the identity level omits `schoolId`. PP clients that
+already ignored unrecognised keys continue to work; clients that want
+the fanout precision can switch on the presence of `schoolId`.
+
+`person.deleted` and `household.deleted` events now actually fire — the
+archive operation is the trigger point, and reinstate fires
+`person.updated` / `household.updated`. The doc-level v0.1 placeholders
+graduate to real behaviour here.
+
+### Merge → archive interaction
+
+A caller passing a merged-loser code to the archive endpoint is rejected
+with `400 Bad Request` ("cannot archive a merged person; merge owns the
+row"). The same applies to reinstate. This is deliberate: alias-follow
+through to the winner row would silently archive a record the caller
+didn't expect. If the operator wants to archive a merged identity, they
+should target the winner directly.
+
+### Restorability semantics
+
+- Persons + families: archive → status = 'archived'; reinstate → status
+  = 'active'. The row stays in the database the entire time; its
+  related rows (memberships, consents, school_contexts, EIM certs)
+  ride along under the parent's status without being touched. Reinstate
+  restores the whole graph in one operation.
+- Webhook subscriptions: `DELETE /v1/webhooks/:code` is now a soft
+  unsubscribe (`enabled = 0`). The row + its secret survive so a later
+  `resubscribe` puts the same delivery pipeline back in place. The
+  default `GET /v1/webhooks` filters to active subscriptions; pass
+  `?status=all` to see soft-disabled rows.
+- Webhook deliveries are NOT cascaded on unsubscribe — the audit trail
+  for past deliveries survives.
+- Idempotency keys: still hard-deleted on TTL expiry. The point of an
+  idempotency key is "did we already process this request?" and an
+  expired one carries no information worth preserving.
+- Merges: still produce alias rows. The change log captures the
+  surviving and retired sides at merge time so a manual operator
+  workflow can replay the state, but `POST /v1/persons/:id/reinstate`
+  on a merged-loser code refuses (see above).
+
+### Retention
+
+`entity_changes` has its own retention setting at
+`entity_changes_retention_days`. Unset = keep forever (the contract
+explicitly supports restoring soft-archived records, so retention
+should default to indefinite). Operators who want a hard cap set the
+value and the daily sweeper trims rows older than the cap.
+
+### Test count
+
+Migration 0013 + the new endpoints + scenario coverage added 40 more
+cases. The full suite went from 390 → 431 passing (1 skipped on root,
+as before).
+

@@ -6,19 +6,19 @@
 // persons.eim_* columns as the "current" cert pointer (used by the
 // expiring-soon dashboard) and record every renewal here.
 //
-// Status flow mirrors the existing eim module:
-//   pending    — paperwork in flight
-//   certified  — completed, current today
-//   expired    — past expiration
-//
-// `add()` returns the new row's code and bumps persons.eim_* when the
-// incoming row supplants the current one.
+// Migration 0013 added `diocese_code` and `diocese_record_id` — the
+// diocese is the system of record (§11 Q6 of the integration doc), so
+// every cert points back at the issuing diocese plus the diocese's
+// own record id. When a diocese has its own renewal interval set, it
+// supersedes the global `eim.renewal_years` setting for auto-derivation.
 
 const enc = require('../crypto/encryption');
 const { newCode, isValidCode } = require('../crypto/identifiers');
 const aliases = require('../identity/aliases');
 const eim = require('../identity/eim');
 const people = require('../identity/people');
+const history = require('../identity/history');
+const dioceses = require('./dioceses');
 
 const STATUSES = new Set(['pending', 'certified', 'expired']);
 
@@ -36,37 +36,83 @@ function _normStatus(v) {
   return s;
 }
 
-function add(db, secrets, personCode, input = {}) {
+function _addYearsIso(isoDate, years) {
+  if (!isoDate || !Number.isFinite(years) || years <= 0) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate));
+  if (!m) return null;
+  const y = Number(m[1]); const mo = Number(m[2]); const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y + years, mo - 1, d));
+  if (Number.isNaN(dt.getTime())) return null;
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+function add(db, secrets, personCode, input = {}, audit = {}) {
   const target = aliases.resolveAlias(db, personCode);
   if (!isValidCode(target, 'person')) throw new Error('invalid person code');
   if (!db.prepare('SELECT 1 FROM persons WHERE code = ?').get(target)) {
     throw new Error('person not found');
   }
-  // eim.deriveExpiration looks for `eim_completed_on` / `eim_expires_on`
-  // keys (the column names on persons). The contract uses the shorter
-  // `completed_on` / `expires_on`. Mirror both directions so the renewal-
-  // years auto-fill kicks in regardless of which key shape the caller
-  // sent.
+
+  // Normalise key shapes (contract uses completed_on / expires_on; the
+  // legacy eim helper looks for eim_completed_on / eim_expires_on).
   const aliased = { ...input };
   if (aliased.completed_on && !aliased.eim_completed_on) aliased.eim_completed_on = aliased.completed_on;
   if (aliased.expires_on && !aliased.eim_expires_on) aliased.eim_expires_on = aliased.expires_on;
+
+  const dioceseCode = input.diocese_code || input.dioceseCode || null;
+  if (dioceseCode && !isValidCode(dioceseCode, 'diocese')) {
+    throw new Error(`invalid dioceseCode: ${dioceseCode}`);
+  }
+  if (dioceseCode) {
+    const exists = db.prepare(`SELECT 1 FROM dioceses WHERE code = ?`).get(dioceseCode);
+    if (!exists) throw new Error('diocese not found');
+  }
+
+  // Per-diocese renewal interval supersedes the global setting. We
+  // bypass eim.deriveExpiration when the diocese has its own interval
+  // and the caller didn't supply an explicit expires_on.
+  let expiresFromDiocese = null;
+  if (dioceseCode && !aliased.eim_expires_on && aliased.eim_completed_on) {
+    const years = dioceses.renewalYears(db, dioceseCode);
+    if (years) {
+      expiresFromDiocese = _addYearsIso(aliased.eim_completed_on, years);
+    }
+  }
+  if (expiresFromDiocese) aliased.eim_expires_on = expiresFromDiocese;
+
   const enriched = eim.deriveExpiration(db, aliased);
   const status = _normStatus(enriched.status || enriched.eim_status) || 'certified';
   const completed = _normIsoDate(enriched.completed_on || enriched.eim_completed_on);
   const expires = _normIsoDate(enriched.expires_on || enriched.eim_expires_on);
   const source = enriched.source ? String(enriched.source).slice(0, 120) : null;
+  const dioceseRecordId = input.diocese_record_id || input.dioceseRecordId || null;
 
   const code = newCode('audit').replace(/^au_/, 'eim_');
   db.prepare(
     `INSERT INTO eim_certifications
-       (code, person_code, status, completed_on, expires_on, source, notes_ct)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(code, target, status, completed, expires, source, enc.encrypt(secrets, enriched.notes));
+       (code, person_code, status, completed_on, expires_on, source, notes_ct,
+        diocese_code, diocese_record_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    code, target, status, completed, expires, source,
+    enc.encrypt(secrets, enriched.notes),
+    dioceseCode, dioceseRecordId,
+  );
 
-  // Promote the new cert to "current" when it has a later expiration than
-  // whatever persons.eim_* holds today, OR when status is 'certified'/'pending'
-  // and we have no current cert. Expired-only inserts (historical backfill)
-  // never demote a still-valid cert.
+  const after = db.prepare(`SELECT * FROM eim_certifications WHERE code = ?`).get(code);
+  history.record(db, {
+    entityKind: 'eim_certification', entityCode: code, operation: 'create',
+    before: null, after,
+    actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+    relatedCodes: [target].concat(dioceseCode ? [dioceseCode] : []),
+  });
+
+  // Promote logic (unchanged from v0.1 contract): later expiration
+  // promotes; pending promotes when current is null/expired; expired
+  // historical backfill never demotes a live cert.
   const personRow = db.prepare(
     `SELECT eim_status, eim_completed_on, eim_expires_on FROM persons WHERE code = ?`
   ).get(target);
@@ -86,8 +132,6 @@ function add(db, secrets, personCode, input = {}) {
       ...(enriched.notes !== undefined ? { eim_notes: enriched.notes } : {}),
     });
   } else {
-    // Even if we don't promote, touch updated_at so the changed feed picks
-    // up the new history row.
     people.touchUpdatedAt(db, target);
   }
 
@@ -104,6 +148,8 @@ function listForPerson(db, secrets, personCode, { includePii = false } = {}) {
     completed_on: r.completed_on,
     expires_on: r.expires_on,
     source: r.source,
+    diocese_code: r.diocese_code || null,
+    diocese_record_id: r.diocese_record_id || null,
     created_at: r.created_at,
     updated_at: r.updated_at,
     notes: includePii ? enc.decrypt(secrets, r.notes_ct) : null,

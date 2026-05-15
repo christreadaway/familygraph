@@ -658,3 +658,84 @@ CREATE TABLE IF NOT EXISTS pp_idempotency_keys (
   PRIMARY KEY (request_id, method, path)
 );
 CREATE INDEX IF NOT EXISTS pp_idempotency_expires_idx ON pp_idempotency_keys (expires_at);
+
+-------------------------------------------------------------------------------
+-- Diocesan EIM source of truth (migration 0013)
+-------------------------------------------------------------------------------
+-- The diocese is the system of record for safe-environment certifications.
+-- FamilyGraph caches what it knows. A cached cert points back at the
+-- issuing diocese plus the diocesan record id so the operator can
+-- reconcile with a paper or vendor record.
+
+CREATE TABLE IF NOT EXISTS dioceses (
+  code              TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  region            TEXT,
+  contact_url       TEXT,
+  eim_program_name  TEXT,
+  eim_renewal_years INTEGER,
+  notes_ct          BLOB,
+  status            TEXT NOT NULL DEFAULT 'active',
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (status IN ('active','archived'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS dioceses_name_active_uniq
+  ON dioceses (name) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS dioceses_status_idx     ON dioceses (status);
+CREATE INDEX IF NOT EXISTS dioceses_updated_at_idx ON dioceses (updated_at);
+
+-------------------------------------------------------------------------------
+-- Per-school consent overrides (migration 0013)
+-------------------------------------------------------------------------------
+-- The effective consent for a (person, school) pair is `override-or-base`.
+-- Each column is nullable so a school can override only one of the two
+-- flags ("photo allow at this school's events, but withhold from the
+-- printed directory").
+
+CREATE TABLE IF NOT EXISTS person_consent_overrides (
+  person_code        TEXT NOT NULL REFERENCES persons(code) ON DELETE CASCADE,
+  school_id          TEXT NOT NULL,
+  photo_consent      TEXT,
+  directory_listing  TEXT,
+  updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (person_code, school_id),
+  CHECK (photo_consent IS NULL OR photo_consent IN ('allow','group_only','deny')),
+  CHECK (directory_listing IS NULL OR directory_listing IN ('allow','deny'))
+);
+CREATE INDEX IF NOT EXISTS person_consent_overrides_updated_at_idx
+  ON person_consent_overrides (updated_at);
+CREATE INDEX IF NOT EXISTS person_consent_overrides_school_idx
+  ON person_consent_overrides (school_id);
+
+-------------------------------------------------------------------------------
+-- Entity-change log (migration 0013)
+-------------------------------------------------------------------------------
+-- Append-only record of every meaningful write, with before/after row
+-- snapshots. The snapshot is the source row serialised as JSON;
+-- encrypted BLOB columns ride through as base64 strings, so the dataKey
+-- is still required to decrypt them at read time.
+--
+-- This log is what makes "deletion" recoverable: archive flips the
+-- entity's status, the change row records the snapshot, reinstate
+-- flips it back and emits its own change row. The two log rows together
+-- describe the round-trip.
+
+CREATE TABLE IF NOT EXISTS entity_changes (
+  code          TEXT PRIMARY KEY,
+  entity_kind   TEXT NOT NULL,           -- person | family | membership | consent | consent_override | school_context | eim_certification | diocese | webhook_subscription
+  entity_code   TEXT NOT NULL,
+  operation     TEXT NOT NULL,           -- create | update | archive | reinstate | merge | split | delete
+  before_json   TEXT,
+  after_json    TEXT,
+  actor         TEXT NOT NULL DEFAULT 'system',
+  actor_kind    TEXT,                    -- master | scoped | system | parentpoint
+  request_id    TEXT,                    -- X-Request-Id when available
+  related_codes TEXT,                    -- JSON array (e.g. [winner_code] on merge)
+  reason        TEXT,                    -- free-form operator note
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS entity_changes_entity_idx     ON entity_changes (entity_kind, entity_code);
+CREATE INDEX IF NOT EXISTS entity_changes_created_at_idx ON entity_changes (created_at);
+CREATE INDEX IF NOT EXISTS entity_changes_operation_idx  ON entity_changes (operation);
+CREATE INDEX IF NOT EXISTS entity_changes_actor_idx      ON entity_changes (actor);

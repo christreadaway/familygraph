@@ -441,7 +441,7 @@ A separate, versioned API surface for the ParentPoint integration. The
 contract (read / write objects, webhook shape, idempotency rules,
 versioning) is documented in
 [`FAMILYGRAPH_INTEGRATION.md`](./FAMILYGRAPH_INTEGRATION.md); the
-as-built endpoints are summarised in Appendix A of that file.
+as-built endpoints are summarised in Appendix A + Appendix B of that file.
 
 Quick sketch:
 
@@ -453,15 +453,33 @@ Quick sketch:
   and surface `X-FG-Idempotent-Replay: true` when a duplicate is hit.
 - GETs return ETag + `Cache-Control: max-age=30`. PATCHes honour
   `If-Match` and return 412 on a stale token.
+- Photo + directory consent is identity-level by default; the same
+  endpoint accepts a `schoolId` to set/read a per-school override.
+  The effective consent for `(person, school)` is `override-or-base`
+  per field. List active overrides at
+  `GET /v1/persons/:id/consent/overrides`.
+- Dioceses are the system of record for EIM. Catalog at `/v1/dioceses`;
+  each cert references its issuing diocese via `dioceseCode` +
+  `dioceseRecordId`. Per-diocese `eim_renewal_years` supersedes the
+  global setting for auto-derivation.
+- "Deletions" are recoverable: `POST /v1/persons/:id/archive` flips
+  status to `'archived'` and writes a full row snapshot to the
+  `entity_changes` log; `POST /v1/persons/:id/reinstate` reverses it.
+  Same pattern for households + dioceses. The change history is
+  readable at `GET /v1/persons/:id/history` and
+  `GET /v1/households/:id/history`.
 - Webhooks fire from `POST /v1/persons`, `PATCH /v1/persons/:id`,
-  `POST /v1/persons/:id/photoConsent`, `POST /v1/persons/:id/eimCertifications`,
+  `POST /v1/persons/:id/photoConsent` (with optional `schoolId` in the
+  payload), `POST /v1/persons/:id/eimCertifications`, archive/reinstate,
   `POST /v1/households`, and `POST /v1/households/:id/members`. Body is
   HMAC-signed via `X-FG-Signature: sha256=...` using each
   subscription's stored secret.
-- Subscriptions are managed at `POST /v1/webhooks` / `GET /v1/webhooks`
-  / `DELETE /v1/webhooks/:code` and the delivery queue is visible at
-  `GET /v1/webhooks/:code/deliveries`. Disable the dispatcher with
-  `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1` for debugging.
+- Subscriptions: `POST /v1/webhooks` / `GET /v1/webhooks` /
+  `DELETE /v1/webhooks/:code`. Unsubscribe is a soft-disable that
+  preserves the row + secret; pass `?status=all` to see disabled
+  subscriptions and use the helper module's `resubscribe()` to bring
+  one back. Disable the dispatcher with
+  `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1`.
 
 ### Auto-merge vs prompt-the-user (the matching gate)
 

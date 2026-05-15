@@ -2062,4 +2062,147 @@ honest path during early integration.
 
 ---
 
+## v13 — Per-school overrides, diocesan EIM, restorable deletions (Claude Code, 2026-05-15)
+
+Follow-up to v12. The operator picked up three threads I'd called out
+as deferred and asked for them to be real: §11 Q5 (per-school
+do-not-photo), §11 Q6 (diocese as system of record for EIM), and the
+broader architectural ask that "FamilyGraph should track all changes
+such that deletions can be reinstated." Net: 390 → 431 passing tests
+(+41 new), with one new migration (0013) and three new helper
+modules.
+
+**Per-school consent overrides.** New `person_consent_overrides` table
+keyed by `(person, school_id)`. Each column is independently nullable
+so a school can override only one of the two flags. The contract
+helper added `setOverride` / `clearOverride` /
+`listOverridesForPerson` / `effective` to `server/parentpoint/consents`.
+`POST /v1/persons/:id/photoConsent` now accepts an optional `schoolId`
+in body or query — present means write the override, absent means
+update the identity-level base. `DELETE /v1/persons/:id/photoConsent?schoolId=`
+clears an override. `GET /v1/persons/:id/consent?schoolId=` returns
+the effective view with `basePhotoConsent` / `baseDirectoryListing`
+riding along under the override values so the caller can render
+"override applied; base was X".
+
+The `consent.updated` webhook payload picks up an optional `schoolId`
+key. PP clients that were ignoring unknown keys keep working; clients
+that care can switch on its presence to know whether to invalidate a
+single school's cache or the global identity cache.
+
+The "clear an override" path is interesting: when both override
+columns end up null, the row is dropped from the table entirely.
+The next read falls back to the base. We log this as a `delete`
+operation in `entity_changes` so the audit trail shows the round trip.
+
+**Diocese as system of record for EIM.** New `dioceses` table holding
+the catalog plus an optional per-diocese `eim_renewal_years`. New
+`eim_certifications.diocese_code` (soft FK) + `diocese_record_id`
+(external id from the diocesan vendor or paper form). The certifications
+helper now validates `dioceseCode` shape and existence before insert,
+and uses the diocese's renewal interval to auto-derive `expires_on`
+when the caller omits it. Per-diocese interval supersedes the global
+`eim.renewal_years` setting; the global remains the fallback for
+certs that don't reference a diocese.
+
+CRUD at `/v1/dioceses` — list defaults to `status='active'`; pass
+`?status=archived` to see archived rows or `?status=all` for both.
+Unique name only among active rows (partial index) so a re-introduced
+diocese name doesn't collide with an archived one — same pattern we
+used for ministries in v11.
+
+**Restorable deletions / entity_changes log.** This was the biggest
+architectural piece. New `entity_changes` table with one append-only
+row per meaningful write: `entity_kind`, `entity_code`, `operation`
+(one of create/update/archive/reinstate/merge/split/delete), full
+before+after snapshots as JSON, actor, request_id, related_codes,
+free-form reason. BLOB columns serialise as base64 strings so the
+dataKey is still required to decrypt PII at read time. Snapshots are
+capped at 64 KB to keep a runaway caller from filling the table with
+one giant blob.
+
+`people.archive()` + `people.reinstate()` flip `status` between
+'archived' and 'active' and record the round-trip in the log.
+`families.archive()` / `families.reinstate()` mirror the pattern.
+Same for `dioceses`. Webhook subscriptions got a soft-unsubscribe
+treatment: `unsubscribe` now flips `enabled = 0` and keeps the row +
+secret, so `resubscribe` restores the same delivery pipeline. The
+default `webhooks.list()` filters to active subscriptions; pass
+`status: 'all'` to see disabled ones.
+
+The API surface adds `POST /v1/persons/:id/archive` /
+`/reinstate`, same for households + dioceses, plus
+`GET /v1/persons/:id/history` and the household equivalent.
+Archive fires `person.deleted` / `household.deleted` webhooks
+(the v0.1 contract defined these events; v0.2 makes them real).
+Reinstate fires `person.updated` / `household.updated`.
+
+**Merge vs. archive.** This was the trickiest decision. A caller
+passing a merged-loser code through `archive()` shouldn't silently
+archive the winner — that would surprise everyone holding the
+surviving record. Fix: look up the row by the LITERAL code first
+(without alias resolution), and refuse with a clear error when the
+literal row has `status = 'merged'`. Same guard on `reinstate`.
+"Un-merging" stays a manual operator workflow: the change log makes
+it possible to reconstruct, but the API doesn't offer a one-button
+undo because later edits to the survivor can have moved the
+combined record well beyond what the loser snapshot describes.
+
+**Bugs caught during the build.**
+
+The `entity_changes` `listFor` query originally ordered only by
+`created_at DESC`. SQLite's `strftime` returns millisecond precision,
+and two writes in the same millisecond don't order stably. Two tests
+caught this immediately — the most recent write was sometimes the
+older one in the result. Added `rowid DESC` as a secondary sort key.
+rowid is monotonic on regular tables (we don't use `WITHOUT ROWID`),
+so the newest insert always wins the tie.
+
+The archive guard initially read the row AFTER calling
+`aliases.resolveAlias()`. For a merged loser, that resolved to the
+winner, the guard saw `status = 'active'`, and the archive went
+through on the wrong row. Fixed by reading the LITERAL row first to
+catch merged-loser inputs before alias resolution kicks in. Two tests
++ one HTTP-level test cover the case.
+
+Webhook unsubscribe soft-disable changed `list()` semantics. The v0.1
+implementation returned ALL rows; the test
+`webhook subscribe + list + unsubscribe lifecycle` expected the count
+to drop to 0 after unsubscribe. Decision: default `list()` to
+active-only, accept `status: 'all'` for the operator view. The
+existing API endpoint `GET /v1/webhooks` calls the default list, so
+PP clients keep seeing exactly what they saw before; an operator UI
+that wants to render "your inactive subscriptions" passes the flag.
+
+**Identifier prefixes.** Added `dio_` (diocese) and `chg_` (entity
+change row) to `crypto/identifiers.js`. The `chg_` prefix is for the
+entity_changes table's own primary keys — the rows logged INTO that
+table reference other entities by their existing prefixes, so the
+prefix vocabulary stays internally consistent.
+
+**Retention default.** `entity_changes_retention_days` is unset by
+default, which means keep-forever. That's deliberate: the whole point
+of the log is to enable restoration, and a hard cap on retention
+would create a window where reinstating a 6-month-archived person
+silently fails because the snapshot got swept. Operators who want a
+cap set the value and the daily sweeper handles trimming.
+
+**What I did not do.**
+
+No un-merge endpoint. The change log makes it tractable, but the
+right shape of un-merge depends on whether you want to restore the
+two pre-merge rows (clobbering any post-merge edits) or fork the
+current survivor (preserving edits but creating a third row). That's
+a product decision, not an engineering one. Documented in Appendix B.
+
+No dioceses-page UI in the dashboard. The catalog is API-only for
+now; an operator UI page under `client/src/views/Dioceses.jsx`
+parallels the existing `Ministries.jsx` and would be a clean follow-up.
+
+No per-(person, school) consent UI either. Same reason — server-side
+is in place; rendering the override-vs-base distinction in the
+dashboard is the next step.
+
+---
+
 *End of session notes*

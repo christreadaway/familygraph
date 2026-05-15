@@ -4,6 +4,7 @@ const enc = require('../crypto/encryption');
 const { newCode, isValidCode } = require('../crypto/identifiers');
 const aliases = require('./aliases');
 const eim = require('./eim');
+const history = require('./history');
 
 function row2person(row, secrets, { includePii }) {
   if (!row) return null;
@@ -248,6 +249,79 @@ function touchUpdatedAt(db, code) {
   return target;
 }
 
+// Soft-archive a person. The row stays in the database; status flips to
+// 'archived'. A change-log row captures the pre-archive snapshot so a
+// later reinstate can verify state and explain what was undone.
+//
+// Returns `{ code, before, after }` on success or null when the person
+// doesn't exist. Throws when the person is already merged (a merged
+// row is owned by its winner; archiving it would lose data).
+function archive(db, code, { actor = 'system', actorKind = null, reason = null, requestId = null } = {}) {
+  // Look up the literal code BEFORE resolving aliases. A caller passing
+  // a merged-loser code should fail loudly rather than silently archive
+  // the winner (which would surprise everyone holding the surviving
+  // record).
+  const literal = db.prepare('SELECT status FROM persons WHERE code = ?').get(code);
+  if (literal && literal.status === 'merged') {
+    throw new Error('cannot archive a merged person; merge owns the row');
+  }
+  const target = aliases.resolveAlias(db, code);
+  const before = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
+  if (!before) return null;
+  if (before.status === 'merged') {
+    throw new Error('cannot archive a merged person; merge owns the row');
+  }
+  if (before.status === 'archived') {
+    // Idempotent: just record a no-op change row so the operator sees
+    // the second click landed somewhere.
+    history.record(db, {
+      entityKind: 'person', entityCode: target, operation: 'archive',
+      before, after: before, actor, actorKind, requestId, reason,
+    });
+    return { code: target, before, after: before, noop: true };
+  }
+  db.prepare(
+    `UPDATE persons SET status = 'archived', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+  ).run(target);
+  const after = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
+  history.record(db, {
+    entityKind: 'person', entityCode: target, operation: 'archive',
+    before, after, actor, actorKind, requestId, reason,
+  });
+  return { code: target, before, after };
+}
+
+// Reverse an archive. Status flips back to 'active'; a change-log row
+// captures the pre-reinstate state so the trail is complete.
+function reinstate(db, code, { actor = 'system', actorKind = null, reason = null, requestId = null } = {}) {
+  const literal = db.prepare('SELECT status FROM persons WHERE code = ?').get(code);
+  if (literal && literal.status === 'merged') {
+    throw new Error('cannot reinstate a merged person; un-merge is a manual operator workflow');
+  }
+  const target = aliases.resolveAlias(db, code);
+  const before = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
+  if (!before) return null;
+  if (before.status === 'merged') {
+    throw new Error('cannot reinstate a merged person; un-merge is a manual operator workflow');
+  }
+  if (before.status === 'active') {
+    history.record(db, {
+      entityKind: 'person', entityCode: target, operation: 'reinstate',
+      before, after: before, actor, actorKind, requestId, reason,
+    });
+    return { code: target, before, after: before, noop: true };
+  }
+  db.prepare(
+    `UPDATE persons SET status = 'active', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+  ).run(target);
+  const after = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
+  history.record(db, {
+    entityKind: 'person', entityCode: target, operation: 'reinstate',
+    before, after, actor, actorKind, requestId, reason,
+  });
+  return { code: target, before, after };
+}
+
 // Merge `loserCode` into `winnerCode`. Memberships, addresses, emails, phones,
 // relationships, and provenance carry over. The loser's row is marked merged
 // and an alias row is recorded.
@@ -303,4 +377,4 @@ function merge(db, secrets, loserCode, winnerCode) {
   return winner;
 }
 
-module.exports = { create, get, list, findByName, update, merge, touchUpdatedAt };
+module.exports = { create, get, list, findByName, update, merge, touchUpdatedAt, archive, reinstate };

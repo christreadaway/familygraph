@@ -13,4 +13,5 @@ module.exports = {
   schoolContext: require('./schoolContext'),
   webhooks: require('./webhooks'),
   changes: require('./changes'),
+  dioceses: require('./dioceses'),
 };

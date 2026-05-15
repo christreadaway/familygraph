@@ -94,9 +94,13 @@ function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint =
   return list(db, secrets).find(s => s.code === code);
 }
 
-function list(db, secrets) {
+// Default behaviour: list ACTIVE subscriptions only (enabled=1). Pass
+// `status: 'all'` to see soft-disabled rows too — useful for the
+// operator UI that wants to surface a "resubscribe" affordance.
+function list(db, secrets, { status = 'active' } = {}) {
+  const where = status === 'all' ? '' : 'WHERE enabled = 1';
   return db.prepare(
-    `SELECT * FROM pp_webhook_subscriptions ORDER BY created_at DESC`
+    `SELECT * FROM pp_webhook_subscriptions ${where} ORDER BY created_at DESC`
   ).all().map(r => _row2sub(db, secrets, r));
 }
 
@@ -105,16 +109,54 @@ function get(db, secrets, code) {
   return _row2sub(db, secrets, row);
 }
 
+// Soft-unsubscribe: flip enabled=0 and record an entity_changes row.
+// The row stays in the database so a later reinstate puts the
+// subscription back where it was (URL, secret, school hint). Hard
+// deletion would lose the secret — and the secret is the only thing
+// keeping in-flight delivery signatures valid for the receiving end.
 function unsubscribe(db, code) {
-  const r = db.prepare(`DELETE FROM pp_webhook_subscriptions WHERE code = ?`).run(code);
-  if (r.changes) {
-    audit.record(db, {
-      action: 'pp_webhook_unsubscribe',
-      actor: 'parentpoint',
-      metadata: { code },
-    });
-  }
-  return r.changes > 0;
+  const history = require('../identity/history');
+  const before = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  if (!before) return false;
+  if (before.enabled === 0) return true;
+  db.prepare(
+    `UPDATE pp_webhook_subscriptions SET enabled = 0,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE code = ?`
+  ).run(code);
+  const after = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  history.record(db, {
+    entityKind: 'webhook_subscription', entityCode: code, operation: 'archive',
+    before, after, actor: 'parentpoint',
+  });
+  audit.record(db, {
+    action: 'pp_webhook_unsubscribe',
+    actor: 'parentpoint',
+    metadata: { code },
+  });
+  return true;
+}
+
+// Reverse a soft-unsubscribe.
+function resubscribe(db, code) {
+  const history = require('../identity/history');
+  const before = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  if (!before) return false;
+  if (before.enabled === 1) return true;
+  db.prepare(
+    `UPDATE pp_webhook_subscriptions SET enabled = 1,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE code = ?`
+  ).run(code);
+  const after = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  history.record(db, {
+    entityKind: 'webhook_subscription', entityCode: code, operation: 'reinstate',
+    before, after, actor: 'parentpoint',
+  });
+  audit.record(db, {
+    action: 'pp_webhook_resubscribe', actor: 'parentpoint', metadata: { code },
+  });
+  return true;
 }
 
 function _subscriptionsForEvent(db, event, schoolHints) {
@@ -130,20 +172,27 @@ function _subscriptionsForEvent(db, event, schoolHints) {
   });
 }
 
-// Enqueue a delivery for every subscription whose filter matches. Returns
-// the array of delivery codes. The dispatcher picks them up on its next
-// tick; tests can also call dispatchPending directly.
-function enqueue(db, secrets, { event, personCode = null, familyCode = null, schoolHints = [], updatedAt = null } = {}) {
+// Enqueue a delivery for every subscription whose filter matches.
+// `extra` is merged into the payload after the contract-defined keys —
+// PP clients that read the body get to see things like `schoolId` for a
+// school-scoped consent change without having to parse extra headers.
+function enqueue(db, secrets, { event, personCode = null, familyCode = null, schoolHints = [], updatedAt = null, extra = null } = {}) {
   if (!KNOWN_EVENTS.has(event)) throw new Error(`unknown event: ${event}`);
   const subs = _subscriptionsForEvent(db, event, schoolHints);
   if (subs.length === 0) return [];
-  const payload = JSON.stringify({
+  const body = {
     event,
     personId: personCode || undefined,
     householdId: familyCode || undefined,
     updatedAt: updatedAt || new Date().toISOString(),
     schoolHints: schoolHints && schoolHints.length ? schoolHints : undefined,
-  });
+  };
+  if (extra && typeof extra === 'object') {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v !== null && v !== undefined && body[k] === undefined) body[k] = v;
+    }
+  }
+  const payload = JSON.stringify(body);
   const codes = [];
   for (const sub of subs) {
     const code = newCode('audit').replace(/^au_/, 'whd_');
@@ -304,6 +353,7 @@ module.exports = {
   list,
   get,
   unsubscribe,
+  resubscribe,
   enqueue,
   dispatchPending,
   dispatchOne,

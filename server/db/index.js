@@ -25,7 +25,10 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //       person_consents / eim_certifications / school_contexts /
 //       pp_webhook_subscriptions / pp_webhook_deliveries /
 //       pp_idempotency_keys tables.
-const SCHEMA_VERSION = 12;
+//  13 — Per-school consent overrides, diocesan EIM source of truth,
+//       and the entity_changes log that lets soft-archived persons
+//       and households be reinstated.
+const SCHEMA_VERSION = 13;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

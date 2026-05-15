@@ -132,14 +132,29 @@ test('webhooks > dispatchPending gives up after MAX_ATTEMPTS', async t => {
   assert.equal(row.attempts, webhooks.MAX_ATTEMPTS);
 });
 
-test('webhooks > unsubscribe removes the row and cascades deliveries', async t => {
+test('webhooks > unsubscribe soft-disables; the row + deliveries survive', async t => {
   const { db, secrets } = setup(t);
   const sub = webhooks.subscribe(db, secrets, { url: 'https://x.example/cb' });
   webhooks.enqueue(db, secrets, { event: 'person.updated', personCode: 'p_a' });
   assert.equal(webhooks.unsubscribe(db, sub.code), true);
+  // Default list filters to active only — soft-disabled rows are hidden.
   assert.equal(webhooks.list(db, secrets).length, 0);
-  // Cascading delete of deliveries.
-  assert.equal(webhooks.listDeliveries(db, {}).length, 0);
+  // The row itself is still there under status='all'.
+  const all = webhooks.list(db, secrets, { status: 'all' });
+  assert.equal(all.length, 1);
+  assert.equal(all[0].enabled, false);
+  // Deliveries are NOT cascaded — the audit trail survives.
+  assert.equal(webhooks.listDeliveries(db, {}).length, 1);
+});
+
+test('webhooks > resubscribe re-enables a soft-disabled subscription', async t => {
+  const { db, secrets } = setup(t);
+  const sub = webhooks.subscribe(db, secrets, { url: 'https://x.example/cb' });
+  webhooks.unsubscribe(db, sub.code);
+  assert.equal(webhooks.resubscribe(db, sub.code), true);
+  const list = webhooks.list(db, secrets);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].enabled, true);
 });
 
 test('webhooks > disabled subscription is skipped by the dispatcher', async t => {
