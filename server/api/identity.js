@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 // External-app identity API. Lets sibling apps in the portfolio (missionIQ,
 // ParentPoint, future tools) bring in their own data while delegating the
 // match-or-create-or-conflict decision to Family Graph. This is the
@@ -175,7 +177,7 @@ function build({ db, secrets, thresholds }) {
       try {
         conflictsMod.resolveMerge(db, secrets, conflictCode, { winnerCode: winner, actor, notes });
       } catch (e) {
-        return res.status(400).json({ error: String(e.message || e) });
+        return res.status(400).json({ error: userFacingMessage(e) });
       }
       return res.json({ ok: true, conflict: conflictCode, decision: 'merged', winner });
     }
@@ -183,7 +185,7 @@ function build({ db, secrets, thresholds }) {
     try {
       conflictsMod.resolveReject(db, conflictCode, { actor, notes });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     res.json({ ok: true, conflict: conflictCode, decision: 'rejected_sticky' });
   });

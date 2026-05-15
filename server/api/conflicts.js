@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const conflicts = require('../identity/conflicts');
 
@@ -34,7 +36,7 @@ function build({ db, secrets }) {
       });
       res.json(out);
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -56,7 +58,7 @@ function build({ db, secrets }) {
       });
       res.json(out);
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -83,7 +85,7 @@ function build({ db, secrets }) {
       }
       return res.status(400).json({ error: 'decision must be merge | reject | dismiss' });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 

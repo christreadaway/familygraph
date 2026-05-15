@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const apiKeys = require('../auth/api-keys');
 
@@ -16,7 +18,7 @@ function build({ db }) {
       // The plaintext token is returned exactly once. Operator must record it.
       res.status(201).json(out);
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 

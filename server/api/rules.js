@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const rules = require('../identity/rules');
 
@@ -20,7 +22,7 @@ function build({ db }) {
       const code = rules.create(db, { kind, rule, enabled });
       res.status(201).json({ code });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -30,7 +32,7 @@ function build({ db }) {
       if (!code) return res.status(404).json({ error: 'not found' });
       res.json({ code });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 

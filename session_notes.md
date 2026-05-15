@@ -2350,4 +2350,159 @@ caught.
 
 ---
 
+## v13 follow-up #2 — Security hardening pass (Claude Code, 2026-05-15)
+
+Operator passed me a tweet about the pre-launch security checklist
+every AI-built app should run. I ran the checklist (privacy policy,
+security headers, OWASP basics, SQL injection, XSS, .env leaks, API
+response leakage, secrets in logs, rate limits, exposed API keys) by
+spinning up six parallel investigation agents (CORS, path traversal,
+connector credentials, error normalisation, audit/log PII, frontend),
+then three follow-on agents (DNS rebinding deep-dive, email-lookup
+timing oracle, connector outbound HTTP). Fixed everything that
+mattered. 463 → 489 passing tests (+26 regression cases), constraint
+preserved: data still flows in and out of the integration surface.
+
+**Critical / High fixes**
+
+Response security headers — `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+`Cross-Origin-Resource-Policy: same-origin`, `Cross-Origin-Opener-
+Policy: same-origin`, `Permissions-Policy` (camera/mic/geolocation/
+interest-cohort all disabled), and `Content-Security-Policy` on
+HTML-accepting responses. HSTS deliberately omitted because the
+default bind is loopback — operators terminating TLS at a proxy
+add HSTS there.
+
+Per-Bearer-token rate limiter — in-memory token bucket keyed on the
+SHA-256 of the Authorization header. Separate buckets per route
+family: `/api` (600/min), `/v1` (1,200/min), `/api/sanitize`
+(60/min, CPU-heavy), `/api/import` (30/min, network+CPU-heavy).
+Generous on purpose — a reconcile sweep from a sibling app
+shouldn't trip the limit. Disable with
+`FAMILY_GRAPH_DISABLE_RATE_LIMIT=1`. Tests disable it; production
+runs with it on by default.
+
+Backup-restore path traversal — `family-graph restore` accepted any
+destination path. A wrapped invocation (cron, supervisor) could be
+tricked into writing the restored DB to `/etc/cron.d/something`.
+Now restricted to paths under `FAMILY_GRAPH_HOME`.
+
+Folder-watch symlink dereference — `safeMove` would move a symlink
+via `rename`, but the cross-device fallback (`copyFileSync`)
+DEREFERENCES the symlink and copies the target's bytes. Drop a
+symlink to `/etc/passwd` named `roster.csv` into `watchDir`, and
+its contents would land in `processed/`. Now refuses to move
+symlinks; `unlink`s them so the watcher stops re-detecting.
+
+Folder-watch realpath escape — start refuses to run when
+`outDir.realpath` resolves into `watchDir.realpath` (catches a
+symlinked outDir that escapes its expected location).
+
+Webhook DNS rebinding (TOCTOU) — subscribe-time validation rejects
+loopback / RFC1918 / link-local URLs by IP literal. Between
+subscribe and dispatch, an attacker who controls the subscribed
+hostname's DNS could repoint it. The dispatcher now resolves the
+hostname at delivery time and refuses if any returned A / AAAA
+falls into a private range. Adds one DNS lookup per delivery;
+cheap.
+
+Webhook URL leakage in audit — the audit metadata recorded the
+full URL including any `?token=...` query string. Operators
+sometimes register URLs with inline auth tokens; those tokens
+ended up permanently logged. Audit now records
+`<scheme>://<host><path>` only — userinfo + query stripped.
+
+**Medium fixes**
+
+Error message normalisation — 38 handler catch blocks across 13
+files used `String(e.message || e)` directly, leaking SQLite
+constraint messages, OS error codes, and internal TypeErrors. New
+`userFacingMessage(err)` helper pattern-matches these and returns
+a normalised string; explicit library throws pass through unchanged.
+The full original error stays in the structured server log. A
+single node script did the bulk rewrite across all 13 files (37
+call sites) in one pass.
+
+JSON body size limits per route — `/api/import`, `/api/sanitize`,
+`/api/desanitize`, and `/api/scan` keep 20MB caps; everything else
+(including `/v1`) is 256KB. Oversize bodies return
+`413 request_too_large` with a generic body; the upstream
+`PayloadTooLargeError` stack is logged but never sent on the wire.
+
+Audit-log free-text scrubbing — the redactor's `PII_KEYS` set
+previously covered shaped-name keys (email, phone, name, etc.).
+Free-text fields like `reason` and `notes` could carry
+operator-pasted PII. New `TRUNCATE_KEYS` pass caps these at 500
+chars, masks email-looking and phone-looking spans, and appends
+`…` when truncation kicks in.
+
+Connector outbound HTTP timeouts — `fetchToken` and `authedFetch`
+in `server/connectors/http.js` had no timeout; a hung vendor
+endpoint trapped the worker indefinitely. Now use
+`AbortSignal.timeout(30_000)`. Same module gained an
+`_assertOutboundUrlSafe` check: HTTPS-only, no loopback/RFC1918/
+link-local/cloud-metadata targets. Vendor error response bodies
+are drained without being included in thrown error messages
+because some vendors echo the request body (and therefore the
+client_secret).
+
+Sanitize / desanitize cross-caller isolation — the `token_sets`
+table recorded the actor that produced each set, but desanitize
+never checked. Any caller holding the `sanitize` scope could
+reverse any other caller's set. Now `desanitizeText` enforces
+the caller (master token gets through unconditionally). Also
+populated the previously-unused `expires_at` column at write
+time (default 24h via `config.tokenSetTtlMinutes`); added a
+6-hour sweeper to the boot path.
+
+Notifications body masking — `GET /api/notifications` returned
+`body_text`/`body_html` plaintext, which can contain PII
+(e.g. "operator merged Annie and her brother Tim..."). Masked
+by default; `?include_body=1` opts in.
+
+Email-lookup miss audit — `GET /v1/persons?email=` previously
+audited only hits. Misses now record
+`pp_person_lookup_email_miss` with a salted hash of the queried
+email (first 16 hex chars of HMAC-SHA256) so distinct-miss counts
+per actor are observable without leaking the actual email.
+
+**Low fixes**
+
+`process.umask(0o077)` set at server boot. SQLite WAL/SHM files
+carry unencrypted in-flight transaction pages; without an explicit
+umask, a default-0o022 system creates them world-readable.
+
+**False positives investigated and dismissed**
+
+CORS — deliberately not enabled. All consumers are server-to-server
+with explicit Bearer; no browser-cross-origin use case exists.
+Adding a CORS allowlist would WEAKEN the posture by permitting
+cross-origin Bearer requests.
+
+Bearer token in localStorage — acceptable for the trusted-desktop
+threat model. Documented in INTEGRATION_GUIDE.md.
+
+show-token CLI — operator-local; the master token already lives in
+a 0600 file. Adding a gate doesn't change the threat model
+(anyone with shell access already wins).
+
+Bearer regex tested against empty values — `/^Bearer\s+(.+)$/i`
+requires at least one character after the whitespace, so empty
+tokens never authenticate. Not a bug.
+
+Audit `Object.keys(body)` logging — logs the schema NAMES
+(`firstName`, `lastName`) not values. Schema names aren't PII.
+
+External Google Fonts CDN — acceptable for operator-trusted-
+desktop; air-gapped deployments can self-host.
+
+**Final state.** 490 tests, 489 passing, 1 skipped on root. The
+ParentPoint integration data flow is unchanged: every contract
+endpoint still returns the same shape, every webhook still fires,
+every idempotency replay still works. The hardening sits underneath
+the contract without altering the contract.
+
+---
+
 *End of session notes*

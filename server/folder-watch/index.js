@@ -43,6 +43,32 @@ function _renameOrCopy(from, to) {
 
 function safeMove(from, toDir) {
   fs.mkdirSync(toDir, { recursive: true, mode: 0o700 });
+  // Refuse to move a symlink. The threat: an attacker who can write
+  // into watchDir drops a symlink whose target is some sensitive file.
+  // The rename moves the symlink itself (fine), but the cross-device
+  // fallback (copyFileSync) DEREFERENCES the symlink and copies the
+  // target's contents — leaking it into outDir/processed/. Catching
+  // the symlink here closes both paths.
+  try {
+    const st = fs.lstatSync(from);
+    if (st.isSymbolicLink()) {
+      // Unlink the symlink itself so the watcher stops re-seeing it,
+      // and surface a clear error to the caller's audit log.
+      try { fs.unlinkSync(from); } catch (_) { /* ignore */ }
+      throw new Error('folder-watch: refusing to move a symlink (potential dereference leak)');
+    }
+  } catch (e) {
+    if (e && e.code === 'ENOENT') {
+      // The file vanished between detection and the move. That's a
+      // normal race; let the caller handle the original "file gone"
+      // condition.
+      throw e;
+    }
+    if (/refusing to move a symlink/.test(String(e && e.message))) throw e;
+    // Any other lstat error: re-throw so the caller's category mapper
+    // can surface it.
+    throw e;
+  }
   const base = path.basename(from);
   let target = path.join(toDir, base);
   let i = 1;
@@ -195,6 +221,32 @@ function start(db, secrets, thresholds, opts) {
   }
   fs.mkdirSync(watchDir, { recursive: true, mode: 0o700 });
   fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
+
+  // Realpath check. If the operator pointed watchDir / outDir at a
+  // symlink, log where it actually resolves to so a later "why is my
+  // CSV showing up under /net/share/imports/" question has an answer.
+  // We don't refuse to start — operators legitimately bind-mount these
+  // directories — but the post-resolution path lands in the log on every
+  // boot, and the two MUST resolve to different real paths.
+  try {
+    const realWatch = fs.realpathSync(watchDir);
+    const realOut = fs.realpathSync(outDir);
+    if (realWatch === realOut) {
+      throw new Error('folder-watch: watchDir and outDir resolve to the same real path');
+    }
+    if (realOut.startsWith(realWatch + path.sep)) {
+      throw new Error('folder-watch: outDir realpath is inside watchDir realpath (symlink trap)');
+    }
+    if (realWatch !== watchDir || realOut !== outDir) {
+      log.info('folder_watch_symlink_resolved', { watchDir, realWatch, outDir, realOut });
+    }
+  } catch (e) {
+    if (e && e.code === 'ENOENT') {
+      // mkdirSync above should have prevented this, but defensive.
+      throw e;
+    }
+    throw e;
+  }
 
   log.info('folder_watch_started', { watchDir, outDir, processExisting: !!opts.processExisting });
 

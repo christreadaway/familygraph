@@ -42,6 +42,7 @@ const entityHistory = require('./identity/history');
 const buildParentPointApi = require('./api/parentpoint');
 const ppWebhooks = require('./parentpoint/webhooks');
 const ppIdempotency = require('./parentpoint/idempotency');
+const rateLimit = require('./auth/rate-limit');
 
 // method2scope: chooses one of two scoped middlewares depending on the HTTP
 // method. GET/HEAD use the read middleware; everything else uses the write
@@ -53,16 +54,92 @@ function method2scope(readMw, writeMw) {
   };
 }
 
+// Defense-in-depth response headers. We're loopback-by-default so most of
+// these are belt-and-suspenders for the operator who flips bind to 0.0.0.0,
+// but the cost is one extra middleware call per request.
+//
+//   X-Content-Type-Options: nosniff
+//     Browsers respect the declared Content-Type. JSON responses won't be
+//     re-interpreted as HTML.
+//   X-Frame-Options: DENY
+//     Dashboard can't be iframed → clickjacking surface goes to zero.
+//   Referrer-Policy: no-referrer
+//     Outbound links from the dashboard never leak the FG URL.
+//   Cross-Origin-Resource-Policy: same-origin
+//     A different origin can't fetch our JSON via <link>/<img>.
+//   Permissions-Policy
+//     Tell browsers we don't need camera/mic/geolocation. Defense for any
+//     future page that gets bundled into the SPA.
+//
+// We do NOT set Strict-Transport-Security because the default bind is
+// loopback (no TLS layer). Operators who terminate TLS in front of FG can
+// add HSTS at the proxy.
+function securityHeadersMw(req, res, next) {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.set('Cross-Origin-Resource-Policy', 'same-origin');
+  res.set('Cross-Origin-Opener-Policy', 'same-origin');
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
+  // CSP only for HTML responses — JSON shouldn't trigger CSP processing.
+  // The SPA is built by Vite into static JS + CSS under client/dist with
+  // no inline scripts; strict CSP doesn't break it. We allow inline styles
+  // because the design tokens use them and a `style-src 'self' 'unsafe-inline'`
+  // posture is the standard SPA compromise.
+  if (req.accepts(['html', 'json']) === 'html') {
+    res.set(
+      'Content-Security-Policy',
+      [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+      ].join('; ')
+    );
+  }
+  next();
+}
+
 function buildApp({ db, secrets, thresholds, watchState = null }) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', false);
-  app.use(express.json({ limit: '20mb' }));
+
+  // Defense-in-depth response headers (see securityHeadersMw above).
+  app.use(securityHeadersMw);
+
+  // Body size limits, scoped by route:
+  //  - /api/import + /api/sanitize accept large payloads (bulk CSV import,
+  //    multi-MB sanitization batches). Cap at 20 MB to stop a hostile
+  //    caller from exhausting memory.
+  //  - /v1 + the rest of /api carry small JSON objects. Cap at 256 KB
+  //    so a runaway client can't post a 50 MB person-update body.
+  //  - The webhook subscription path doesn't need much; the same 256 KB cap
+  //    covers it.
+  app.use('/api/import', express.json({ limit: '20mb' }));
+  app.use('/api/sanitize', express.json({ limit: '20mb' }));
+  app.use('/api/desanitize', express.json({ limit: '20mb' }));
+  app.use('/api/scan', express.json({ limit: '20mb' }));
+  app.use(express.json({ limit: '256kb' }));
 
   // Structured request log: every response writes one JSON line to stderr (or
   // FAMILY_GRAPH_LOG_FILE) with method, path, status, latency, actor, IP.
   // Auth failures and unhandled errors get their own log lines.
   app.use(requestLogger());
+
+  // Rate limits. The integration surface needs to flow freely; defaults
+  // are deliberately generous (10 req/sec for /v1 = 600/min per token).
+  // Sanitize gets a stricter bucket because it's CPU-heavy. Disable
+  // entirely with FAMILY_GRAPH_DISABLE_RATE_LIMIT=1 (tests use this).
+  const piiRateLimit = rateLimit.build({ capacity: 200, refillPerSec: 10, name: 'pii' });
+  const v1RateLimit = rateLimit.build({ capacity: 300, refillPerSec: 20, name: 'v1' });
+  const sanitizeRateLimit = rateLimit.build({ capacity: 30, refillPerSec: 1, name: 'sanitize' });
+  const importRateLimit = rateLimit.build({ capacity: 20, refillPerSec: 0.5, name: 'import' });
 
   // Inject auth context onto every request: PII routes require Bearer; safe
   // routes require loopback. Scoped Bearer middlewares enforce per-app scopes
@@ -85,42 +162,45 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/safe', loopback, buildSafe({ db, secrets }));
 
   // PII surface (Bearer required). Different scopes per surface so an app
-  // issued only `pii.read` cannot also write or run imports.
-  app.use('/api/families', method2scope(bearerRead, bearerWrite), buildFamilies({ db, secrets, includePii: true }));
-  app.use('/api/people', method2scope(bearerRead, bearerWrite), buildPeople({ db, secrets, includePii: true }));
-  app.use('/api/relationships', bearerWrite, buildRelationships({ db }));
-  app.use('/api/conflicts', method2scope(bearerRead, bearerWrite), buildConflicts({ db, secrets }));
-  app.use('/api/audit/external-export', bearerAuditWrite, buildAuditExport({ db }));
-  app.use('/api/audit', bearerAuditRead, buildAuditList({ db }));
-  app.use('/api/import', bearerImport, buildImport({ db, secrets, thresholds }));
-  app.use('/api/imports', bearerRead, buildImports({ db }));
-  app.use('/api/sanitize', bearerSanitize, buildSanitize({ db, secrets }));
-  app.use('/api/desanitize', bearerSanitize, buildDesanitize({ db, secrets }));
-  app.use('/api/rules', bearerRulesWrite, buildRules({ db }));
-  app.use('/api/keys', bearerMaster, buildApiKeys({ db }));
-  app.use('/api/search', bearerRead, buildSearch({ db, secrets }));
-  app.use('/api/membership-history', bearerRead, buildMembershipHistory({ db, secrets }));
-  app.use('/api/profiles', bearerRulesWrite, buildProfiles({ db }));
-  app.use('/api/settings', bearerMaster, buildSettings({ db }));
-  app.use('/api/export', bearerRead, buildExport({ db, secrets }));
-  app.use('/api/notifications', bearerMaster, buildNotifications({ db }));
-  app.use('/api/scan', bearerWrite, buildScan({ db, secrets, thresholds }));
+  // issued only `pii.read` cannot also write or run imports. The rate
+  // limiter runs after the auth middleware so the per-token bucket gets
+  // a stable key.
+  app.use('/api/families', method2scope(bearerRead, bearerWrite), piiRateLimit, buildFamilies({ db, secrets, includePii: true }));
+  app.use('/api/people', method2scope(bearerRead, bearerWrite), piiRateLimit, buildPeople({ db, secrets, includePii: true }));
+  app.use('/api/relationships', bearerWrite, piiRateLimit, buildRelationships({ db }));
+  app.use('/api/conflicts', method2scope(bearerRead, bearerWrite), piiRateLimit, buildConflicts({ db, secrets }));
+  app.use('/api/audit/external-export', bearerAuditWrite, piiRateLimit, buildAuditExport({ db }));
+  app.use('/api/audit', bearerAuditRead, piiRateLimit, buildAuditList({ db }));
+  app.use('/api/import', bearerImport, importRateLimit, buildImport({ db, secrets, thresholds }));
+  app.use('/api/imports', bearerRead, piiRateLimit, buildImports({ db }));
+  app.use('/api/sanitize', bearerSanitize, sanitizeRateLimit, buildSanitize({ db, secrets }));
+  app.use('/api/desanitize', bearerSanitize, sanitizeRateLimit, buildDesanitize({ db, secrets }));
+  app.use('/api/rules', bearerRulesWrite, piiRateLimit, buildRules({ db }));
+  app.use('/api/keys', bearerMaster, piiRateLimit, buildApiKeys({ db }));
+  app.use('/api/search', bearerRead, piiRateLimit, buildSearch({ db, secrets }));
+  app.use('/api/membership-history', bearerRead, piiRateLimit, buildMembershipHistory({ db, secrets }));
+  app.use('/api/profiles', bearerRulesWrite, piiRateLimit, buildProfiles({ db }));
+  app.use('/api/settings', bearerMaster, piiRateLimit, buildSettings({ db }));
+  app.use('/api/export', bearerRead, piiRateLimit, buildExport({ db, secrets }));
+  app.use('/api/notifications', bearerMaster, piiRateLimit, buildNotifications({ db }));
+  app.use('/api/scan', bearerWrite, piiRateLimit, buildScan({ db, secrets, thresholds }));
   // External-app identity API. Sibling apps (missionIQ, ParentPoint) call
   // these endpoints to delegate match/resolve to Family Graph.
-  app.use('/api/identity', method2scope(bearerRead, bearerWrite), buildIdentityApi({ db, secrets, thresholds }));
-  app.use('/api/connectors', bearerImport, buildConnectors({ db, secrets, thresholds }));
-  app.use('/api/connector-runs', bearerRead, buildConnectors.buildRunsRouter({ db }));
+  app.use('/api/identity', method2scope(bearerRead, bearerWrite), piiRateLimit, buildIdentityApi({ db, secrets, thresholds }));
+  app.use('/api/connectors', bearerImport, piiRateLimit, buildConnectors({ db, secrets, thresholds }));
+  app.use('/api/connector-runs', bearerRead, piiRateLimit, buildConnectors.buildRunsRouter({ db }));
   // Volunteer ministries + EIM. Reads are gated on pii.read because per-
   // assignment notes can contain operator commentary; writes need pii.write.
-  app.use('/api/ministries', method2scope(bearerRead, bearerWrite), buildMinistries({ db, secrets, includePii: true }));
+  app.use('/api/ministries', method2scope(bearerRead, bearerWrite), piiRateLimit, buildMinistries({ db, secrets, includePii: true }));
 
   // ParentPoint × FamilyGraph contract surface (FAMILYGRAPH_INTEGRATION.md
   // v0.1). All routes live under /v1/... so the URL shape matches the
   // contract verbatim and PP integrations don't have to remember a
   // distinct "FG-side" prefix. Single dedicated scope so an operator can
   // issue a scoped key to ParentPoint without granting it the full PII
-  // surface.
-  app.use('/v1', bearerParentPoint, buildParentPointApi({ db, secrets }));
+  // surface. Rate limit is generous: sibling apps can be chatty during
+  // a reconcile sweep.
+  app.use('/v1', bearerParentPoint, v1RateLimit, buildParentPointApi({ db, secrets }));
 
   // Static client (built React UI).
   const clientDir = path.join(__dirname, '..', 'client', 'dist');
@@ -137,19 +217,39 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
     });
   }
 
-  // 404 + error handlers (always JSON for /api).
+  // 404 + error handlers (always JSON for /api and /v1).
   app.use('/api', (req, res) => res.status(404).json({ error: 'not found' }));
+  app.use('/v1', (req, res) => res.status(404).json({ error: 'not_found' }));
   app.use(errorLogger());
   app.use((err, req, res, _next) => {
     // The structured logger has already recorded the stack via errorLogger().
+    // The wire response is a fixed shape — never leak err.message because
+    // it could contain user-supplied content or internal detail.
     if (res.headersSent) return;
-    res.status(500).json({ error: 'internal error' });
+    // Body-parser surfaces oversize / malformed JSON as 4xx errors with
+    // a `status` field on the error. Reflect that status so the caller
+    // sees the right code; the body stays generic.
+    const status = (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500)
+      ? err.status : 500;
+    let code = 'internal_error';
+    if (status === 413) code = 'request_too_large';
+    else if (status === 400) code = 'bad_request';
+    else if (status === 415) code = 'unsupported_media_type';
+    else if (status >= 400 && status < 500) code = 'bad_request';
+    res.status(status).json({ error: code });
   });
 
   return app;
 }
 
 function start() {
+  // Restrict the umask so any file we create — SQLite WAL/SHM files,
+  // log files, backup blobs — is owner-read/write only (mode 0600 for
+  // files, 0700 for directories). Without this, a default-umask system
+  // (0o022) leaves WAL files world-readable, and the WAL file contains
+  // unencrypted in-flight transaction pages.
+  process.umask(0o077);
+
   // Initialise the logger from env first so any pre-boot diagnostics land
   // in the configured destination.
   log.autoConfigureFromEnv();
@@ -272,6 +372,20 @@ function start() {
   }, 6 * 60 * 60 * 1000);
   idemSweep.unref();
 
+  // Token-set TTL sweeper. token_sets rows hold the sanitize → desanitize
+  // mapping; they're encrypted, but every expired row is one more chance
+  // for a stale mapping to be reversed. The expires_at column on a
+  // sanitize call defaults to `config.tokenSetTtlMinutes` from boot time;
+  // this sweep enforces the TTL by deleting rows whose `expires_at` has
+  // passed. Runs every 6h to mirror the idempotency sweep cadence.
+  const tokenSetSweep = setInterval(() => {
+    try {
+      db.prepare(`DELETE FROM token_sets WHERE expires_at IS NOT NULL AND expires_at <= ?`)
+        .run(new Date().toISOString());
+    } catch (_) { /* ignore */ }
+  }, 6 * 60 * 60 * 1000);
+  tokenSetSweep.unref();
+
   let watcher = null;
   if (process.env.FAMILY_GRAPH_DISABLE_WATCH !== '1') {
     try {
@@ -300,6 +414,7 @@ function start() {
       try { await ppWebhookDispatcher.stop(); } catch (_) { /* swallow */ }
     }
     clearInterval(idemSweep);
+    clearInterval(tokenSetSweep);
     clearInterval(entityChangesSweep);
     server.close(() => process.exit(0));
   }

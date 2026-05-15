@@ -1,7 +1,7 @@
 # ParentPoint × FamilyGraph — Implementation Guide
 
 **Date:** 2026-05-15
-**Revision:** 1 (initial)
+**Revision:** 2 (security-hardening pass — rate limits, response headers, error scrubbing, webhook DNS-rebinding defense, audit-log scrubbing)
 
 **Audience:** the ParentPoint engineer wiring the FamilyGraph
 connector. Read `FAMILYGRAPH_INTEGRATION.md` first for the contract
@@ -812,6 +812,42 @@ The `before` / `after` snapshots contain encrypted BLOB columns as
 base64 strings. PP doesn't decrypt these — FG does on subsequent
 GETs. The snapshots are useful for diff-style audit views ("phone
 changed from X to Y") if PP holds its own copy and compares.
+
+## 11.5 Rate limits to design around (rev 2)
+
+The `/v1` surface has a per-Bearer-token rate limit of 1,200 req/min
+(20/s sustained, 300 burst capacity). For a single school tenant this
+is wildly generous — reconcile sweeps and admin sessions both fit
+comfortably. But two patterns DO bump against it:
+
+1. **Backfill from a cold start.** When you flip a tenant to
+   FG-connected mode for the first time and walk
+   `/v1/persons/changed?since=1970-01-01` to hydrate the local cache,
+   the walk can paginate fast. Use `?limit=500` (the max) and let the
+   bucket refill between pages. A 1000-person tenant takes ~3 pages
+   over 1 second of wall clock; well under the limit.
+2. **Bursty school-context fan-outs.** When an admin imports a CSV that
+   touches 500 students, your Cloud Function fanout debounces per
+   `personId` to one POST every 5 minutes (§9.1 above) — that single
+   choke point already protects FG. Don't bypass it.
+
+On `429`, FG returns:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 15
+X-RateLimit-Bucket: v1
+```
+
+Honour `Retry-After`. Don't retry sooner.
+
+Read responses also carry `X-RateLimit-Remaining: <int>` so a
+proactive client can pace itself before hitting the cap.
+
+If you need a higher cap for a specific tenant, ask the operator;
+they can bump the bucket sizes per FG install via env vars.
+
+---
 
 ## 12. Common pitfalls
 

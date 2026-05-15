@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const sources = require('../sources');
 const sheetsUrl = require('../sources/sheets-url');
@@ -143,7 +145,7 @@ function build({ db, secrets, thresholds }) {
     if (!url) return res.status(400).json({ error: 'url required' });
     let parsed;
     try { parsed = sheetsUrl.parseSheetUrl(url); }
-    catch (e) { return res.status(400).json({ error: String(e.message || e) }); }
+    catch (e) { return res.status(400).json({ error: userFacingMessage(e) }); }
     try {
       const r2 = await sheetsUrl.fetchSheetCsv(url);
       audit.record(db, {
@@ -168,9 +170,9 @@ function build({ db, secrets, thresholds }) {
       audit.record(db, {
         action: 'sheet_fetch_failed',
         actor: req.auth?.actor || 'operator',
-        metadata: { sheet_id: parsed.id, gid: parsed.gid, error: String(e.message || e) },
+        metadata: { sheet_id: parsed.id, gid: parsed.gid, error: userFacingMessage(e) },
       });
-      res.status(502).json({ error: String(e.message || e) });
+      res.status(502).json({ error: userFacingMessage(e) });
     }
   });
 

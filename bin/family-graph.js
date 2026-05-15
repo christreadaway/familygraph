@@ -40,7 +40,21 @@ switch (cmd) {
       console.error('usage: family-graph restore <passphrase> <backup-file> <db-out>');
       process.exit(2);
     }
+    const path = require('path');
+    const config = require('../server/config');
     const backup = require('../server/backup');
+    // Restrict the destination to paths under FAMILY_GRAPH_HOME so a
+    // wrapped invocation (cron, supervisor, dropped-in shell hook)
+    // can't be tricked into clobbering /etc/cron.d/ or a system path.
+    // Operators who genuinely need to restore elsewhere can `cp` after.
+    const resolvedDest = path.resolve(dest);
+    const resolvedHome = path.resolve(config.home);
+    const homePrefix = resolvedHome.endsWith(path.sep) ? resolvedHome : resolvedHome + path.sep;
+    if (resolvedDest !== resolvedHome && !resolvedDest.startsWith(homePrefix)) {
+      // eslint-disable-next-line no-console
+      console.error(`[family-graph] restore destination must be under FAMILY_GRAPH_HOME (${resolvedHome}); got ${resolvedDest}`);
+      process.exit(2);
+    }
     backup.decryptedRestore(src, dest, passphrase);
     // eslint-disable-next-line no-console
     console.log(`[family-graph] restored to ${dest}`);

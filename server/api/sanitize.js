@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const sanitize = require('../sanitize');
 
@@ -27,10 +29,16 @@ function buildDesanitize({ db, secrets }) {
     try {
       const restored = sanitize.desanitizeText(db, secrets, text, token_set, {
         actor: req.auth?.actor || 'unknown',
+        authKind: req.auth?.kind || null,
       });
       res.json({ text: restored });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      // Cross-actor attempts get 403 so the caller knows the token-set
+      // exists but isn't theirs. Other errors stay 400.
+      if (e && e.isolation) {
+        return res.status(403).json({ error: 'forbidden', detail: 'token set belongs to a different caller' });
+      }
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
   return r;

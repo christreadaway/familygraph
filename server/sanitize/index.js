@@ -57,9 +57,17 @@ function sanitizeText(db, secrets, text, opts = {}) {
   out += text.slice(cursor);
 
   const tokenSetCode = newCode('token_set');
+  // Default TTL from config (24 hours); operators that want a tighter
+  // window can pass an explicit `ttlMinutes` from the caller. Stored as
+  // an ISO timestamp so the SQL sweeper just compares strings.
+  let ttlMinutes = Number(opts.ttlMinutes);
+  if (!Number.isFinite(ttlMinutes) || ttlMinutes <= 0) {
+    try { ttlMinutes = require('../config').tokenSetTtlMinutes || 1440; } catch (_) { ttlMinutes = 1440; }
+  }
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
   db.prepare(
-    `INSERT INTO token_sets (code, caller, mappings_ct) VALUES (?, ?, ?)`
-  ).run(tokenSetCode, opts.actor || 'unknown', enc.encrypt(secrets, JSON.stringify(mappings)));
+    `INSERT INTO token_sets (code, caller, mappings_ct, expires_at) VALUES (?, ?, ?, ?)`
+  ).run(tokenSetCode, opts.actor || 'unknown', enc.encrypt(secrets, JSON.stringify(mappings)), expiresAt);
 
   audit.record(db, {
     action: 'sanitize',
@@ -73,6 +81,28 @@ function sanitizeText(db, secrets, text, opts = {}) {
 function desanitizeText(db, secrets, text, tokenSetCode, opts = {}) {
   const row = db.prepare('SELECT * FROM token_sets WHERE code = ?').get(tokenSetCode);
   if (!row) throw new Error('unknown token set');
+  // Cross-consumer isolation: a sanitize call records the actor that
+  // produced the mapping; desanitize must be done by the same actor (or
+  // by the master token). Without this guard, one app holding a sanitize
+  // scope could fetch any other app's token-set and reverse it.
+  //
+  // Master token (actor stored as 'master_app' or whatever the operator
+  // chose in X-Family-Graph-Actor) gets a free pass — the operator is
+  // the only holder of the master token and inspecting any token-set is
+  // a legitimate operator action.
+  const caller = opts.actor || 'unknown';
+  const authKind = opts.authKind || null;
+  if (authKind !== 'master' && row.caller && row.caller !== caller) {
+    const e = new Error('token set belongs to a different caller');
+    e.isolation = true;
+    throw e;
+  }
+  // Token sets expire after their `expires_at` (when set). A stale
+  // sanitize round-trip should fail safely rather than silently reveal
+  // PII that was sanitized weeks ago.
+  if (row.expires_at && row.expires_at <= new Date().toISOString()) {
+    throw new Error('token set expired');
+  }
   const mappings = JSON.parse(enc.decrypt(secrets, row.mappings_ct));
   // Replace each token occurrence with its original value. Iterate over keys
   // sorted by length descending so f_a7b3c91d is processed before its prefix

@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const people = require('../identity/people');
 const contacts = require('../identity/contacts');
@@ -24,7 +26,7 @@ function build({ db, secrets, includePii }) {
     try {
       code = people.create(db, secrets, req.body || {});
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     audit.record(db, {
       action: 'person_create',
@@ -60,7 +62,7 @@ function build({ db, secrets, includePii }) {
     try {
       code = people.update(db, secrets, req.params.code, req.body || {});
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!code) return res.status(404).json({ error: 'not found' });
     audit.record(db, {
