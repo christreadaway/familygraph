@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const profiles = require('../identity/profiles');
 
@@ -14,7 +16,7 @@ function build({ db }) {
       const p = profiles.activate(db, name);
       res.json({ active: p });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
   return r;

@@ -48,9 +48,47 @@ function _logHttp(connector, method, url, status, durationMs) {
 // auth failure. Errors include a `reason` string from the existing
 // vocabulary so the operator can paste a log line and we can tell
 // `auth_failed` apart from `network_error`.
+// Outbound fetches must time out — a vendor whose token endpoint hangs
+// shouldn't trap a worker in an indefinite await. 30s is generous (some
+// FACTS endpoints take 20+ seconds under load); shorter is safer if you
+// know your vendor.
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
+// Validate an outbound URL before any fetch fires.
+//   - https:// only — credentials over http are unacceptable even on a LAN
+//   - hostname must not resolve obviously private (loopback / RFC1918 /
+//     link-local / metadata endpoint). The check is by literal IP form
+//     in the URL; a hostname pointing at a private IP slips through but
+//     getting that wrong is the operator's misconfiguration, not an
+//     external attacker.
+function _assertOutboundUrlSafe(rawUrl) {
+  let u;
+  try { u = new URL(rawUrl); } catch (_) {
+    throw _httpError('bad_url', 'invalid URL');
+  }
+  if (u.protocol !== 'https:') {
+    throw _httpError('bad_url', `outbound URL must be https://; got ${u.protocol}`);
+  }
+  const host = u.hostname.toLowerCase();
+  const private_ish = [
+    h => h === 'localhost' || h === '0.0.0.0',
+    h => /^127\./.test(h),
+    h => h === '::1' || h === '[::1]',
+    h => /^169\.254\./.test(h),
+    h => /^fe80:/i.test(h),
+    h => /^10\./.test(h),
+    h => /^192\.168\./.test(h),
+    h => /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h),
+  ];
+  if (private_ish.some(f => f(host))) {
+    throw _httpError('bad_url', `outbound URL targets a private / loopback host: ${host}`);
+  }
+}
+
 async function fetchToken({ connector, tokenUrl, clientId, clientSecret, scope = null, fetchImpl = null }) {
   const _fetch = fetchImpl || globalThis.fetch;
   if (!_fetch) throw _httpError('fetch_unavailable', 'no fetch implementation');
+  _assertOutboundUrlSafe(tokenUrl);
   const body = new URLSearchParams();
   body.set('grant_type', 'client_credentials');
   body.set('client_id', clientId);
@@ -64,11 +102,15 @@ async function fetchToken({ connector, tokenUrl, clientId, clientSecret, scope =
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
+      signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
     });
   } catch (e) {
     const dur = _now() - start;
     log.error('connector.http.auth_failed', { connector, reason: 'network_error', message: String(e.message || e), duration_ms: dur });
-    throw _httpError('network_error', String(e.message || e));
+    // The vendor's error text might echo back the request body (and
+    // therefore the client_secret). We discard it; the operator sees a
+    // structured reason instead.
+    throw _httpError('network_error', 'token endpoint unreachable or timed out');
   }
   const dur = _now() - start;
   _logHttp(connector, 'POST', tokenUrl, resp.status, dur);
@@ -139,6 +181,7 @@ async function authedFetch({
 }) {
   const _fetch = fetchImpl || globalThis.fetch;
   if (!_fetch) throw _httpError('fetch_unavailable', 'no fetch implementation');
+  _assertOutboundUrlSafe(url);
   const _waitFor = _sleep || sleep;
   let tok = await getAccessToken({ connector, tokenUrl, clientId, clientSecret, scope, fetchImpl });
 
@@ -160,10 +203,13 @@ async function authedFetch({
         method,
         headers,
         body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+        signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
       });
     } catch (e) {
       _logHttp(connector, method, url, 'ERR', _now() - start);
-      throw _httpError('network_error', String(e.message || e));
+      // Generic wire message; the full detail (with URL, status) lives
+      // in the structured log line above for operator debugging.
+      throw _httpError('network_error', 'upstream unreachable or timed out');
     }
     const dur = _now() - start;
     _logHttp(connector, method, url, resp.status, dur);
@@ -190,9 +236,13 @@ async function authedFetch({
       continue;
     }
     if (!resp.ok) {
-      let bodyText = '';
-      try { bodyText = await resp.text(); } catch (_) { /* ignore */ }
-      throw _httpError('http_error', `${url} returned ${resp.status}: ${bodyText.slice(0, 200)}`);
+      // Discard the response body before throwing. Vendor error bodies
+      // sometimes echo back the request (which contains PII) or the
+      // bearer token in a `WWW-Authenticate`-style detail. The status
+      // code + connector name is enough for operator triage; the
+      // structured log line above already recorded the full status.
+      try { await resp.text(); } catch (_) { /* drain */ }
+      throw _httpError('http_error', `upstream returned ${resp.status}`);
     }
     let payload = null;
     try { payload = await resp.json(); }

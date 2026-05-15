@@ -33,6 +33,7 @@ const contactsLib = require('../identity/contacts');
 const aliases = require('../identity/aliases');
 const { isValidCode } = require('../crypto/identifiers');
 
+const { userFacingMessage } = require('./_errors');
 const pp = require('../parentpoint');
 const objects = pp.objects;
 const etag = pp.etag;
@@ -169,15 +170,24 @@ function build({ db, secrets }) {
     const email = req.query.email;
     if (email) {
       const code = objects.personByEmail(db, secrets, email);
+      // Audit BOTH the hit and the miss so an enumeration campaign is
+      // visible. The miss audit records a stable HMAC of the queried
+      // email so a distinct-miss count is observable per actor — but
+      // never the email itself.
+      const enc = require('../crypto/encryption');
+      const queryHash = enc.hmac(secrets, enc.normalizeEmail(email));
+      audit.record(db, {
+        action: code ? 'pp_person_lookup_email' : 'pp_person_lookup_email_miss',
+        actor: req.auth?.actor || 'parentpoint',
+        entityCode: code || null,
+        entityKind: 'person',
+        metadata: code
+          ? { query_hash: queryHash ? queryHash.slice(0, 16) : null }
+          : { hit: false, query_hash: queryHash ? queryHash.slice(0, 16) : null },
+      });
       if (!code) return res.status(404).json({ error: 'not_found' });
       const obj = objects.personObject(db, secrets, code);
       if (!obj) return res.status(404).json({ error: 'not_found' });
-      audit.record(db, {
-        action: 'pp_person_lookup_email',
-        actor: req.auth?.actor || 'parentpoint',
-        entityCode: code,
-        entityKind: 'person',
-      });
       return sendWithEtag(res, { person: obj });
     }
     return res.status(400).json({ error: 'email_or_changed_required' });
@@ -190,7 +200,7 @@ function build({ db, secrets }) {
       });
       return sendWithEtag(res, result, { cacheSeconds: 5 });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -247,7 +257,7 @@ function build({ db, secrets }) {
     try {
       code = people.create(db, secrets, createPatch);
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     // Attach contact rows. We accept either primaryEmail (string) or
     // emails (array) plus phones (array) so the PP client can hydrate as
@@ -328,7 +338,7 @@ function build({ db, secrets }) {
     try {
       people.update(db, secrets, current.personId, patch);
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     // Email / phone updates.
     if (Array.isArray(body.additionalEmails)) {
@@ -412,7 +422,7 @@ function build({ db, secrets }) {
         auditMeta.scope = 'identity_base';
       }
     } catch (e) {
-      const m = String(e.message || e);
+      const m = userFacingMessage(e);
       if (/not found/.test(m)) return res.status(404).json({ error: 'not_found' });
       return res.status(400).json({ error: m });
     }
@@ -448,7 +458,7 @@ function build({ db, secrets }) {
         requestId: req.ppContract.requestId || null,
       });
     } catch (e) {
-      const m = String(e.message || e);
+      const m = userFacingMessage(e);
       if (/not found/.test(m)) return res.status(404).json({ error: 'not_found' });
       return res.status(400).json({ error: m });
     }
@@ -485,7 +495,7 @@ function build({ db, secrets }) {
     try {
       code = certifications.add(db, secrets, req.params.personId, req.body || {});
     } catch (e) {
-      const m = String(e.message || e);
+      const m = userFacingMessage(e);
       if (/not found/.test(m)) return res.status(404).json({ error: 'not_found' });
       return res.status(400).json({ error: m });
     }
@@ -517,7 +527,7 @@ function build({ db, secrets }) {
     try {
       schoolContext.upsert(db, req.params.personId, body);
     } catch (e) {
-      const m = String(e.message || e);
+      const m = userFacingMessage(e);
       if (/not found/.test(m)) return res.status(404).json({ error: 'not_found' });
       return res.status(400).json({ error: m });
     }
@@ -552,7 +562,7 @@ function build({ db, secrets }) {
         requestId: req.ppContract.requestId || null,
       });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
@@ -584,7 +594,7 @@ function build({ db, secrets }) {
         requestId: req.ppContract.requestId || null,
       });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
@@ -635,7 +645,7 @@ function build({ db, secrets }) {
       });
       return sendWithEtag(res, result, { cacheSeconds: 5 });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -713,7 +723,7 @@ function build({ db, secrets }) {
         custody,
       });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     // Bump the family's updated_at so the changed-households feed sees the
     // new membership.
@@ -749,7 +759,7 @@ function build({ db, secrets }) {
         requestId: req.ppContract.requestId || null,
       });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
@@ -778,7 +788,7 @@ function build({ db, secrets }) {
         requestId: req.ppContract.requestId || null,
       });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
@@ -826,7 +836,7 @@ function build({ db, secrets }) {
         requestId: req.ppContract.requestId || null,
       });
     } catch (e) {
-      return res.status(400).json({ error: String(e.message || e) });
+      return res.status(400).json({ error: userFacingMessage(e) });
     }
     audit.record(db, {
       action: 'pp_diocese_create',
@@ -934,7 +944,7 @@ function build({ db, secrets }) {
       const sub = webhooks.subscribe(db, secrets, req.body || {});
       res.status(201).json({ subscription: sub });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 

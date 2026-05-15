@@ -533,7 +533,9 @@ care what was there, just overwrite" semantics.
 | 403 | Bearer is valid but lacks the required scope | Ask the operator to add `parentpoint` |
 | 404 | Entity not found | Either it was archived (look at the changed feed) or the id is wrong |
 | 412 | If-Match mismatch (stale cache) | Re-fetch, re-apply |
+| 413 | Payload too large (256KB on `/v1`, 20MB on `/api/import`) | Split the request |
 | 426 | Unsupported `X-FG-Contract-Version` | Upgrade your client |
+| 429 | Rate limit exceeded | Honour `Retry-After`; back off |
 | 5xx | FG bug or transient failure | Retry with the same `X-Request-Id` |
 
 The body of every error response is:
@@ -544,6 +546,13 @@ The body of every error response is:
   "detail": "<human-readable>"           // not always present
 }
 ```
+
+FG sanitises error messages aggressively — SQLite constraint
+violations, OS error codes, and internal stack traces are normalised
+into short generic strings before they cross the wire. The full
+detail is always available in FG's structured server log. If a
+specific error is confusing your client, ask the operator to paste
+the relevant log line.
 
 ## 12. Boundary of ownership
 
@@ -571,10 +580,29 @@ the child — is supported.
 
 ### 13.1 Rate limits
 
-There are no per-endpoint rate limits in v0.2. The operator can
-enable them in a future revision; design your client with bounded
-retries (exponential backoff capped at a few minutes) and don't
-hammer the changed feed faster than once per minute.
+FamilyGraph enforces a per-Bearer-token rate limit on every
+write surface. The buckets are intentionally generous so reconcile
+sweeps and bursty admin sessions don't trip them:
+
+| Surface | Default capacity | Refill rate | Per-minute steady state |
+|---|---|---|---|
+| `/v1/...` (sibling apps) | 300 | 20/s | 1,200 |
+| `/api/...` (PII + admin) | 200 | 10/s | 600 |
+| `/api/sanitize` + `/api/desanitize` | 30 | 1/s | 60 |
+| `/api/import` | 20 | 0.5/s | 30 |
+
+When a bucket is exhausted, FG responds `429 Too Many Requests` with
+`Retry-After: <seconds>` and `X-RateLimit-Bucket: <name>`. Honour the
+header; don't retry faster.
+
+Every successful response carries `X-RateLimit-Bucket: <name>` and
+`X-RateLimit-Remaining: <integer>` so a client can adjust pacing
+proactively. The buckets are keyed on a hash of the bearer token,
+so each consumer gets its own capacity — a rogue caller can't starve
+the others.
+
+Operators with extreme needs disable rate-limiting entirely via
+`FAMILY_GRAPH_DISABLE_RATE_LIMIT=1`. That's not the normal posture.
 
 ### 13.2 Logging
 

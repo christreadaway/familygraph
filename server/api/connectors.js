@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 
 const credentials = require('../connectors/credentials');
@@ -47,7 +49,7 @@ function build({ db, secrets, thresholds }) {
       });
       res.status(200).json({ connector: out });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -73,7 +75,7 @@ function build({ db, secrets, thresholds }) {
       });
       res.json({ connector: out });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -89,7 +91,7 @@ function build({ db, secrets, thresholds }) {
     } catch (e) {
       const reason = e.reason || 'http_error';
       const code = reason === 'auth_failed' ? 401 : reason === 'config_error' ? 400 : 502;
-      res.status(code).json({ ok: false, reason, error: String(e.message || e) });
+      res.status(code).json({ ok: false, reason, error: userFacingMessage(e) });
     }
   });
 
@@ -115,7 +117,7 @@ function build({ db, secrets, thresholds }) {
                  : reason === 'already_running' ? 409
                  : reason === 'unknown_connector' ? 404
                  : 400;
-      res.status(code).json({ ok: false, reason, error: String(e.message || e) });
+      res.status(code).json({ ok: false, reason, error: userFacingMessage(e) });
     }
   });
 

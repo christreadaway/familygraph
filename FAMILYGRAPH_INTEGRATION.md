@@ -977,3 +977,153 @@ parentpoint-merge-migration.test.js, plus updates to existing tests).
 The full suite went from 431 → 463 passing (1 skipped on root, as
 before).
 
+---
+
+## Appendix D — Security hardening pass (2026-05-15)
+
+A multi-agent security audit caught a batch of gaps that didn't break
+the contract but weakened the posture. Every fix is now in place with a
+regression test. The full suite went from 463 → 489 passing (+26 cases).
+The brief explicitly preserved data flow: rate limits are generous,
+no endpoint was blocked.
+
+### Critical / High
+
+- **Response security headers.** `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+  `Cross-Origin-Resource-Policy: same-origin`,
+  `Cross-Origin-Opener-Policy: same-origin`, `Permissions-Policy`
+  (camera, mic, geolocation, interest-cohort all disabled), and CSP on
+  HTML-accepting responses. HSTS is deliberately NOT set because the
+  default bind is loopback; operators terminating TLS in front add HSTS
+  at the proxy.
+- **Per-token rate limiter.** Token-bucket per Bearer fingerprint, with
+  separate buckets for `/api` (600/min), `/v1` (1200/min), `/api/sanitize`
+  (60/min, CPU-heavy), and `/api/import` (30/min, network+CPU-heavy).
+  Returns `429` with `Retry-After` when exhausted. Buckets are
+  intentionally generous so a sibling-app reconcile sweep doesn't
+  trip the limit. Disable with `FAMILY_GRAPH_DISABLE_RATE_LIMIT=1`.
+- **Backup-restore path traversal.** `family-graph restore` previously
+  accepted any destination path. Now restricted to paths under
+  `FAMILY_GRAPH_HOME` so a wrapped invocation (cron, supervisor) can't
+  be tricked into writing to `/etc/cron.d/` or a system path.
+- **Folder-watch symlink dereference.** `safeMove` would move a symlink
+  via `rename`, but the cross-device fallback `copyFileSync`
+  DEREFERENCES the symlink and copies the target's bytes. An attacker
+  with write access to `watchDir` could drop a symlink to a sensitive
+  file and have its contents copied into `processed/`. Fixed by
+  refusing to move symlinks and `unlink`ing them so the watcher
+  stops re-detecting.
+- **Folder-watch realpath escape.** Start refuses to run when
+  `outDir.realpath` resolves to a path inside `watchDir.realpath`
+  (catches a symlinked outDir that escapes its expected location).
+- **Webhook DNS rebinding (TOCTOU).** Subscribe-time validation rejects
+  loopback / RFC1918 / link-local URLs by IP form. Between subscribe
+  and dispatch, an attacker who controls the subscribed hostname's
+  DNS could repoint it. The dispatcher now resolves the hostname
+  at delivery time and refuses to POST if any returned A / AAAA falls
+  into a private range. Adds one DNS lookup per delivery; cheap.
+- **Webhook URL leakage in audit.** The audit metadata recorded the
+  full URL including any `?token=...` query string. Operators
+  sometimes register URLs with inline auth tokens; those tokens
+  ended up permanently logged. Audit now records `<scheme>://<host><path>`
+  only — userinfo + query stripped.
+
+### Medium
+
+- **Error message normalisation.** 38 handler catch blocks across 13
+  files used `String(e.message || e)` directly, leaking SQLite
+  constraint messages (`UNIQUE constraint failed: api_keys.hash`), OS
+  error codes (`ENOENT: no such file or directory, /Users/.../`), and
+  internal `TypeError` stacks. New `userFacingMessage(err)` helper
+  pattern-matches these and returns a normalised string; explicit
+  library throws (`throw new Error('invalid eim_status: foo')`) pass
+  through unchanged. The full original error is still logged
+  server-side via the structured logger.
+- **JSON body size limits, per route.** Previously `app.use(express.json({ limit: '20mb' }))`
+  was global. Now `/api/import`, `/api/sanitize`, `/api/desanitize`,
+  and `/api/scan` keep their 20MB cap; everything else (including
+  `/v1`) is 256KB. Oversize bodies return `413 request_too_large`
+  with a generic body — the upstream `PayloadTooLargeError` stack
+  is logged but never sent on the wire.
+- **Audit-log free-text scrubbing.** The redactor's PII_KEYS set
+  previously covered `email`, `phone`, `name`, etc. — only keys with
+  PII-shaped names. Free-text fields like `reason` and `notes` could
+  contain operator-pasted PII. Added a TRUNCATE_KEYS pass that caps
+  these at 500 chars, masks email-looking and phone-looking spans,
+  and appends an ellipsis when truncation kicks in.
+- **Connector outbound HTTP timeouts.** `fetchToken` and `authedFetch`
+  in `server/connectors/http.js` previously had no timeout — a hung
+  vendor endpoint would trap the connector worker indefinitely. Now
+  use `AbortSignal.timeout(30_000)` (30s, generous for slow FACTS
+  endpoints).
+- **Connector outbound URL safety.** Operator-configured connector
+  base URLs are validated: `https://` only, no loopback / RFC1918 /
+  link-local / cloud-metadata targets. The plain HTTP option is
+  blocked because client secrets travel in the token-exchange body.
+- **Connector outbound error scrubbing.** Vendor error response
+  bodies sometimes echo the request (which contains the client
+  secret). We now drain the body without including it in the
+  thrown error message; the operator sees a structured status code
+  in the structured log instead.
+- **Sanitize / desanitize cross-caller isolation.** Token sets
+  recorded the actor that produced them, but desanitize never
+  checked. Any caller holding the `sanitize` scope could reverse
+  any other caller's token set. Now `desanitizeText` enforces the
+  caller (master token still gets through).
+- **Token-set TTL.** The `token_sets.expires_at` column existed but
+  was never populated and never swept. New writes set `expires_at` from
+  `config.tokenSetTtlMinutes` (default 24h); a background sweeper
+  deletes expired rows every 6 hours. Desanitize refuses to reverse
+  an expired set.
+- **Notifications body masking.** `GET /api/notifications` returned
+  `body_text` and `body_html` plaintext to any master-scope caller.
+  These can include PII ("operator merged Annie and her brother
+  Tim..."). Now masked by default; pass `?include_body=1` to see them.
+- **Email-lookup miss audit.** `GET /v1/persons?email=` previously
+  audited only successful lookups, so an enumeration campaign was
+  invisible at the audit layer. Misses now record
+  `pp_person_lookup_email_miss` with a salted hash of the queried
+  email (not the email itself), so distinct-miss counts per actor
+  are observable without leaking the queried address.
+
+### Low / info
+
+- **`process.umask(0o077)` at server start.** SQLite WAL/SHM files
+  carry unencrypted in-flight transaction pages. Without an explicit
+  umask, a default-0o022 system would create them world-readable.
+  Set the process umask early in `start()` so every file we
+  subsequently write (logs, backups, WALs) is owner-only.
+- **`x-powered-by: Express` suppressed** (was already set; verified).
+- **CORS deliberately not enabled.** All consumers are server-to-server
+  with explicit Bearer; no browser-cross-origin use case exists. Adding
+  a CORS allowlist would WEAKEN the posture by permitting cross-origin
+  Bearer requests. Same-origin only.
+- **Bearer token in `localStorage`.** Acceptable for the trusted-desktop
+  threat model (FG is loopback-only by default). Documented in
+  `INTEGRATION_GUIDE.md`; operators terminating TLS for remote access
+  should consider session-storage / proxy-managed tokens.
+- **External font CDN** (`fonts.googleapis.com`) is loaded by the
+  dashboard SPA. Acceptable for the operator-trusted-desktop model;
+  air-gapped deployments can self-host the font files and update
+  `client/src/styles/app.css`.
+
+### What was NOT changed (and why)
+
+- **CORS.** Not needed — all consumers are server-side. See above.
+- **HSTS.** Not set — default bind is loopback. Operators terminating
+  TLS at a proxy set HSTS there.
+- **mTLS.** Still a v0.3 item per Appendix A. Signed webhooks + Bearer
+  remain the auth posture.
+- **Settings GET allowlist.** Verified that the existing implementation
+  reduces connector ciphertext fields to `_set: true` flags. The
+  remaining keys are non-secret (display name, dashboard URL, etc.).
+- **show-token CLI gate.** Operator-local; the master token already
+  lives in a 0600 file. Documented in `INTEGRATION_GUIDE.md`.
+
+### Test count
+
+The security pass added 26 cases in `tests/security-hardening.test.js`.
+The full suite went from 463 → 489 passing (1 skipped on root, as
+before).
+

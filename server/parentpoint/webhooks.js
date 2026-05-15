@@ -119,12 +119,30 @@ function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint =
         (code, url, secret_ct, events, school_hint, enabled)
         VALUES (?, ?, ?, ?, ?, 1)`
   ).run(code, url, enc.encrypt(secrets, secret), normalizedEvents, schoolHint);
+  // Audit metadata records the URL with credentials and query string
+  // stripped. Some operators register webhook URLs that contain inline
+  // auth tokens (?token=...); we don't want those tokens preserved in
+  // the audit log forever. The full URL is still in the row itself
+  // (encrypted-at-rest free-form text isn't here, but the audit log is
+  // operator-visible).
   audit.record(db, {
     action: 'pp_webhook_subscribe',
     actor: 'parentpoint',
-    metadata: { code, url, events: normalizedEvents, school_hint: schoolHint || null },
+    metadata: { code, url: _sanitiseUrlForLog(url), events: normalizedEvents, school_hint: schoolHint || null },
   });
   return list(db, secrets).find(s => s.code === code);
+}
+
+// Strip query string + userinfo before logging. Returns "<scheme>://<host><path>"
+// — enough for the operator to identify which subscription this is, none of
+// the token-bearing tail.
+function _sanitiseUrlForLog(url) {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch (_) {
+    return '[unparseable url]';
+  }
 }
 
 // Default behaviour: list ACTIVE subscriptions only (enabled=1). Pass
@@ -303,8 +321,46 @@ function _touchSubscription(db, subscriptionCode, lastStatus, lastError) {
 
 // Pluggable HTTP sender. Defaults to a Node fetch-based call when not
 // overridden; tests inject a stub so they don't need a real socket.
+//
+// DNS rebinding defence: the URL was validated at subscribe time, but
+// DNS resolves at delivery time. An attacker who controls the DNS for
+// the subscribed hostname could point it at 127.0.0.1 between subscribe
+// and dispatch — the validate-at-subscribe check wouldn't catch that.
+// We resolve the hostname once, reject if it lands on a private IP, and
+// only THEN make the call. The fetch goes to the literal hostname (so
+// TLS verification still works), but we've at least confirmed the
+// hostname doesn't resolve somewhere it shouldn't.
+async function _resolveAndAssertPublic(hostname) {
+  // No-op for IP literals — the subscribe-time check already rejected
+  // those forms.
+  if (/^[0-9.]+$/.test(hostname) || hostname.includes(':')) return;
+  const dnsPromises = require('node:dns').promises;
+  let addrs = [];
+  try {
+    const v4 = await dnsPromises.resolve4(hostname).catch(() => []);
+    const v6 = await dnsPromises.resolve6(hostname).catch(() => []);
+    addrs = [...v4, ...v6];
+  } catch (_) {
+    // Resolution failure surfaces as the fetch error below; don't
+    // pre-empt with our own error here.
+    return;
+  }
+  for (const a of addrs) {
+    if (_isLoopbackOrLinkLocal(a)) {
+      const err = new Error(`webhook hostname ${hostname} resolves to private/loopback address ${a}`);
+      err.code = 'PRIVATE_IP_RESOLUTION';
+      throw err;
+    }
+  }
+}
+
 async function _defaultSender({ url, body, headers, timeoutMs = 10_000 }) {
   // fetch is global in Node 20+.
+  let parsed;
+  try { parsed = new URL(url); } catch (_) {
+    throw new Error(`webhook url invalid at delivery time: ${url}`);
+  }
+  await _resolveAndAssertPublic(parsed.hostname);
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {

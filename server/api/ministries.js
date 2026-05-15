@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const ministries = require('../identity/ministries');
 const eim = require('../identity/eim');
@@ -30,7 +32,7 @@ function build({ db, secrets, includePii }) {
       });
       res.status(201).json({ code });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -63,7 +65,7 @@ function build({ db, secrets, includePii }) {
       });
       res.json({ code });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
@@ -106,7 +108,7 @@ function build({ db, secrets, includePii }) {
       });
       res.status(201).json({ code });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 

@@ -14,7 +14,10 @@ const PII_KEYS = new Set([
   'last_name',
   'given_name',
   'family_name',
+  'preferred_name',
+  'display_name',
   'email',
+  'primaryemail',
   'phone',
   'address',
   'line1',
@@ -23,7 +26,37 @@ const PII_KEYS = new Set([
   'date_of_birth',
   'value',
   'plaintext',
+  // Bearer tokens / secrets — defense-in-depth in case a caller
+  // accidentally forwards one through audit metadata.
+  'authorization',
+  'token',
+  'bearer',
+  'secret',
+  'password',
+  'api_key',
 ]);
+
+// Free-form operator-supplied text that gets recorded in metadata
+// (reason, notes, summary, message). We don't redact these — they're
+// meant to be human-readable — but we cap them so an operator can't
+// (deliberately or by accident) dump a 100 KB email body into the log.
+const TRUNCATE_KEYS = new Set(['reason', 'notes', 'summary', 'message', 'detail', 'error']);
+const TRUNCATE_LEN = 500;
+
+function _scrubFreeText(s) {
+  if (typeof s !== 'string') return s;
+  // Soft heuristic: if the string looks like it contains an email or
+  // phone, mask the obvious chunk. The audit log is operator-visible
+  // and we don't want raw contact info to land there even when an
+  // operator pastes it into a reason field.
+  let out = s;
+  out = out.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]');
+  out = out.replace(/\+?\d[\d\s().-]{7,}\d/g, '[phone]');
+  if (out.length > TRUNCATE_LEN) {
+    out = out.slice(0, TRUNCATE_LEN) + '…';
+  }
+  return out;
+}
 
 function redact(meta, _seen = new WeakSet()) {
   if (!meta) return null;
@@ -33,8 +66,11 @@ function redact(meta, _seen = new WeakSet()) {
   if (Array.isArray(meta)) return meta.map(v => redact(v, _seen));
   const out = {};
   for (const [k, v] of Object.entries(meta)) {
-    if (PII_KEYS.has(k.toLowerCase())) {
+    const lk = k.toLowerCase();
+    if (PII_KEYS.has(lk)) {
       out[k] = '[redacted]';
+    } else if (TRUNCATE_KEYS.has(lk) && typeof v === 'string') {
+      out[k] = _scrubFreeText(v);
     } else if (v && typeof v === 'object') {
       out[k] = redact(v, _seen);
     } else {

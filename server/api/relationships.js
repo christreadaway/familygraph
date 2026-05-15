@@ -1,5 +1,7 @@
 'use strict';
 
+
+const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const relationships = require('../identity/relationships');
 const audit = require('../audit');
@@ -30,7 +32,7 @@ function build({ db }) {
       });
       res.status(201).json({ code });
     } catch (e) {
-      res.status(400).json({ error: String(e.message || e) });
+      res.status(400).json({ error: userFacingMessage(e) });
     }
   });
 
