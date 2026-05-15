@@ -449,11 +449,14 @@ A separate, versioned API surface for the ParentPoint integration.
   FamilyGraph as the identity layer. Use this when wiring a future
   app (parish faith-formation, school-events, etc.) on top of the
   same hub.
-- [`PARENTPOINT_INTEGRATION_GUIDE.md`](./PARENTPOINT_INTEGRATION_GUIDE.md)
+- [`PARENTPOINT_INTEGRATION_GUIDE_2026-05-15.md`](./PARENTPOINT_INTEGRATION_GUIDE_2026-05-15.md)
   — ParentPoint-specific implementation guide. Step-by-step on the
   PP side: HTTP client, read flows, write flows, per-school consent
   overrides, diocesan EIM, webhook handlers, archive / reinstate,
-  standalone → connected migration, common pitfalls.
+  standalone → connected migration, common pitfalls. The date in the
+  filename pins the revision; future updates land as new files
+  (`..._YYYY-MM-DD.md`) so PP engineers can diff against the version
+  their code targets.
 
 Quick sketch:
 

@@ -682,6 +682,7 @@ changelog will spell out what changed.
 
 - `FAMILYGRAPH_INTEGRATION.md` — the contract spec (with v0.1, v0.2,
   and audit-pass appendices).
-- `PARENTPOINT_INTEGRATION_GUIDE.md` — the ParentPoint-specific
-  companion to this doc.
+- `PARENTPOINT_INTEGRATION_GUIDE_2026-05-15.md` — the ParentPoint-
+  specific companion to this doc. The date suffix pins the revision;
+  newer revisions ship as new files with later date suffixes.
 - `API_ACCESS_GUIDE.md` — operator-facing key-provisioning guide.
