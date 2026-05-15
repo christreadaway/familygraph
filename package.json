@@ -10,6 +10,7 @@
     "family-graph": "./bin/family-graph.js"
   },
   "scripts": {
+    "preinstall": "node scripts/preinstall-sfw-check.js",
     "start": "node server/index.js",
     "dev": "node -r ./scripts/dev-env.js server/index.js",
     "test": "node --test 'tests/**/*.test.js'",

@@ -2514,4 +2514,72 @@ merge commits from PRs #11–14 of this same branch.
 
 ---
 
+## v15 — Socket Firewall is now a hard project requirement (2026-05-15)
+
+The operator flagged that they've been running every `npm install`
+through Socket Firewall (`sfw`) for supply-chain reasons, and asked
+that the repo demand the same of anyone else who installs against it.
+"Demand," not "suggest." So this is now enforced at the npm layer, not
+just documented.
+
+**What shipped.**
+
+`scripts/preinstall-sfw-check.js` is a tiny gate wired into both root
+`package.json` and `client/package.json` as the `preinstall` script.
+It refuses to let an install proceed unless one of these is true:
+`SFW=1`, `SOCKET_FIREWALL=1`, or `npm_config_user_agent` contains
+`socket`. Bypass is `SFW_BYPASS=1`; the gate prints a loud warning and
+the convention is that every bypass gets a one-line note in this file.
+
+Plain `npm install` now fails fast with a message that tells the
+operator exactly how to fix it (`npm install -g sfw`, then
+`SFW=1 sfw npm install`). The failure mode is friendly because the
+whole point is that the next person who clones the repo does the right
+thing on the first try, not on the third.
+
+**Docs the operator-facing surface picks up.**
+
+- `README.md` now opens with a "Security requirement: Socket Firewall"
+  section above the install steps, and every `npm install` command in
+  both the macOS/Linux and Windows sections is rewritten as
+  `SFW=1 sfw npm install`. The Windows path also lists `sfw` as a
+  one-time global install alongside Node and Git.
+- `product_spec.md` install snippet is rewritten the same way, with a
+  short comment explaining the preinstall guard.
+- `CLAUDE.md` gets a dedicated section near the top setting the rule
+  for future Claude sessions: never propose or run `npm install`
+  without sfw, never strip the preinstall hook, never silently use
+  `SFW_BYPASS=1`, wire the same guard into any new subpackage.
+
+**Design choices worth recording.**
+
+Why a preinstall guard instead of a Husky-style git hook: git hooks
+only fire for contributors who've run `husky install`; the npm
+preinstall hook fires for anyone running `npm install`, including CI.
+That covers the actual threat surface.
+
+Why a marker env var (`SFW=1`) instead of relying on whatever sfw
+itself sets: sfw's exact env-var signature is version-dependent. The
+guard already sniffs for `SOCKET_FIREWALL=1` and a `socket`
+user-agent, but `SFW=1` is the contract we control. Operator can
+`export SFW=1` in their shell rc and forget about it; cleaner than
+requiring everyone to remember version-specific signals.
+
+Why `client/package.json` references `../scripts/preinstall-sfw-check.js`
+instead of a copy: one source of truth. npm runs the preinstall script
+with `client/` as cwd, so the relative path resolves correctly.
+
+Why `SFW_BYPASS` exists at all: registries go down, mirrors break,
+operators travel through hostile networks. A guard with no escape
+hatch gets uninstalled the first time it costs someone a deploy. An
+escape hatch with a session-notes obligation gets respected.
+
+Schema didn't move. No new tests — the guard is a build-step concern
+and exercising it requires a real npm install, which is out of scope
+for the `node --test` suite. Operator can verify by running
+`npm install` (should refuse) and `SFW=1 npm install` (should
+proceed) in a clean checkout.
+
+---
+
 *End of session notes*
