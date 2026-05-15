@@ -12,10 +12,15 @@ const { newCode } = require('../crypto/identifiers');
 //   'audit.write'      — may post /api/audit/external-export
 //   'import'           — may run bulk imports
 //   'rules.write'      — may CRUD resolution rules
+//   'parentpoint'      — may call the /v1 ParentPoint contract surface.
+//                        Distinct from pii.read/pii.write because the
+//                        contract gates a different schema (PP-shaped
+//                        objects) and warrants its own attribution in
+//                        the audit log.
 //   '*'                — full access (equivalent to the master token)
 const VALID_SCOPES = new Set([
   'pii.read', 'pii.write', 'sanitize', 'audit.read', 'audit.write',
-  'import', 'rules.write', '*',
+  'import', 'rules.write', 'parentpoint', '*',
 ]);
 
 function hash(token) {

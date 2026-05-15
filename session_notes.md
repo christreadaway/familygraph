@@ -1911,4 +1911,443 @@ empty-state branching, before considering the UI audit closed.
 
 ---
 
+## v12 — ParentPoint × FamilyGraph contract (Claude Code, 2026-05-15)
+
+The operator dropped `FAMILYGRAPH_INTEGRATION.md` (v0.1, May 2026) into
+the repo with one ask: build comprehensively against it. That doc reads
+from ParentPoint's perspective - "FG must expose endpoints A, B, C; FG
+must accept POSTs of shape X, Y, Z; FG must emit webhooks of shape W."
+The job was to make every one of those things real on the FamilyGraph
+side without breaking anything in the existing repo.
+
+**What shipped, top to bottom.**
+
+Migration 0012. New columns on `persons` (`kind`, `preferred_name_ct`),
+`families` (`primary_contact_person_code`, `communication_language`),
+`memberships` (`relation_label`), `phones` (`e164`, `sms_consent`). New
+tables for `person_consents`, `eim_certifications`, `school_contexts`,
+`pp_webhook_subscriptions`, `pp_webhook_deliveries`, and
+`pp_idempotency_keys`. Both `schema.sql` (the bootstrap path for fresh
+installs) and the numbered migration (the upgrade path for existing
+deploys) carry the changes; `SCHEMA_VERSION` bumped 11 → 12.
+
+Eight helper modules under `server/parentpoint/`: `objects` (FG row →
+PP shape converters for the §6.1/§6.2/§6.3 objects), `consents`
+(photo + directory CRUD with defaults), `certifications` (EIM history
+that promotes a later cert to "current" but never demotes a still-valid
+one when an expired-historical backfill arrives), `schoolContext`
+(upsert keyed by (person, school) per §7.3), `webhooks` (subscription
+store, HMAC-SHA256 signature over the body, exponential backoff
+mirroring `server/notify`), `changes` (the `/changed?since=` queries
+that drive PP's hourly catch-up cron), `etag` (deterministic weak
+validator on stable JSON, plus `If-Match` matching), `idempotency`
+(`X-Request-Id` 24h dedupe with lazy expiry on lookup).
+
+The HTTP surface lives in `server/api/parentpoint.js` and mounts at
+`/v1/...`. 17 endpoints covering every verb-path pair in §6.4 and §7.1
+of the contract, plus webhook subscription management. Per-request
+middleware enforces the contract version header (426 on unknown
+versions, accepted-with-log on missing), replays idempotent responses
+on duplicate `X-Request-Id`, computes ETags on GETs, validates
+`If-Match` on PATCHes. A new `parentpoint` scope on the per-app key
+surface gates the whole router; the master token continues to work.
+
+Webhook dispatcher boots in `server/index.js` alongside the
+notifications dispatcher and the connector scheduler. Fires once at
+boot, then every 60s; disable with `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1`.
+Idempotency-key sweeper runs every 6h as belt-and-suspenders cleanup
+for rows that never get queried again after their TTL.
+
+**Decisions that aren't in the doc and need to be remembered.**
+
+The contract uses `personId` like `fg_p_01HQX...` (a ULID with a
+prefix); FG already issues codes like `p_a7b3c91d`. The two formats
+aren't compatible. Decision: `personId = p_xxxxxxxx`. PP stores
+whatever FG returns. The doc's example IDs are illustrative; the
+contract's "FamilyGraph-issued, immutable" requirement is satisfied by
+the existing identifier scheme.
+
+PP roles (`mother | father | step_parent | guardian | grandparent |
+other | child`) don't match FG memberships.role (`parent | child |
+guardian | grandparent | spouse | other_adult | head | member`). Added
+`memberships.relation_label` for the finer-grained PP label; kept
+`role` as the bucket the resolver and family-list views care about.
+Inbound writes always set both columns; outbound responses prefer the
+label, fall back through the role bucket when the label is null
+(pre-contract memberships).
+
+Phones grew an `e164` column. `normalizePhone` already strips to
+digits; the new `toE164` helper produces the canonical "+15125550101"
+representation. North-American convention (10 digits → +1; 11 digits
+starting with 1 → +1; explicit + → pass through) covers v0.1. For
+international roll-out the helper takes an explicit `countryCode`
+parameter so callers can override per-row.
+
+Consents default to `'allow'` for both fields when no row exists.
+The doc doesn't say what to do for an un-configured person; default to
+allow leaks the least information ("we don't have a flag here, treat
+as the permissive case") and matches the bulk-import workflow where
+PP would have to flip every legacy person to `'deny'` if the default
+flipped the other way.
+
+EIM cert promotion. The new history table records every renewal; the
+existing `persons.eim_*` columns hold the "current" cert pointer so
+the expiring-soon dashboard keeps working without joining a new table.
+Promotion rules: a new cert with a later `expires_on` always promotes;
+a new `'expired'` row (historical backfill) never demotes a still-
+valid cert; a `'pending'` row promotes only when the current pointer
+is `'expired'` or null. This last rule is the only piece that's not in
+the doc verbatim - the doc says "add/extend" and leaves the precedence
+implicit. Wrote it down explicitly here so the rule is the contract.
+
+`person.deleted` and `household.deleted` webhook events are defined
+in the contract but never fire today. FamilyGraph doesn't delete; it
+flips `status` to `'archived'` or `'merged'`. The fanout point will
+be wired to the archive workflow once that exists - tracked in the
+Appendix's "deliberately not in scope" section. The same applies to
+the `/admin/familygraph-conflicts` UI in §7.4: FG already has a
+conflict queue, but routing PP-detected divergences into it is a
+follow-up.
+
+**Bugs caught during the build.**
+
+The `eim.deriveExpiration` helper reads `eim_completed_on`/
+`eim_expires_on` keys (the column names). The contract uses the shorter
+`completed_on`/`expires_on`. First pass of `certifications.add` passed
+the raw input through and the renewal-years auto-fill never kicked in.
+Fix was to mirror both key shapes into the `aliased` patch before
+calling `deriveExpiration`. The test
+`certifications > add auto-derives expiration from renewal years
+setting` covers this exact case.
+
+Idempotency capture reads `res.statusCode` inside the wrapped
+`res.json` rather than at middleware-install time. Express's
+`.status(code)` is always called before `.json(body)`, so reading
+inside the wrapper picks up 412/400/201 alike. Tested with both the
+If-Match 412 path and the create 201 path; the recorded row matches
+the wire status in both.
+
+The change-feed query uses a strict `>` predicate on both branches of
+the `UNION` (persons.updated_at and person_consents.updated_at) so the
+boundary case "row updated at exactly the cursor timestamp" is
+excluded - otherwise the caller would get every record once per
+poll. The test for the changed-since endpoint uses a 2ms sleep
+between the boundary write and the comparison write so the second
+timestamp is strictly greater than the cursor.
+
+**Test count moved 310 → 390** (+80 new). One skip remains conditional
+on running as root (the EACCES test from v11). All new tests use the
+same `newDb()`/`newSecrets()` harness; no new test dependencies.
+
+**What I did not do.**
+
+No client-side UI yet. The contract is purely server-to-server in
+v0.1, and the existing dashboard doesn't reference any of the new
+tables. When the operator wants visibility into the webhook queue or
+the consent overrides, those pages will go in
+`client/src/views/` and use the same Bearer pattern as the existing
+admin surfaces.
+
+No `mTLS` between repos (§11 Q3). The doc lists mTLS as an open
+question; for v0.1 the answer is the existing Bearer + signed
+webhooks combination. Revisit when the PP repo is concrete enough to
+share certificate infrastructure with.
+
+No backwards-compat shim for old PP clients that don't send
+`X-PP-Contract-Version`. Decided on accept-with-log because the
+contract is v0.1 and the doc itself says "every FG API call PP makes
+WILL include the header" - the FG side is allowed to assume that
+forward. Logged warnings make the gap visible without breaking the
+honest path during early integration.
+
+---
+
+## v13 — Per-school overrides, diocesan EIM, restorable deletions (Claude Code, 2026-05-15)
+
+Follow-up to v12. The operator picked up three threads I'd called out
+as deferred and asked for them to be real: §11 Q5 (per-school
+do-not-photo), §11 Q6 (diocese as system of record for EIM), and the
+broader architectural ask that "FamilyGraph should track all changes
+such that deletions can be reinstated." Net: 390 → 431 passing tests
+(+41 new), with one new migration (0013) and three new helper
+modules.
+
+**Per-school consent overrides.** New `person_consent_overrides` table
+keyed by `(person, school_id)`. Each column is independently nullable
+so a school can override only one of the two flags. The contract
+helper added `setOverride` / `clearOverride` /
+`listOverridesForPerson` / `effective` to `server/parentpoint/consents`.
+`POST /v1/persons/:id/photoConsent` now accepts an optional `schoolId`
+in body or query — present means write the override, absent means
+update the identity-level base. `DELETE /v1/persons/:id/photoConsent?schoolId=`
+clears an override. `GET /v1/persons/:id/consent?schoolId=` returns
+the effective view with `basePhotoConsent` / `baseDirectoryListing`
+riding along under the override values so the caller can render
+"override applied; base was X".
+
+The `consent.updated` webhook payload picks up an optional `schoolId`
+key. PP clients that were ignoring unknown keys keep working; clients
+that care can switch on its presence to know whether to invalidate a
+single school's cache or the global identity cache.
+
+The "clear an override" path is interesting: when both override
+columns end up null, the row is dropped from the table entirely.
+The next read falls back to the base. We log this as a `delete`
+operation in `entity_changes` so the audit trail shows the round trip.
+
+**Diocese as system of record for EIM.** New `dioceses` table holding
+the catalog plus an optional per-diocese `eim_renewal_years`. New
+`eim_certifications.diocese_code` (soft FK) + `diocese_record_id`
+(external id from the diocesan vendor or paper form). The certifications
+helper now validates `dioceseCode` shape and existence before insert,
+and uses the diocese's renewal interval to auto-derive `expires_on`
+when the caller omits it. Per-diocese interval supersedes the global
+`eim.renewal_years` setting; the global remains the fallback for
+certs that don't reference a diocese.
+
+CRUD at `/v1/dioceses` — list defaults to `status='active'`; pass
+`?status=archived` to see archived rows or `?status=all` for both.
+Unique name only among active rows (partial index) so a re-introduced
+diocese name doesn't collide with an archived one — same pattern we
+used for ministries in v11.
+
+**Restorable deletions / entity_changes log.** This was the biggest
+architectural piece. New `entity_changes` table with one append-only
+row per meaningful write: `entity_kind`, `entity_code`, `operation`
+(one of create/update/archive/reinstate/merge/split/delete), full
+before+after snapshots as JSON, actor, request_id, related_codes,
+free-form reason. BLOB columns serialise as base64 strings so the
+dataKey is still required to decrypt PII at read time. Snapshots are
+capped at 64 KB to keep a runaway caller from filling the table with
+one giant blob.
+
+`people.archive()` + `people.reinstate()` flip `status` between
+'archived' and 'active' and record the round-trip in the log.
+`families.archive()` / `families.reinstate()` mirror the pattern.
+Same for `dioceses`. Webhook subscriptions got a soft-unsubscribe
+treatment: `unsubscribe` now flips `enabled = 0` and keeps the row +
+secret, so `resubscribe` restores the same delivery pipeline. The
+default `webhooks.list()` filters to active subscriptions; pass
+`status: 'all'` to see disabled ones.
+
+The API surface adds `POST /v1/persons/:id/archive` /
+`/reinstate`, same for households + dioceses, plus
+`GET /v1/persons/:id/history` and the household equivalent.
+Archive fires `person.deleted` / `household.deleted` webhooks
+(the v0.1 contract defined these events; v0.2 makes them real).
+Reinstate fires `person.updated` / `household.updated`.
+
+**Merge vs. archive.** This was the trickiest decision. A caller
+passing a merged-loser code through `archive()` shouldn't silently
+archive the winner — that would surprise everyone holding the
+surviving record. Fix: look up the row by the LITERAL code first
+(without alias resolution), and refuse with a clear error when the
+literal row has `status = 'merged'`. Same guard on `reinstate`.
+"Un-merging" stays a manual operator workflow: the change log makes
+it possible to reconstruct, but the API doesn't offer a one-button
+undo because later edits to the survivor can have moved the
+combined record well beyond what the loser snapshot describes.
+
+**Bugs caught during the build.**
+
+The `entity_changes` `listFor` query originally ordered only by
+`created_at DESC`. SQLite's `strftime` returns millisecond precision,
+and two writes in the same millisecond don't order stably. Two tests
+caught this immediately — the most recent write was sometimes the
+older one in the result. Added `rowid DESC` as a secondary sort key.
+rowid is monotonic on regular tables (we don't use `WITHOUT ROWID`),
+so the newest insert always wins the tie.
+
+The archive guard initially read the row AFTER calling
+`aliases.resolveAlias()`. For a merged loser, that resolved to the
+winner, the guard saw `status = 'active'`, and the archive went
+through on the wrong row. Fixed by reading the LITERAL row first to
+catch merged-loser inputs before alias resolution kicks in. Two tests
++ one HTTP-level test cover the case.
+
+Webhook unsubscribe soft-disable changed `list()` semantics. The v0.1
+implementation returned ALL rows; the test
+`webhook subscribe + list + unsubscribe lifecycle` expected the count
+to drop to 0 after unsubscribe. Decision: default `list()` to
+active-only, accept `status: 'all'` for the operator view. The
+existing API endpoint `GET /v1/webhooks` calls the default list, so
+PP clients keep seeing exactly what they saw before; an operator UI
+that wants to render "your inactive subscriptions" passes the flag.
+
+**Identifier prefixes.** Added `dio_` (diocese) and `chg_` (entity
+change row) to `crypto/identifiers.js`. The `chg_` prefix is for the
+entity_changes table's own primary keys — the rows logged INTO that
+table reference other entities by their existing prefixes, so the
+prefix vocabulary stays internally consistent.
+
+**Retention default.** `entity_changes_retention_days` is unset by
+default, which means keep-forever. That's deliberate: the whole point
+of the log is to enable restoration, and a hard cap on retention
+would create a window where reinstating a 6-month-archived person
+silently fails because the snapshot got swept. Operators who want a
+cap set the value and the daily sweeper handles trimming.
+
+**What I did not do.**
+
+No un-merge endpoint. The change log makes it tractable, but the
+right shape of un-merge depends on whether you want to restore the
+two pre-merge rows (clobbering any post-merge edits) or fork the
+current survivor (preserving edits but creating a third row). That's
+a product decision, not an engineering one. Documented in Appendix B.
+
+No dioceses-page UI in the dashboard. The catalog is API-only for
+now; an operator UI page under `client/src/views/Dioceses.jsx`
+parallels the existing `Ministries.jsx` and would be a clean follow-up.
+
+No per-(person, school) consent UI either. Same reason — server-side
+is in place; rendering the override-vs-base distinction in the
+dashboard is the next step.
+
+---
+
+## v13 follow-up — Comprehensive audit + bug fixes (Claude Code, 2026-05-15)
+
+The operator said: "please test comprehensively and fix all
+low-to-critical bugs you find." I ran four parallel audit agents
+across the v0.1 + v0.2 surface (consent overrides, entity_changes log,
+dioceses + EIM, webhooks + idempotency + ETag) and then two more
+(PII safety + auth, contract drift). Triaged the findings, fixed the
+real bugs, and added 32 regression tests. Final state: 431 → 463
+passing.
+
+**Critical bugs caught:**
+
+The `/v1/persons/changed` feed was rebroadcasting full PII for
+archived persons. The feed's purpose is "tell PP what to invalidate" —
+shipping firstName, primaryEmail, mailingAddress for a record the
+operator just removed defeats the deletion. Fix: `personObject` and
+`householdObject` now take a `tombstone` option that returns only
+`{personId|householdId, active: false, status, updatedAt}` for
+non-active rows. The changes module passes `tombstone: true`; direct
+GETs leave it false so operator UIs can still render historical
+detail.
+
+The retention sweep on `entity_changes` deleted the latest snapshot
+for each entity if retention was configured short enough. That broke
+the audit trail for currently-archived records — the operator could
+no longer see WHEN/WHY an archive happened, only that the row was
+flagged 'archived'. The reinstate path didn't depend on the snapshot
+(it's just a status flip), but the audit story collapsed. New sweep
+preserves `MAX(rowid) GROUP BY entity_kind, entity_code` as a floor.
+Retention still caps growth; the latest event per entity never gets
+swept.
+
+person_consent_overrides were orphaned on merge. A → B merge moved
+memberships, emails, phones, addresses, ministry assignments, but
+not the override table. `listOverridesForPerson(B)` then returned
+zero even though A's overrides were still in the database. Fix:
+people.merge now walks `person_consents`, `person_consent_overrides`,
+`eim_certifications`, and `school_contexts` and re-points everything
+onto the winner. The conflict rule for overlapping consent values is
+more-restrictive-wins ('deny' > 'group_only' > 'allow' for photo,
+'deny' > 'allow' for directory) — a school that said "no photos"
+shouldn't get clobbered by a merge into a record that said "allow."
+
+DELETE 204 responses skipped the idempotency cache. The middleware
+only ran on POST/PATCH, and the captureResponse wrapper only caught
+res.json (not res.end). A retry on
+`DELETE /v1/persons/:id/photoConsent?schoolId=...` re-executed and
+potentially nuked an override the operator re-set between attempts.
+Fix: middleware applies to all writes (POST/PATCH/DELETE), capture
+wraps both `res.json` and `res.end`, and the replay path uses
+`.end()` for cached null-body 204s so PP gets the same wire shape on
+the second call.
+
+**High-impact fixes:**
+
+`GET /v1/dioceses?status=all` returned an empty list because the
+underlying query did `WHERE status = 'all'`. The 'all' value now
+skips the WHERE entirely. people.merge, families.merge, and
+families.split now write merge/split rows to entity_changes (the
+architectural ask said "every meaningful write" and these were
+holes). schoolId validation is enforced at every consents +
+schoolContext boundary so a value with '/' can't corrupt the
+composite history entity_code.
+
+**Atomicity hardening — the unglamorous big fix:**
+
+Every write path that touches data AND writes a history row now runs
+inside a single `db.transaction(() => ...)`. Without this, a
+history.record() failure (unknown kind, snapshot serializer bug,
+disk full) would leave the data row written without an audit row —
+violating the contract that "every meaningful write is loggable."
+Covered: people.create / update / archive / reinstate / merge,
+families.create / update / archive / reinstate / merge / split,
+dioceses.create / update / archive / reinstate,
+consents.set / setOverride / clearOverride, certifications.add.
+Two regression tests force history.record to throw and assert the
+data writes rolled back.
+
+**Medium-impact fixes:**
+
+The snapshot serializer was shallow — it base64-encoded top-level
+Buffers but missed Buffers inside nested objects (which silently
+serialized as `{}`). Rewrote `_normaliseValue` to recurse. Added
+handling for Date / BigInt / NaN / Infinity / shared (non-circular)
+references. Also strips `__proto__` / `constructor` / `prototype`
+keys defensively so a malicious PP payload can't smuggle pollution
+into a careless downstream consumer.
+
+dioceses.update accepted both camelCase and snake_case but the
+existing logic preferred camelCase only when snake_case was absent.
+That's inconsistent with the create path which checks snake_case
+first. New `_normalisePatch` helper maps `eimRenewalYears` →
+`eim_renewal_years` if snake_case is missing, and snake_case wins on
+tie-breaks. Same pattern for contactUrl / eimProgramName.
+
+PATCH /v1/dioceses was racy — the ETag read and the update read
+happened in separate transactions. Concurrent writes could slip in
+between. Fix: the If-Match check runs INSIDE the update transaction
+via a sentinel `ETAG_MISMATCH` symbol that the router maps to a 412.
+
+Webhook URL SSRF guard. The dispatcher POSTs to operator-supplied
+URLs; we used to accept anything that parsed as a URL. Loopback,
+link-local (including the cloud metadata endpoint 169.254.169.254),
+and RFC1918 hosts are now rejected at subscription time. Plain
+http:// is allowed but logs a warning — signed payloads are
+integrity-protected, not confidential, and that's the operator's
+network responsibility.
+
+Webhook dispatcher graceful shutdown. `stop()` previously cleared the
+setInterval but didn't await any in-flight delivery. A SIGTERM
+mid-fetch would orphan the request and leave the delivery row
+`pending`, triggering a re-send on next boot. `stop()` now returns
+the in-flight promise; the boot path awaits it.
+
+**False positives in the audit:**
+
+The Bearer token regex was flagged for accepting empty strings. Trace:
+`/^Bearer\s+(.+)$/i` requires at least one character after the
+whitespace, so `"Bearer "` (with no following token) doesn't match
+and the handler returns 401 with reason `no_bearer`. Not a bug.
+
+The webhook listDeliveries WHERE-clause concatenation was flagged for
+injection. The filter list is hardcoded strings ('status = ?',
+'subscription_code = ?'); user input only flows into the parameter
+binding. Safe.
+
+The "audit_log metadata field names leak PII" claim. The PATCH
+handler logs `Object.keys(body)` — the schema NAMES (firstName,
+lastName) are not PII, just identifiers for which fields changed.
+Values never reach the log. Confirmed safe by tracing the redactor.
+
+The "JSON.parse of `__proto__` pollutes Object.prototype" claim.
+Modern Node creates an own property; no pollution. Still added a
+defensive strip in the snapshot serializer for the
+`Object.assign(target, parsed)` case where a downstream consumer
+might inadvertently pull the keys in.
+
+**Final state.** 464 tests, 463 passing, 1 skipped on root. Smoke
+tested end-to-end through a full create → update → archive → history
+chain. `schema_version = 13`. The contract surface is now hardened
+against the full v0.1 + v0.2 ask plus everything the audit pass
+caught.
+
+---
+
 *End of session notes*

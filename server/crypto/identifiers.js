@@ -18,6 +18,8 @@ const PREFIXES = {
   profile: 'prof_',
   ministry: 'min_',
   ministry_assignment: 'ma_',
+  diocese: 'dio_',
+  entity_change: 'chg_',
 };
 
 const PREFIX_TO_KIND = Object.fromEntries(

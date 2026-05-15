@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS families (
   notes_ct         BLOB,                     -- ciphertext of operator notes
   status           TEXT NOT NULL DEFAULT 'active',  -- active | merged | archived
   merged_into      TEXT,                     -- when merged, the surviving family code
+  -- ParentPoint contract additions (migration 0012). The pointer is "soft":
+  -- a merge can retire the referenced person, in which case the contract
+  -- layer falls back to the first active adult member.
+  primary_contact_person_code TEXT,
+  communication_language      TEXT,         -- ISO-639-1 short code (default 'en')
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   CHECK (status IN ('active','merged','archived'))
@@ -47,6 +52,7 @@ CREATE TABLE IF NOT EXISTS families (
 
 CREATE INDEX IF NOT EXISTS families_status_idx ON families (status);
 CREATE INDEX IF NOT EXISTS families_merged_into_idx ON families (merged_into);
+CREATE INDEX IF NOT EXISTS families_updated_at_idx ON families (updated_at);
 
 -------------------------------------------------------------------------------
 -- Persons
@@ -84,6 +90,12 @@ CREATE TABLE IF NOT EXISTS persons (
   eim_completed_on TEXT,                       -- ISO-8601 date issued
   eim_expires_on   TEXT,                       -- ISO-8601 date the cert lapses
   eim_notes_ct     BLOB,                       -- ciphertext of operator notes
+  -- ParentPoint contract additions (migration 0012). kind classifies the
+  -- person as an adult or child so the sibling apps can render
+  -- appropriately; preferred_name_ct is the parent's chosen short name
+  -- ("Mandy" instead of "Amanda") and rides on every PP person object.
+  kind             TEXT,                       -- adult | child | NULL
+  preferred_name_ct BLOB,
   status           TEXT NOT NULL DEFAULT 'active',
   merged_into      TEXT,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -97,6 +109,8 @@ CREATE INDEX IF NOT EXISTS persons_status_idx           ON persons (status);
 CREATE INDEX IF NOT EXISTS persons_merged_into_idx      ON persons (merged_into);
 CREATE INDEX IF NOT EXISTS persons_eim_expires_idx      ON persons (eim_expires_on);
 CREATE INDEX IF NOT EXISTS persons_eim_status_idx       ON persons (eim_status);
+CREATE INDEX IF NOT EXISTS persons_kind_idx             ON persons (kind);
+CREATE INDEX IF NOT EXISTS persons_updated_at_idx       ON persons (updated_at);
 
 -------------------------------------------------------------------------------
 -- Family memberships (history-tracking)
@@ -107,6 +121,11 @@ CREATE TABLE IF NOT EXISTS memberships (
   family_code    TEXT NOT NULL REFERENCES families(code) ON DELETE CASCADE,
   person_code    TEXT NOT NULL REFERENCES persons(code)  ON DELETE CASCADE,
   role           TEXT NOT NULL,            -- parent | child | guardian | grandparent | other_adult
+  -- ParentPoint's household members[] carry a finer-grained label than the
+  -- internal role bucket — mother vs. father vs. step_parent, etc. We keep
+  -- the legacy role for compatibility with the resolver and the family-list
+  -- views, and round-trip the finer label here.
+  relation_label TEXT,                     -- mother | father | step_parent | guardian | grandparent | other | child | NULL
   custody        TEXT,                     -- sole | joint | other_guardian | unspecified
   started_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   ended_at       TEXT,                     -- null while active
@@ -172,8 +191,15 @@ CREATE TABLE IF NOT EXISTS phones (
   value_ct     BLOB NOT NULL,
   norm_hash    TEXT UNIQUE,
   kind         TEXT,                       -- mobile | home | work | other
+  -- ParentPoint contract additions (migration 0012). The e164 column carries
+  -- the canonical "+15125550101" representation so PP messaging can dial it
+  -- directly; sms_consent is the per-phone SMS opt-in.
+  e164         TEXT,
+  sms_consent  INTEGER NOT NULL DEFAULT 0,
   created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+
+CREATE INDEX IF NOT EXISTS phones_e164_idx ON phones (e164);
 
 CREATE TABLE IF NOT EXISTS person_emails (
   person_code  TEXT NOT NULL REFERENCES persons(code) ON DELETE CASCADE,
@@ -511,3 +537,205 @@ CREATE UNIQUE INDEX IF NOT EXISTS ministry_assignments_active_person_uniq
   ON ministry_assignments (ministry_code, person_code) WHERE ended_at IS NULL AND person_code IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS ministry_assignments_active_family_uniq
   ON ministry_assignments (ministry_code, family_code) WHERE ended_at IS NULL AND family_code IS NOT NULL;
+
+-------------------------------------------------------------------------------
+-- ParentPoint integration contract (migration 0012)
+-------------------------------------------------------------------------------
+-- The ParentPoint × FamilyGraph contract (FAMILYGRAPH_INTEGRATION.md v0.1)
+-- defines a separate read / write API surface that sibling apps consume.
+-- Most of the underlying data continues to live in `persons`, `families`,
+-- and friends; the tables below cover things the existing identity model
+-- did not yet capture.
+
+-- Per-person consent flags. Lazy-created on first set; the contract layer
+-- treats a missing row as the default ('allow' for both fields). One row per
+-- person; updated_at supports the changed-since feed.
+CREATE TABLE IF NOT EXISTS person_consents (
+  person_code        TEXT PRIMARY KEY REFERENCES persons(code) ON DELETE CASCADE,
+  photo_consent      TEXT NOT NULL DEFAULT 'allow',
+  directory_listing  TEXT NOT NULL DEFAULT 'allow',
+  updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (photo_consent IN ('allow','group_only','deny')),
+  CHECK (directory_listing IN ('allow','deny'))
+);
+CREATE INDEX IF NOT EXISTS person_consents_updated_at_idx ON person_consents (updated_at);
+
+-- History of EIM certifications. The existing persons.eim_* columns continue
+-- to hold the "current" cert pointer for the expiring-soon dashboard view;
+-- this table preserves the audit trail of every renewal.
+CREATE TABLE IF NOT EXISTS eim_certifications (
+  code              TEXT PRIMARY KEY,
+  person_code       TEXT NOT NULL REFERENCES persons(code) ON DELETE CASCADE,
+  status            TEXT NOT NULL,
+  completed_on      TEXT,
+  expires_on        TEXT,
+  source            TEXT,
+  notes_ct          BLOB,
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (status IN ('pending','certified','expired'))
+);
+CREATE INDEX IF NOT EXISTS eim_certifications_person_idx     ON eim_certifications (person_code);
+CREATE INDEX IF NOT EXISTS eim_certifications_expires_on_idx ON eim_certifications (expires_on);
+
+-- PP-pushed enrichment snapshots. One row per (person, school) pair; PP
+-- overwrites on every POST (§7.3 says the activities array is "current
+-- state, not a log"). FG never edits this table itself; it just stores and
+-- serves what PP sent.
+CREATE TABLE IF NOT EXISTS school_contexts (
+  code                              TEXT PRIMARY KEY,
+  person_code                       TEXT NOT NULL REFERENCES persons(code) ON DELETE CASCADE,
+  school_id                         TEXT NOT NULL,
+  school_year                       TEXT,
+  grade                             TEXT,
+  classroom_id                      TEXT,
+  classroom_name                    TEXT,
+  homeroom_teacher_person_code      TEXT,
+  activities                        TEXT,
+  allergies                         TEXT,
+  snapshot_at                       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  source_app                        TEXT,
+  created_at                        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at                        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS school_contexts_person_school_uniq
+  ON school_contexts (person_code, school_id);
+CREATE INDEX IF NOT EXISTS school_contexts_school_idx     ON school_contexts (school_id);
+CREATE INDEX IF NOT EXISTS school_contexts_updated_at_idx ON school_contexts (updated_at);
+
+-- Subscribed PP webhook endpoints. The secret is encrypted at rest; we hold
+-- it because we must compute the HMAC-SHA256 signature on outbound deliveries.
+CREATE TABLE IF NOT EXISTS pp_webhook_subscriptions (
+  code               TEXT PRIMARY KEY,
+  url                TEXT NOT NULL,
+  secret_ct          BLOB,
+  events             TEXT NOT NULL DEFAULT '*',
+  school_hint        TEXT,
+  enabled            INTEGER NOT NULL DEFAULT 1,
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_delivered_at  TEXT,
+  last_status        TEXT,
+  last_error         TEXT
+);
+CREATE INDEX IF NOT EXISTS pp_webhook_subs_enabled_idx ON pp_webhook_subscriptions (enabled);
+
+-- Per-attempt delivery rows. Same lifecycle as `notifications`: pending rows
+-- get picked up by the dispatcher, success flips to 'sent', failure backs off
+-- exponentially until MAX_ATTEMPTS, then 'failed'.
+CREATE TABLE IF NOT EXISTS pp_webhook_deliveries (
+  code               TEXT PRIMARY KEY,
+  subscription_code  TEXT NOT NULL REFERENCES pp_webhook_subscriptions(code) ON DELETE CASCADE,
+  event              TEXT NOT NULL,
+  person_code        TEXT,
+  family_code        TEXT,
+  payload            TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'pending',
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at    TEXT,
+  last_error         TEXT,
+  provider_status    INTEGER,
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  sent_at            TEXT,
+  CHECK (status IN ('pending','sent','failed','cancelled'))
+);
+CREATE INDEX IF NOT EXISTS pp_deliveries_sub_idx           ON pp_webhook_deliveries (subscription_code);
+CREATE INDEX IF NOT EXISTS pp_deliveries_status_idx        ON pp_webhook_deliveries (status);
+CREATE INDEX IF NOT EXISTS pp_deliveries_next_attempt_idx  ON pp_webhook_deliveries (status, next_attempt_at);
+
+-- X-Request-Id idempotency cache. Per §7.2 of the contract, FG dedupes
+-- inbound writes within 24h so retries on flaky networks don't double-create.
+-- The response body is cached so a retry returns the exact same response the
+-- caller saw the first time.
+CREATE TABLE IF NOT EXISTS pp_idempotency_keys (
+  request_id    TEXT NOT NULL,
+  method        TEXT NOT NULL,
+  path          TEXT NOT NULL,
+  response_code INTEGER NOT NULL,
+  response_body TEXT,
+  expires_at    TEXT NOT NULL,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (request_id, method, path)
+);
+CREATE INDEX IF NOT EXISTS pp_idempotency_expires_idx ON pp_idempotency_keys (expires_at);
+
+-------------------------------------------------------------------------------
+-- Diocesan EIM source of truth (migration 0013)
+-------------------------------------------------------------------------------
+-- The diocese is the system of record for safe-environment certifications.
+-- FamilyGraph caches what it knows. A cached cert points back at the
+-- issuing diocese plus the diocesan record id so the operator can
+-- reconcile with a paper or vendor record.
+
+CREATE TABLE IF NOT EXISTS dioceses (
+  code              TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  region            TEXT,
+  contact_url       TEXT,
+  eim_program_name  TEXT,
+  eim_renewal_years INTEGER,
+  notes_ct          BLOB,
+  status            TEXT NOT NULL DEFAULT 'active',
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (status IN ('active','archived'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS dioceses_name_active_uniq
+  ON dioceses (name) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS dioceses_status_idx     ON dioceses (status);
+CREATE INDEX IF NOT EXISTS dioceses_updated_at_idx ON dioceses (updated_at);
+
+-------------------------------------------------------------------------------
+-- Per-school consent overrides (migration 0013)
+-------------------------------------------------------------------------------
+-- The effective consent for a (person, school) pair is `override-or-base`.
+-- Each column is nullable so a school can override only one of the two
+-- flags ("photo allow at this school's events, but withhold from the
+-- printed directory").
+
+CREATE TABLE IF NOT EXISTS person_consent_overrides (
+  person_code        TEXT NOT NULL REFERENCES persons(code) ON DELETE CASCADE,
+  school_id          TEXT NOT NULL,
+  photo_consent      TEXT,
+  directory_listing  TEXT,
+  updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (person_code, school_id),
+  CHECK (photo_consent IS NULL OR photo_consent IN ('allow','group_only','deny')),
+  CHECK (directory_listing IS NULL OR directory_listing IN ('allow','deny'))
+);
+CREATE INDEX IF NOT EXISTS person_consent_overrides_updated_at_idx
+  ON person_consent_overrides (updated_at);
+CREATE INDEX IF NOT EXISTS person_consent_overrides_school_idx
+  ON person_consent_overrides (school_id);
+
+-------------------------------------------------------------------------------
+-- Entity-change log (migration 0013)
+-------------------------------------------------------------------------------
+-- Append-only record of every meaningful write, with before/after row
+-- snapshots. The snapshot is the source row serialised as JSON;
+-- encrypted BLOB columns ride through as base64 strings, so the dataKey
+-- is still required to decrypt them at read time.
+--
+-- This log is what makes "deletion" recoverable: archive flips the
+-- entity's status, the change row records the snapshot, reinstate
+-- flips it back and emits its own change row. The two log rows together
+-- describe the round-trip.
+
+CREATE TABLE IF NOT EXISTS entity_changes (
+  code          TEXT PRIMARY KEY,
+  entity_kind   TEXT NOT NULL,           -- person | family | membership | consent | consent_override | school_context | eim_certification | diocese | webhook_subscription
+  entity_code   TEXT NOT NULL,
+  operation     TEXT NOT NULL,           -- create | update | archive | reinstate | merge | split | delete
+  before_json   TEXT,
+  after_json    TEXT,
+  actor         TEXT NOT NULL DEFAULT 'system',
+  actor_kind    TEXT,                    -- master | scoped | system | parentpoint
+  request_id    TEXT,                    -- X-Request-Id when available
+  related_codes TEXT,                    -- JSON array (e.g. [winner_code] on merge)
+  reason        TEXT,                    -- free-form operator note
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS entity_changes_entity_idx     ON entity_changes (entity_kind, entity_code);
+CREATE INDEX IF NOT EXISTS entity_changes_created_at_idx ON entity_changes (created_at);
+CREATE INDEX IF NOT EXISTS entity_changes_operation_idx  ON entity_changes (operation);
+CREATE INDEX IF NOT EXISTS entity_changes_actor_idx      ON entity_changes (actor);

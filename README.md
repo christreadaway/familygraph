@@ -285,7 +285,7 @@ existing **paste / file-upload** path still works exactly the same.
 The Bearer can be the master token (full access) or a per-app `sk_…` scoped
 token issued via `POST /api/keys` with one or more of the scopes
 `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`, `import`,
-`rules.write`, or `*`.
+`rules.write`, `parentpoint`, or `*`.
 
 Consuming apps SHOULD set the `X-Family-Graph-Actor` header to a short
 stable identifier (e.g. `missioniq`, `parentpoint`). It is recorded on
@@ -435,6 +435,63 @@ Input records accept both flat shapes (`first_name`, `last_name`,
 `emails[]`, `phones[]`, `address: {...}`) so the calling app passes
 through whatever its native rows look like.
 
+### ParentPoint × FamilyGraph contract (`/v1/...`)
+
+A separate, versioned API surface for the ParentPoint integration. The
+contract (read / write objects, webhook shape, idempotency rules,
+versioning) is documented in
+[`FAMILYGRAPH_INTEGRATION.md`](./FAMILYGRAPH_INTEGRATION.md); the
+as-built endpoints are summarised in Appendix A + Appendix B of that file.
+
+Quick sketch:
+
+- Mount point: `/v1/...`. All routes require Bearer with the
+  `parentpoint` scope (master token also works).
+- Every request should send `X-PP-Contract-Version: v0.1`. Unknown
+  versions get `426 Upgrade Required`.
+- Writes (POST / PATCH) honour `X-Request-Id` for 24-hour idempotency
+  and surface `X-FG-Idempotent-Replay: true` when a duplicate is hit.
+- GETs return ETag + `Cache-Control: max-age=30`. PATCHes honour
+  `If-Match` and return 412 on a stale token.
+- Photo + directory consent is identity-level by default; the same
+  endpoint accepts a `schoolId` to set/read a per-school override.
+  The effective consent for `(person, school)` is `override-or-base`
+  per field. List active overrides at
+  `GET /v1/persons/:id/consent/overrides`.
+- Dioceses are the system of record for EIM. Catalog at `/v1/dioceses`;
+  each cert references its issuing diocese via `dioceseCode` +
+  `dioceseRecordId`. Per-diocese `eim_renewal_years` supersedes the
+  global setting for auto-derivation.
+- "Deletions" are recoverable: `POST /v1/persons/:id/archive` flips
+  status to `'archived'` and writes a full row snapshot to the
+  `entity_changes` log; `POST /v1/persons/:id/reinstate` reverses it.
+  Same pattern for households + dioceses. The change history is
+  readable at `GET /v1/persons/:id/history` and
+  `GET /v1/households/:id/history`.
+- Archived persons in the `/v1/persons/changed?since=` feed appear
+  as tombstones (`{ personId, active: false, status, updatedAt }`),
+  not as full records — the feed's job is "tell PP what to
+  invalidate," not "rebroadcast PII for a removed record." Direct
+  `GET /v1/persons/:id` still returns the full record for operator
+  UIs that want the historical view.
+- Every meaningful write (create, update, archive, reinstate, merge,
+  split, consent set, EIM cert add, school context upsert) is logged
+  to `entity_changes` with a full row snapshot. The write and the log
+  row are wrapped in one transaction so a log failure rolls back the
+  data write — there's no path that leaves data and audit out of sync.
+- Webhooks fire from `POST /v1/persons`, `PATCH /v1/persons/:id`,
+  `POST /v1/persons/:id/photoConsent` (with optional `schoolId` in the
+  payload), `POST /v1/persons/:id/eimCertifications`, archive/reinstate,
+  `POST /v1/households`, and `POST /v1/households/:id/members`. Body is
+  HMAC-signed via `X-FG-Signature: sha256=...` using each
+  subscription's stored secret.
+- Subscriptions: `POST /v1/webhooks` / `GET /v1/webhooks` /
+  `DELETE /v1/webhooks/:code`. Unsubscribe is a soft-disable that
+  preserves the row + secret; pass `?status=all` to see disabled
+  subscriptions and use the helper module's `resubscribe()` to bring
+  one back. Disable the dispatcher with
+  `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1`.
+
 ### Auto-merge vs prompt-the-user (the matching gate)
 
 `server/identity/matching.js` ports missionIQ's scoring with one
@@ -502,6 +559,7 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
 | `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
 | `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
+| `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS` | unset | set to `1` to disable the ParentPoint webhook dispatcher (pending rows accumulate until re-enabled) |
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |
 | `FAMILY_GRAPH_LOG_FILE` | `$FAMILY_GRAPH_HOME/logs/server.log` | JSON-lines log destination (mirrored to stderr) |

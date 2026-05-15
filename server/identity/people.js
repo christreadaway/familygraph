@@ -4,6 +4,7 @@ const enc = require('../crypto/encryption');
 const { newCode, isValidCode } = require('../crypto/identifiers');
 const aliases = require('./aliases');
 const eim = require('./eim');
+const history = require('./history');
 
 function row2person(row, secrets, { includePii }) {
   if (!row) return null;
@@ -17,6 +18,7 @@ function row2person(row, secrets, { includePii }) {
     merged_into: row.merged_into,
     tags,
     grade: row.grade || null,
+    kind: row.kind || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -44,6 +46,7 @@ function row2person(row, secrets, { includePii }) {
     given_name: enc.decrypt(secrets, row.given_name_ct),
     family_name: enc.decrypt(secrets, row.family_name_ct),
     middle_name: enc.decrypt(secrets, row.middle_name_ct),
+    preferred_name: enc.decrypt(secrets, row.preferred_name_ct),
     prefix: enc.decrypt(secrets, row.prefix_ct),
     suffix: enc.decrypt(secrets, row.suffix_ct),
     display_name: enc.decrypt(secrets, row.display_name_ct),
@@ -57,6 +60,14 @@ function row2person(row, secrets, { includePii }) {
     not_living_together: !!row.not_living_together,
     eim_notes: enc.decrypt(secrets, row.eim_notes_ct),
   };
+}
+
+const KIND_VALUES = new Set(['adult', 'child']);
+function normalizeKind(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const s = String(v).toLowerCase();
+  if (!KIND_VALUES.has(s)) throw new Error(`invalid kind: ${v}`);
+  return s;
 }
 
 const EIM_STATUSES = new Set(['pending', 'certified', 'expired']);
@@ -87,45 +98,57 @@ function buildDisplayName(input) {
     .join(' ');
 }
 
-function create(db, secrets, input) {
+function create(db, secrets, input, audit = {}) {
   const code = newCode('person');
   const display = input.display_name || buildDisplayName(input);
   const enriched = eim.deriveExpiration(db, input);
   const eimStatus = normalizeEimStatus(enriched.eim_status);
   const eimCompleted = normalizeIsoDate(enriched.eim_completed_on);
   const eimExpires = normalizeIsoDate(enriched.eim_expires_on);
-  const stmt = db.prepare(
-    `INSERT INTO persons (
-       code, given_name_ct, family_name_ct, middle_name_ct, prefix_ct, suffix_ct,
-       display_name_ct, given_name_hash, family_name_hash,
-       date_of_birth_ct, gender_ct, notes_ct,
-       employer_ct, title_ct, do_not_contact, do_not_contact_reason_ct, not_living_together,
-       eim_status, eim_completed_on, eim_expires_on, eim_notes_ct
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-  stmt.run(
-    code,
-    enc.encrypt(secrets, input.given_name),
-    enc.encrypt(secrets, input.family_name),
-    enc.encrypt(secrets, input.middle_name),
-    enc.encrypt(secrets, input.prefix),
-    enc.encrypt(secrets, input.suffix),
-    enc.encrypt(secrets, display),
-    enc.hmac(secrets, enc.normalizeName(input.given_name)),
-    enc.hmac(secrets, enc.normalizeName(input.family_name)),
-    enc.encrypt(secrets, input.date_of_birth),
-    enc.encrypt(secrets, input.gender),
-    enc.encrypt(secrets, input.notes),
-    enc.encrypt(secrets, input.employer),
-    enc.encrypt(secrets, input.title),
-    input.do_not_contact ? 1 : 0,
-    enc.encrypt(secrets, input.do_not_contact_reason),
-    input.not_living_together ? 1 : 0,
-    eimStatus,
-    eimCompleted,
-    eimExpires,
-    enc.encrypt(secrets, input.eim_notes),
-  );
+  const kind = normalizeKind(input.kind);
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO persons (
+         code, given_name_ct, family_name_ct, middle_name_ct, preferred_name_ct, prefix_ct, suffix_ct,
+         display_name_ct, given_name_hash, family_name_hash,
+         date_of_birth_ct, gender_ct, notes_ct,
+         employer_ct, title_ct, do_not_contact, do_not_contact_reason_ct, not_living_together,
+         eim_status, eim_completed_on, eim_expires_on, eim_notes_ct, kind
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      code,
+      enc.encrypt(secrets, input.given_name),
+      enc.encrypt(secrets, input.family_name),
+      enc.encrypt(secrets, input.middle_name),
+      enc.encrypt(secrets, input.preferred_name),
+      enc.encrypt(secrets, input.prefix),
+      enc.encrypt(secrets, input.suffix),
+      enc.encrypt(secrets, display),
+      enc.hmac(secrets, enc.normalizeName(input.given_name)),
+      enc.hmac(secrets, enc.normalizeName(input.family_name)),
+      enc.encrypt(secrets, input.date_of_birth),
+      enc.encrypt(secrets, input.gender),
+      enc.encrypt(secrets, input.notes),
+      enc.encrypt(secrets, input.employer),
+      enc.encrypt(secrets, input.title),
+      input.do_not_contact ? 1 : 0,
+      enc.encrypt(secrets, input.do_not_contact_reason),
+      input.not_living_together ? 1 : 0,
+      eimStatus,
+      eimCompleted,
+      eimExpires,
+      enc.encrypt(secrets, input.eim_notes),
+      kind,
+    );
+    const after = db.prepare(`SELECT * FROM persons WHERE code = ?`).get(code);
+    history.record(db, {
+      entityKind: 'person', entityCode: code, operation: 'create',
+      before: null, after,
+      actor: audit.actor || 'system', actorKind: audit.actorKind || null,
+      requestId: audit.requestId || null, reason: audit.reason || null,
+    });
+  });
+  tx();
   return code;
 }
 
@@ -155,7 +178,7 @@ function findByName(db, secrets, given, family) {
     .map(r => row2person(r, secrets, { includePii: true }));
 }
 
-function update(db, secrets, code, patch) {
+function update(db, secrets, code, patch, audit = {}) {
   const target = aliases.resolveAlias(db, code);
   const existing = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
   if (!existing) return null;
@@ -163,6 +186,7 @@ function update(db, secrets, code, patch) {
     given_name: 'given_name' in patch ? patch.given_name : enc.decrypt(secrets, existing.given_name_ct),
     family_name: 'family_name' in patch ? patch.family_name : enc.decrypt(secrets, existing.family_name_ct),
     middle_name: 'middle_name' in patch ? patch.middle_name : enc.decrypt(secrets, existing.middle_name_ct),
+    preferred_name: 'preferred_name' in patch ? patch.preferred_name : enc.decrypt(secrets, existing.preferred_name_ct),
     prefix: 'prefix' in patch ? patch.prefix : enc.decrypt(secrets, existing.prefix_ct),
     suffix: 'suffix' in patch ? patch.suffix : enc.decrypt(secrets, existing.suffix_ct),
     date_of_birth: 'date_of_birth' in patch ? patch.date_of_birth : enc.decrypt(secrets, existing.date_of_birth_ct),
@@ -184,46 +208,147 @@ function update(db, secrets, code, patch) {
   const eimNotesCt = 'eim_notes' in patch
     ? enc.encrypt(secrets, patch.eim_notes)
     : existing.eim_notes_ct;
+  const kind = 'kind' in patch ? normalizeKind(patch.kind) : (existing.kind || null);
   const display = patch.display_name || buildDisplayName(merged);
-  db.prepare(
-    `UPDATE persons SET
-       given_name_ct = ?, family_name_ct = ?, middle_name_ct = ?, prefix_ct = ?,
-       suffix_ct = ?, display_name_ct = ?, given_name_hash = ?, family_name_hash = ?,
-       date_of_birth_ct = ?, gender_ct = ?, notes_ct = ?,
-       employer_ct = ?, title_ct = ?, do_not_contact = ?, do_not_contact_reason_ct = ?, not_living_together = ?,
-       eim_status = ?, eim_completed_on = ?, eim_expires_on = ?, eim_notes_ct = ?,
-       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-     WHERE code = ?`
-  ).run(
-    enc.encrypt(secrets, merged.given_name),
-    enc.encrypt(secrets, merged.family_name),
-    enc.encrypt(secrets, merged.middle_name),
-    enc.encrypt(secrets, merged.prefix),
-    enc.encrypt(secrets, merged.suffix),
-    enc.encrypt(secrets, display),
-    enc.hmac(secrets, enc.normalizeName(merged.given_name)),
-    enc.hmac(secrets, enc.normalizeName(merged.family_name)),
-    enc.encrypt(secrets, merged.date_of_birth),
-    enc.encrypt(secrets, merged.gender),
-    enc.encrypt(secrets, merged.notes),
-    enc.encrypt(secrets, merged.employer),
-    enc.encrypt(secrets, merged.title),
-    dnc,
-    enc.encrypt(secrets, merged.do_not_contact_reason),
-    nlt,
-    eimStatus,
-    eimCompleted,
-    eimExpires,
-    eimNotesCt,
-    target
-  );
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE persons SET
+         given_name_ct = ?, family_name_ct = ?, middle_name_ct = ?, preferred_name_ct = ?, prefix_ct = ?,
+         suffix_ct = ?, display_name_ct = ?, given_name_hash = ?, family_name_hash = ?,
+         date_of_birth_ct = ?, gender_ct = ?, notes_ct = ?,
+         employer_ct = ?, title_ct = ?, do_not_contact = ?, do_not_contact_reason_ct = ?, not_living_together = ?,
+         eim_status = ?, eim_completed_on = ?, eim_expires_on = ?, eim_notes_ct = ?, kind = ?,
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE code = ?`
+    ).run(
+      enc.encrypt(secrets, merged.given_name),
+      enc.encrypt(secrets, merged.family_name),
+      enc.encrypt(secrets, merged.middle_name),
+      enc.encrypt(secrets, merged.preferred_name),
+      enc.encrypt(secrets, merged.prefix),
+      enc.encrypt(secrets, merged.suffix),
+      enc.encrypt(secrets, display),
+      enc.hmac(secrets, enc.normalizeName(merged.given_name)),
+      enc.hmac(secrets, enc.normalizeName(merged.family_name)),
+      enc.encrypt(secrets, merged.date_of_birth),
+      enc.encrypt(secrets, merged.gender),
+      enc.encrypt(secrets, merged.notes),
+      enc.encrypt(secrets, merged.employer),
+      enc.encrypt(secrets, merged.title),
+      dnc,
+      enc.encrypt(secrets, merged.do_not_contact_reason),
+      nlt,
+      eimStatus,
+      eimCompleted,
+      eimExpires,
+      eimNotesCt,
+      kind,
+      target
+    );
+    const after = db.prepare(`SELECT * FROM persons WHERE code = ?`).get(target);
+    history.record(db, {
+      entityKind: 'person', entityCode: target, operation: 'update',
+      before: existing, after,
+      actor: audit.actor || 'system', actorKind: audit.actorKind || null,
+      requestId: audit.requestId || null, reason: audit.reason || null,
+    });
+  });
+  tx();
   return target;
+}
+
+// Helper used by the ParentPoint contract layer (and other write paths) to
+// bump `updated_at` without changing any other column. Surfaced as a public
+// API so callers don't have to embed strftime in their own SQL.
+function touchUpdatedAt(db, code) {
+  const target = aliases.resolveAlias(db, code);
+  db.prepare(
+    `UPDATE persons SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+  ).run(target);
+  return target;
+}
+
+// Soft-archive a person. The row stays in the database; status flips to
+// 'archived'. A change-log row captures the pre-archive snapshot so a
+// later reinstate can verify state and explain what was undone.
+//
+// Returns `{ code, before, after }` on success or null when the person
+// doesn't exist. Throws when the person is already merged (a merged
+// row is owned by its winner; archiving it would lose data).
+// Both archive and reinstate run as a single transaction: the status
+// flip and the entity_changes write either both land or neither does.
+// Without that guard, a history.record() failure (e.g. a bug in the
+// snapshot serialiser) leaves the row archived without an audit trail
+// — and a future reinstate has no record of when/why the archive
+// happened.
+function archive(db, code, { actor = 'system', actorKind = null, reason = null, requestId = null } = {}) {
+  const literal = db.prepare('SELECT status FROM persons WHERE code = ?').get(code);
+  if (literal && literal.status === 'merged') {
+    throw new Error('cannot archive a merged person; merge owns the row');
+  }
+  const target = aliases.resolveAlias(db, code);
+  const before = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
+  if (!before) return null;
+  if (before.status === 'merged') {
+    throw new Error('cannot archive a merged person; merge owns the row');
+  }
+  const tx = db.transaction(() => {
+    if (before.status === 'archived') {
+      history.record(db, {
+        entityKind: 'person', entityCode: target, operation: 'archive',
+        before, after: before, actor, actorKind, requestId, reason,
+      });
+      return { code: target, before, after: before, noop: true };
+    }
+    db.prepare(
+      `UPDATE persons SET status = 'archived', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+    ).run(target);
+    const after = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
+    history.record(db, {
+      entityKind: 'person', entityCode: target, operation: 'archive',
+      before, after, actor, actorKind, requestId, reason,
+    });
+    return { code: target, before, after };
+  });
+  return tx();
+}
+
+function reinstate(db, code, { actor = 'system', actorKind = null, reason = null, requestId = null } = {}) {
+  const literal = db.prepare('SELECT status FROM persons WHERE code = ?').get(code);
+  if (literal && literal.status === 'merged') {
+    throw new Error('cannot reinstate a merged person; un-merge is a manual operator workflow');
+  }
+  const target = aliases.resolveAlias(db, code);
+  const before = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
+  if (!before) return null;
+  if (before.status === 'merged') {
+    throw new Error('cannot reinstate a merged person; un-merge is a manual operator workflow');
+  }
+  const tx = db.transaction(() => {
+    if (before.status === 'active') {
+      history.record(db, {
+        entityKind: 'person', entityCode: target, operation: 'reinstate',
+        before, after: before, actor, actorKind, requestId, reason,
+      });
+      return { code: target, before, after: before, noop: true };
+    }
+    db.prepare(
+      `UPDATE persons SET status = 'active', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+    ).run(target);
+    const after = db.prepare('SELECT * FROM persons WHERE code = ?').get(target);
+    history.record(db, {
+      entityKind: 'person', entityCode: target, operation: 'reinstate',
+      before, after, actor, actorKind, requestId, reason,
+    });
+    return { code: target, before, after };
+  });
+  return tx();
 }
 
 // Merge `loserCode` into `winnerCode`. Memberships, addresses, emails, phones,
 // relationships, and provenance carry over. The loser's row is marked merged
 // and an alias row is recorded.
-function merge(db, secrets, loserCode, winnerCode) {
+function merge(db, secrets, loserCode, winnerCode, opts = {}) {
   const loser = aliases.resolveAlias(db, loserCode);
   const winner = aliases.resolveAlias(db, winnerCode);
   if (loser === winner) return winner;
@@ -260,6 +385,23 @@ function merge(db, secrets, loserCode, winnerCode) {
     db.prepare('DELETE FROM person_addresses WHERE person_code = ?').run(loser);
     db.prepare('UPDATE provenance SET entity_code = ? WHERE entity_code = ?').run(winner, loser);
 
+    // ParentPoint contract additions: consents, per-school consent overrides,
+    // EIM cert history, school_contexts. Each table is keyed on person_code,
+    // so a merge needs to re-point them onto the winner. Conflict rules:
+    //   - person_consents (PK on person_code): if winner already has one,
+    //     prefer the more restrictive value per field; otherwise re-point.
+    //   - person_consent_overrides (PK on person_code+school_id): if the
+    //     winner already has an override for the same school, prefer the
+    //     more restrictive value per field; otherwise re-point.
+    //   - eim_certifications: append-only history; just re-point.
+    //   - school_contexts (unique on person_code+school_id): if the winner
+    //     already has a snapshot for the same school, the newer snapshot
+    //     survives (the doc says PP overwrites on each POST).
+    _mergeConsent(db, loser, winner);
+    _mergeConsentOverrides(db, loser, winner);
+    db.prepare('UPDATE eim_certifications SET person_code = ? WHERE person_code = ?').run(winner, loser);
+    _mergeSchoolContexts(db, loser, winner);
+
     // Move ministry assignments. The active-row uniqueness index on
     // ministry_assignments would reject a stacked second active row, so
     // duplicates get ended on the loser before the rest get re-pointed.
@@ -270,9 +412,108 @@ function merge(db, secrets, loserCode, winnerCode) {
       `UPDATE persons SET status = 'merged', merged_into = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
     ).run(winner, loser);
     aliases.recordAlias(db, loser, winner, 'person');
+
+    const winnerAfter = db.prepare('SELECT * FROM persons WHERE code = ?').get(winner);
+    history.record(db, {
+      entityKind: 'person', entityCode: winner, operation: 'merge',
+      before: loserRow, after: winnerAfter,
+      actor: opts.actor || 'system', actorKind: opts.actorKind || null,
+      requestId: opts.requestId || null, reason: opts.reason || null,
+      relatedCodes: [loser],
+    });
   });
   tx();
   return winner;
 }
 
-module.exports = { create, get, list, findByName, update, merge };
+// More-restrictive merge for the consent tri-state. 'deny' beats
+// 'group_only' beats 'allow'.
+const _PHOTO_PRECEDENCE = { 'deny': 2, 'group_only': 1, 'allow': 0 };
+const _DIR_PRECEDENCE = { 'deny': 1, 'allow': 0 };
+function _moreRestrictivePhoto(a, b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return _PHOTO_PRECEDENCE[a] >= _PHOTO_PRECEDENCE[b] ? a : b;
+}
+function _moreRestrictiveDir(a, b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return _DIR_PRECEDENCE[a] >= _DIR_PRECEDENCE[b] ? a : b;
+}
+
+function _mergeConsent(db, loser, winner) {
+  const loserRow = db.prepare('SELECT * FROM person_consents WHERE person_code = ?').get(loser);
+  if (!loserRow) return;
+  const winnerRow = db.prepare('SELECT * FROM person_consents WHERE person_code = ?').get(winner);
+  if (!winnerRow) {
+    db.prepare('UPDATE person_consents SET person_code = ? WHERE person_code = ?').run(winner, loser);
+    return;
+  }
+  const nextPhoto = _moreRestrictivePhoto(winnerRow.photo_consent, loserRow.photo_consent);
+  const nextDir = _moreRestrictiveDir(winnerRow.directory_listing, loserRow.directory_listing);
+  db.prepare(
+    `UPDATE person_consents SET photo_consent = ?, directory_listing = ?,
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE person_code = ?`
+  ).run(nextPhoto, nextDir, winner);
+  db.prepare('DELETE FROM person_consents WHERE person_code = ?').run(loser);
+}
+
+function _mergeConsentOverrides(db, loser, winner) {
+  const rows = db.prepare(
+    'SELECT * FROM person_consent_overrides WHERE person_code = ?'
+  ).all(loser);
+  for (const r of rows) {
+    const existing = db.prepare(
+      `SELECT * FROM person_consent_overrides WHERE person_code = ? AND school_id = ?`
+    ).get(winner, r.school_id);
+    if (!existing) {
+      db.prepare(
+        `UPDATE person_consent_overrides SET person_code = ? WHERE person_code = ? AND school_id = ?`
+      ).run(winner, loser, r.school_id);
+      continue;
+    }
+    const nextPhoto = _moreRestrictivePhoto(existing.photo_consent, r.photo_consent);
+    const nextDir = _moreRestrictiveDir(existing.directory_listing, r.directory_listing);
+    db.prepare(
+      `UPDATE person_consent_overrides
+          SET photo_consent = ?, directory_listing = ?,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE person_code = ? AND school_id = ?`
+    ).run(nextPhoto, nextDir, winner, r.school_id);
+    db.prepare(
+      `DELETE FROM person_consent_overrides WHERE person_code = ? AND school_id = ?`
+    ).run(loser, r.school_id);
+  }
+}
+
+function _mergeSchoolContexts(db, loser, winner) {
+  const rows = db.prepare('SELECT * FROM school_contexts WHERE person_code = ?').all(loser);
+  for (const r of rows) {
+    const existing = db.prepare(
+      `SELECT updated_at FROM school_contexts WHERE person_code = ? AND school_id = ?`
+    ).get(winner, r.school_id);
+    if (!existing) {
+      db.prepare(
+        `UPDATE school_contexts SET person_code = ? WHERE person_code = ? AND school_id = ?`
+      ).run(winner, loser, r.school_id);
+      continue;
+    }
+    // Winner already has a snapshot for this school. Keep whichever is
+    // newer; the doc treats school_context as "current state, not log."
+    if (r.updated_at > existing.updated_at) {
+      db.prepare(
+        `DELETE FROM school_contexts WHERE person_code = ? AND school_id = ?`
+      ).run(winner, r.school_id);
+      db.prepare(
+        `UPDATE school_contexts SET person_code = ? WHERE person_code = ? AND school_id = ?`
+      ).run(winner, loser, r.school_id);
+    } else {
+      db.prepare(
+        `DELETE FROM school_contexts WHERE person_code = ? AND school_id = ?`
+      ).run(loser, r.school_id);
+    }
+  }
+}
+
+module.exports = { create, get, list, findByName, update, merge, touchUpdatedAt, archive, reinstate };
