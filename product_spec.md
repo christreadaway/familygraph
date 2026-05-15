@@ -25,11 +25,14 @@
 ## How to run
 
 ```sh
-npm install                # installs server deps
-npm run client:install     # installs client deps
-npm run client:build       # builds the dashboard
-npm start                  # http://127.0.0.1:3500
-node bin/family-graph.js show-token   # paste into the dashboard the first time
+# Every npm install in this repo must route through Socket Firewall.
+# Plain `npm install` is blocked by the preinstall guard. See README.md
+# section "Security requirement: Socket Firewall" for context.
+SFW=1 sfw npm install               # installs server deps
+SFW=1 sfw npm run client:install    # installs client deps
+npm run client:build                # builds the dashboard
+npm start                           # http://127.0.0.1:3500
+node bin/family-graph.js show-token # paste into the dashboard the first time
 ```
 
 Other CLI entry points: `status`, `rotate-secret`, `backup [passphrase]`,

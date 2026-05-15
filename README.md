@@ -18,11 +18,50 @@ lives in
 
 ---
 
+## Security requirement: Socket Firewall
+
+**Every `npm install` for this project MUST run through Socket Firewall
+(`sfw`).** This is a hard requirement, not a recommendation. Plain
+`npm install` is blocked by a `preinstall` guard in `package.json` and
+will refuse to run.
+
+Why: npm pulls hundreds of transitive packages on a fresh install. Any
+one of them can ship a typosquatted or compromised version that
+exfiltrates credentials or modifies code on disk before you ever import
+it. Socket Firewall sits between npm and the registry, checks every
+fetched tarball against Socket's risk database, and refuses known-bad
+installs at the network layer. The cost is one extra word on the command
+line; the benefit is one fewer way the supply chain can ruin your week.
+
+Install `sfw` once, globally:
+
+```sh
+npm install -g sfw
+```
+
+Then run every install in this repo through `sfw` with the marker env
+var set:
+
+```sh
+SFW=1 sfw npm install
+SFW=1 sfw npm run client:install
+```
+
+Putting `export SFW=1` in your shell rc (`~/.zshrc` / `~/.bashrc`) is
+fine; the guard only needs the marker, not a re-export per command.
+
+**Emergency bypass.** If `sfw` is genuinely unavailable (offline, broken
+registry mirror, etc.) you can bypass with `SFW_BYPASS=1 npm install`.
+Every bypass must be recorded in `session_notes.md` with a one-line
+reason. Do not bypass for convenience.
+
+---
+
 ## Run it (macOS / Linux)
 
 ```sh
-npm install
-npm run client:install
+SFW=1 sfw npm install
+SFW=1 sfw npm run client:install
 npm run client:build
 npm start
 ```
@@ -64,10 +103,18 @@ shipped with Windows) also works.
    winget install Git.Git
    ```
 
-3. **(Probably not needed)** `better-sqlite3` ships prebuilt Windows
-   binaries for Node 20+, so `npm install` should succeed without a C++
-   toolchain. If you ever see a `node-gyp` failure, install the build
-   tools once:
+3. **Install Socket Firewall (required).** Every `npm install` in this
+   repo must route through `sfw`; plain `npm install` is blocked by the
+   `preinstall` guard. See the "Security requirement: Socket Firewall"
+   section above for the full rationale.
+   ```powershell
+   npm install -g sfw
+   ```
+
+4. **(Probably not needed)** `better-sqlite3` ships prebuilt Windows
+   binaries for Node 20+, so `sfw npm install` should succeed without a
+   C++ toolchain. If you ever see a `node-gyp` failure, install the
+   build tools once:
    ```powershell
    winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet"
    winget install Python.Python.3.12
@@ -78,8 +125,9 @@ shipped with Windows) also works.
 ```powershell
 git clone https://github.com/christreadaway/custos.git family-graph
 cd family-graph
-npm install
-npm run client:install
+$env:SFW = "1"
+sfw npm install
+sfw npm run client:install
 npm run client:build
 npm start
 ```

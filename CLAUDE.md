@@ -27,6 +27,36 @@ Standing rules for every Claude Code session in this repository.
   fighting chance of identifying the failure. Log redaction must strip
   credentials, tokens, and PII before any line lands on disk.
 
+## Security requirement: Socket Firewall (sfw) for every npm install
+
+Every `npm install`, `npm ci`, or equivalent in this repo MUST run
+through Socket Firewall (`sfw`). This is a hard project rule, not a
+preference. A `preinstall` guard in `package.json` (and in
+`client/package.json`) refuses installs that lack the `SFW=1` marker
+(or an equivalent `SOCKET_FIREWALL=1` / socket user-agent signal).
+
+Rules for Claude in any session:
+
+- Never suggest, document, or run `npm install` without `sfw`. Always
+  write `SFW=1 sfw npm install` (or `sfw npm ci`) when proposing or
+  executing a dependency install, in scripts, docs, CI, or chat replies.
+- Never remove the `preinstall` line from either `package.json` or
+  `client/package.json` without explicit operator approval and a
+  session-notes entry explaining why.
+- Never set `SFW_BYPASS=1` to make a failing install go through. The
+  bypass exists for genuine outages (offline, registry mirror down) and
+  every use of it must be logged in `session_notes.md` with a one-line
+  reason.
+- If `sfw` is missing on the operator's machine, tell them to
+  `npm install -g sfw` before installing project dependencies. Do not
+  work around the guard.
+- If a new subpackage is added (anything with its own `package.json`),
+  wire the same `preinstall` guard into it.
+
+The point is to keep a malicious or typosquatted npm package from
+landing on disk in this codebase, ever. The operator has accepted the
+one-word cost of typing `sfw` to get that guarantee. Don't erode it.
+
 ## PII rules (always on)
 
 - No real institution names, people, addresses, phones, or emails in
