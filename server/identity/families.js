@@ -29,15 +29,25 @@ function row2family(row, secrets, { includePii }) {
   };
 }
 
-function create(db, secrets, input = {}) {
+function create(db, secrets, input = {}, audit = {}) {
   const code = newCode('family');
-  db.prepare(
-    `INSERT INTO families (code, display_name_ct, notes_ct) VALUES (?, ?, ?)`
-  ).run(
-    code,
-    enc.encrypt(secrets, input.display_name || null),
-    enc.encrypt(secrets, input.notes || null)
-  );
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO families (code, display_name_ct, notes_ct) VALUES (?, ?, ?)`
+    ).run(
+      code,
+      enc.encrypt(secrets, input.display_name || null),
+      enc.encrypt(secrets, input.notes || null)
+    );
+    const after = db.prepare(`SELECT * FROM families WHERE code = ?`).get(code);
+    history.record(db, {
+      entityKind: 'family', entityCode: code, operation: 'create',
+      before: null, after,
+      actor: audit.actor || 'system', actorKind: audit.actorKind || null,
+      requestId: audit.requestId || null, reason: audit.reason || null,
+    });
+  });
+  tx();
   return code;
 }
 
@@ -69,7 +79,7 @@ function list(db, secrets, { limit = 50, status = 'active', includePii = false }
   });
 }
 
-function update(db, secrets, code, patch) {
+function update(db, secrets, code, patch, audit = {}) {
   const target = aliases.resolveAlias(db, code);
   const row = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
   if (!row) return null;
@@ -81,18 +91,28 @@ function update(db, secrets, code, patch) {
   const lang = 'communication_language' in patch
     ? (patch.communication_language || null)
     : (row.communication_language || null);
-  db.prepare(
-    `UPDATE families SET display_name_ct = ?, notes_ct = ?,
-         primary_contact_person_code = ?, communication_language = ?,
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE code = ?`
-  ).run(
-    enc.encrypt(secrets, display),
-    enc.encrypt(secrets, notes),
-    primary,
-    lang,
-    target
-  );
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE families SET display_name_ct = ?, notes_ct = ?,
+           primary_contact_person_code = ?, communication_language = ?,
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE code = ?`
+    ).run(
+      enc.encrypt(secrets, display),
+      enc.encrypt(secrets, notes),
+      primary,
+      lang,
+      target
+    );
+    const after = db.prepare(`SELECT * FROM families WHERE code = ?`).get(target);
+    history.record(db, {
+      entityKind: 'family', entityCode: target, operation: 'update',
+      before: row, after,
+      actor: audit.actor || 'system', actorKind: audit.actorKind || null,
+      requestId: audit.requestId || null, reason: audit.reason || null,
+    });
+  });
+  tx();
   return target;
 }
 
@@ -122,22 +142,25 @@ function archive(db, code, { actor = 'system', actorKind = null, reason = null, 
   if (before.status === 'merged') {
     throw new Error('cannot archive a merged family; merge owns the row');
   }
-  if (before.status === 'archived') {
+  const tx = db.transaction(() => {
+    if (before.status === 'archived') {
+      history.record(db, {
+        entityKind: 'family', entityCode: target, operation: 'archive',
+        before, after: before, actor, actorKind, requestId, reason,
+      });
+      return { code: target, before, after: before, noop: true };
+    }
+    db.prepare(
+      `UPDATE families SET status = 'archived', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+    ).run(target);
+    const after = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
     history.record(db, {
       entityKind: 'family', entityCode: target, operation: 'archive',
-      before, after: before, actor, actorKind, requestId, reason,
+      before, after, actor, actorKind, requestId, reason,
     });
-    return { code: target, before, after: before, noop: true };
-  }
-  db.prepare(
-    `UPDATE families SET status = 'archived', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
-  ).run(target);
-  const after = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
-  history.record(db, {
-    entityKind: 'family', entityCode: target, operation: 'archive',
-    before, after, actor, actorKind, requestId, reason,
+    return { code: target, before, after };
   });
-  return { code: target, before, after };
+  return tx();
 }
 
 function reinstate(db, code, { actor = 'system', actorKind = null, reason = null, requestId = null } = {}) {
@@ -151,22 +174,25 @@ function reinstate(db, code, { actor = 'system', actorKind = null, reason = null
   if (before.status === 'merged') {
     throw new Error('cannot reinstate a merged family; un-merge is a manual operator workflow');
   }
-  if (before.status === 'active') {
+  const tx = db.transaction(() => {
+    if (before.status === 'active') {
+      history.record(db, {
+        entityKind: 'family', entityCode: target, operation: 'reinstate',
+        before, after: before, actor, actorKind, requestId, reason,
+      });
+      return { code: target, before, after: before, noop: true };
+    }
+    db.prepare(
+      `UPDATE families SET status = 'active', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+    ).run(target);
+    const after = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
     history.record(db, {
       entityKind: 'family', entityCode: target, operation: 'reinstate',
-      before, after: before, actor, actorKind, requestId, reason,
+      before, after, actor, actorKind, requestId, reason,
     });
-    return { code: target, before, after: before, noop: true };
-  }
-  db.prepare(
-    `UPDATE families SET status = 'active', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
-  ).run(target);
-  const after = db.prepare('SELECT * FROM families WHERE code = ?').get(target);
-  history.record(db, {
-    entityKind: 'family', entityCode: target, operation: 'reinstate',
-    before, after, actor, actorKind, requestId, reason,
+    return { code: target, before, after };
   });
-  return { code: target, before, after };
+  return tx();
 }
 
 function members(db, secrets, code, { activeOnly = true, includePii = false } = {}) {
@@ -233,7 +259,7 @@ function endMembership(db, membershipCode, reason = 'edit') {
   ).run(reason, membershipCode);
 }
 
-function merge(db, secrets, loserCode, winnerCode) {
+function merge(db, secrets, loserCode, winnerCode, opts = {}) {
   const loser = aliases.resolveAlias(db, loserCode);
   const winner = aliases.resolveAlias(db, winnerCode);
   if (loser === winner) return winner;
@@ -277,6 +303,15 @@ function merge(db, secrets, loserCode, winnerCode) {
       `UPDATE families SET status = 'merged', merged_into = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
     ).run(winner, loser);
     aliases.recordAlias(db, loser, winner, 'family');
+
+    const winnerAfter = db.prepare('SELECT * FROM families WHERE code = ?').get(winner);
+    history.record(db, {
+      entityKind: 'family', entityCode: winner, operation: 'merge',
+      before: lr, after: winnerAfter,
+      actor: opts.actor || 'system', actorKind: opts.actorKind || null,
+      requestId: opts.requestId || null, reason: opts.reason || null,
+      relatedCodes: [loser],
+    });
   });
   tx();
   return winner;
@@ -285,10 +320,11 @@ function merge(db, secrets, loserCode, winnerCode) {
 // Split a family by promoting a subset of person codes into a new family.
 // History is preserved: the existing memberships are ended (reason='split')
 // and new memberships are opened in the new family.
-function split(db, secrets, familyCode, personCodes, { displayName = null, notes = null } = {}) {
+function split(db, secrets, familyCode, personCodes, { displayName = null, notes = null } = {}, opts = {}) {
   const source = aliases.resolveAlias(db, familyCode);
   const personCodesResolved = personCodes.map(c => aliases.resolveAlias(db, c));
   const newFamily = create(db, secrets, { display_name: displayName, notes });
+  const sourceBefore = db.prepare('SELECT * FROM families WHERE code = ?').get(source);
   const tx = db.transaction(() => {
     for (const pc of personCodesResolved) {
       const m = db
@@ -301,6 +337,22 @@ function split(db, secrets, familyCode, personCodes, { displayName = null, notes
         addMember(db, secrets, newFamily, pc);
       }
     }
+    const sourceAfter = db.prepare('SELECT * FROM families WHERE code = ?').get(source);
+    const newAfter = db.prepare('SELECT * FROM families WHERE code = ?').get(newFamily);
+    history.record(db, {
+      entityKind: 'family', entityCode: source, operation: 'split',
+      before: sourceBefore, after: sourceAfter,
+      actor: opts.actor || 'system', actorKind: opts.actorKind || null,
+      requestId: opts.requestId || null, reason: opts.reason || null,
+      relatedCodes: [newFamily, ...personCodesResolved],
+    });
+    history.record(db, {
+      entityKind: 'family', entityCode: newFamily, operation: 'create',
+      before: null, after: newAfter,
+      actor: opts.actor || 'system', actorKind: opts.actorKind || null,
+      requestId: opts.requestId || null, reason: opts.reason || 'split',
+      relatedCodes: [source, ...personCodesResolved],
+    });
   });
   tx();
   return newFamily;

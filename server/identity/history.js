@@ -32,22 +32,48 @@ const KNOWN_OPERATIONS = new Set([
   'create', 'update', 'archive', 'reinstate', 'merge', 'split', 'delete',
 ]);
 
-function _normaliseValue(v) {
+function _normaliseValue(v, ancestors) {
   if (v === null || v === undefined) return null;
   if (Buffer.isBuffer(v)) return { _ct: v.toString('base64') };
   if (v instanceof Uint8Array) return { _ct: Buffer.from(v).toString('base64') };
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === 'bigint') return v.toString();
+  if (typeof v === 'number' && !Number.isFinite(v)) return null; // NaN, Infinity → null
+  if (Array.isArray(v)) {
+    // Ancestor-only check: same reference appearing twice as a sibling
+    // (a person row shared by two memberships, for instance) is NOT a
+    // cycle — only a reference that points back to an ancestor on the
+    // current branch is.
+    if (ancestors.has(v)) return '[circular]';
+    ancestors.add(v);
+    const out = v.map(item => _normaliseValue(item, ancestors));
+    ancestors.delete(v);
+    return out;
+  }
+  if (typeof v === 'object') {
+    if (ancestors.has(v)) return '[circular]';
+    ancestors.add(v);
+    const out = {};
+    for (const [k, inner] of Object.entries(v)) {
+      // Drop the dangerous `__proto__` / `constructor` / `prototype`
+      // keys defensively — even though JSON.parse in modern Node
+      // doesn't pollute Object.prototype, a downstream caller might
+      // do `Object.assign(target, parsed)` and pull the keys in.
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      out[k] = _normaliseValue(inner, ancestors);
+    }
+    ancestors.delete(v);
+    return out;
+  }
   return v;
 }
 
 function snapshot(row) {
   if (!row || typeof row !== 'object') return null;
-  const out = {};
-  for (const [k, v] of Object.entries(row)) {
-    out[k] = _normaliseValue(v);
-  }
+  const normalised = _normaliseValue(row, new WeakSet());
   let serialised;
   try {
-    serialised = JSON.stringify(out);
+    serialised = JSON.stringify(normalised);
   } catch (_) {
     return JSON.stringify({ _truncated: true });
   }
@@ -144,13 +170,25 @@ function latestFor(db, entityKind, entityCode, operation) {
   return row ? _row2event(row) : null;
 }
 
-// Retention sweep. Removes rows older than `days` days. Returns the
-// number deleted. Run nightly from the same boot cron that handles the
-// audit sweep.
+// Retention sweep. Removes rows older than `days` days. The floor
+// guarantee: the most recent event for every (entity_kind, entity_code)
+// is preserved regardless of age. That keeps the audit trail
+// "currently archived because of action X on date Y" readable even
+// after the sweep nukes everything else, and it means a reinstate
+// always finds an archive snapshot it can render.
+//
+// Run nightly from the same boot cron that handles the audit sweep.
 function sweep(db, days) {
   if (typeof days !== 'number' || days <= 0) return 0;
   const cutoff = new Date(Date.now() - days * 86400 * 1000).toISOString();
-  const r = db.prepare(`DELETE FROM entity_changes WHERE created_at < ?`).run(cutoff);
+  const r = db.prepare(
+    `DELETE FROM entity_changes
+       WHERE created_at < ?
+         AND rowid NOT IN (
+           SELECT MAX(rowid) FROM entity_changes
+             GROUP BY entity_kind, entity_code
+         )`
+  ).run(cutoff);
   return r.changes;
 }
 

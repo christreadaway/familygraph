@@ -61,18 +61,43 @@ test('history > rejects unknown entity kinds and operations', () => {
   }
 });
 
-test('history > sweep retires rows older than the configured retention', async t => {
+test('history > sweep retires old rows but preserves the latest event per entity', async t => {
   const { db } = setup(t);
-  // Two rows: one fresh, one inserted with a manual stale created_at.
-  history.record(db, { entityKind: 'person', entityCode: 'p_recent01', operation: 'create' });
+  // Two stale rows for the same entity: an older create and a slightly
+  // newer update. The newer one is the latest and must survive even
+  // though both are past the cutoff.
   db.prepare(
     `INSERT INTO entity_changes (code, entity_kind, entity_code, operation, created_at)
-     VALUES ('chg_oldold01', 'person', 'p_old00001', 'create', '2000-01-01T00:00:00.000Z')`
+       VALUES ('chg_old00001', 'person', 'p_demo0001', 'create', '2000-01-01T00:00:00.000Z')`
   ).run();
+  db.prepare(
+    `INSERT INTO entity_changes (code, entity_kind, entity_code, operation, created_at)
+       VALUES ('chg_old00002', 'person', 'p_demo0001', 'archive', '2000-06-01T00:00:00.000Z')`
+  ).run();
+  // A stale row for a different entity. Its only history row is the
+  // latest for that entity, so the floor preserves it too.
+  db.prepare(
+    `INSERT INTO entity_changes (code, entity_kind, entity_code, operation, created_at)
+       VALUES ('chg_old00003', 'person', 'p_orphan01', 'create', '2000-01-01T00:00:00.000Z')`
+  ).run();
+  // And a fresh row that should never be swept regardless.
+  history.record(db, { entityKind: 'person', entityCode: 'p_recent01', operation: 'create' });
+
   const removed = history.sweep(db, 30);
-  assert.equal(removed, 1);
-  const remaining = db.prepare(`SELECT entity_code FROM entity_changes`).all().map(r => r.entity_code);
-  assert.deepEqual(remaining, ['p_recent01']);
+  assert.equal(removed, 1, 'only the superseded 2000-01 create is removed');
+  const remaining = db.prepare(
+    `SELECT code, entity_code FROM entity_changes ORDER BY created_at ASC`
+  ).all();
+  // Both per-entity floors survive + the fresh row.
+  const surviving = remaining.map(r => r.code).sort();
+  assert.deepEqual(surviving, ['chg_old00002', 'chg_old00003', remaining.find(r => r.entity_code === 'p_recent01').code].sort());
+});
+
+test('history > sweep is a no-op when nothing exceeds the cutoff', async t => {
+  const { db } = setup(t);
+  history.record(db, { entityKind: 'person', entityCode: 'p_recent01', operation: 'create' });
+  const removed = history.sweep(db, 30);
+  assert.equal(removed, 0);
 });
 
 test('history > effectiveRetentionDays reads the setting', async t => {

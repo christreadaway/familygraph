@@ -13,6 +13,17 @@
 const { newCode } = require('../crypto/identifiers');
 const aliases = require('../identity/aliases');
 
+// Same regex as consents._validateSchoolId — same threat model
+// (composite keys, webhook hint shape, log safety).
+const _SCHOOL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+function _validateSchoolId(v) {
+  if (v === null || v === undefined || v === '') throw new Error('schoolId required');
+  if (typeof v !== 'string' || !_SCHOOL_ID_RE.test(v)) {
+    throw new Error('invalid schoolId: use [A-Za-z0-9._-], max 128 chars, starting with alphanumeric');
+  }
+  return v;
+}
+
 function _safeJson(v) {
   if (v == null) return null;
   if (typeof v === 'string') {
@@ -37,8 +48,7 @@ function upsert(db, personCode, snapshot) {
     throw new Error('person not found');
   }
   if (!snapshot || typeof snapshot !== 'object') throw new Error('snapshot required');
-  const schoolId = snapshot.school_id || snapshot.schoolId;
-  if (!schoolId) throw new Error('schoolId required');
+  const schoolId = _validateSchoolId(snapshot.school_id || snapshot.schoolId);
 
   const teacher = snapshot.homeroom_teacher_person_code || snapshot.homeroomTeacherPersonId || null;
   const activities = _safeJson(snapshot.activities ?? []);

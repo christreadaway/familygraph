@@ -70,29 +70,40 @@ function emitWebhook(db, secrets, { event, personCode = null, familyCode = null,
 }
 
 // Build a 1-shot response capture that lets us cache the body alongside
-// the status code for idempotency. Wraps res.json + res.status without
-// changing the public Express API.
+// the status code for idempotency. Wraps both res.json and res.end so
+// 204 No Content responses (e.g. DELETE endpoints) also dedupe on
+// X-Request-Id retries.
 function captureResponse(req, res, db) {
   const requestId = req.get('x-request-id') || null;
   if (!requestId) return; // Idempotency is opt-in per the contract.
   let captured = false;
+  const doCapture = body => {
+    if (captured) return;
+    captured = true;
+    try {
+      idempotency.record(db, {
+        requestId,
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        body: body === undefined ? null : body,
+      });
+    } catch (e) {
+      log.warn('pp_idempotency.record_failed', { request_id: requestId, error: String(e && e.message || e) });
+    }
+  };
   const origJson = res.json.bind(res);
   res.json = body => {
-    if (!captured) {
-      captured = true;
-      try {
-        idempotency.record(db, {
-          requestId,
-          method: req.method,
-          path: req.path,
-          status: res.statusCode,
-          body,
-        });
-      } catch (e) {
-        log.warn('pp_idempotency.record_failed', { request_id: requestId, error: String(e && e.message || e) });
-      }
-    }
+    doCapture(body);
     return origJson(body);
+  };
+  const origEnd = res.end.bind(res);
+  res.end = function endWrapped(chunk, encoding, cb) {
+    // res.end can be called bare for empty-body responses (e.g.
+    // res.status(204).end()) — in that case body is null and we still
+    // want the status code captured so a retry replays the 204.
+    if (!captured) doCapture(null);
+    return origEnd(chunk, encoding, cb);
   };
 }
 
@@ -124,15 +135,24 @@ function build({ db, secrets }) {
     next();
   });
 
-  // ---- Idempotency replay middleware (POST / PATCH only) ----
+  // ---- Idempotency replay middleware ----
+  // Applies to every write method (POST/PATCH/DELETE). DELETE is
+  // included because §7.2 of the contract says "retries on flaky
+  // networks don't double-create" — and an over-eager DELETE retry
+  // can double-affect state just as easily as a POST (e.g. clearing
+  // a consent override that the operator re-set in between attempts).
   r.use((req, res, next) => {
-    if (req.method !== 'POST' && req.method !== 'PATCH') return next();
+    if (req.method !== 'POST' && req.method !== 'PATCH' && req.method !== 'DELETE') return next();
     const requestId = req.get('x-request-id');
     if (!requestId) return next();
     const cached = idempotency.lookup(db, { requestId, method: req.method, path: req.path });
     if (cached) {
       log.debug('pp_idempotency.replay', { request_id: requestId, path: req.path, status: cached.status });
       res.set('X-FG-Idempotent-Replay', 'true');
+      // A cached null body indicates the original response was an empty
+      // 204 (or other no-body status). Replay with `.end()` rather than
+      // `.json(null)` so PP receives the same wire shape as the first call.
+      if (cached.body == null) return res.status(cached.status).end();
       return res.status(cached.status).json(cached.body);
     }
     captureResponse(req, res, db);
@@ -831,21 +851,16 @@ function build({ db, secrets }) {
     if (!isValidCode(req.params.code, 'diocese')) {
       return res.status(400).json({ error: 'invalid_diocese_code' });
     }
-    const current = dioceses.get(db, secrets, req.params.code);
-    if (!current) return res.status(404).json({ error: 'not_found' });
-    const ifMatch = req.get('if-match');
-    if (ifMatch) {
-      const currentTag = etag.compute({ diocese: current });
-      if (!etag.matches(ifMatch, currentTag)) {
-        return res.status(412).json({ error: 'precondition_failed', detail: 'ETag mismatch — re-fetch and retry' });
-      }
-    }
-    const ok = dioceses.update(db, secrets, req.params.code, req.body || {}, {
+    const result = dioceses.update(db, secrets, req.params.code, req.body || {}, {
       actor: req.auth?.actor || 'parentpoint',
       actorKind: req.auth?.kind || null,
       requestId: req.ppContract.requestId || null,
+      ifMatch: req.get('if-match') || null,
     });
-    if (!ok) return res.status(404).json({ error: 'not_found' });
+    if (result === null) return res.status(404).json({ error: 'not_found' });
+    if (result === dioceses.ETAG_MISMATCH) {
+      return res.status(412).json({ error: 'precondition_failed', detail: 'ETag mismatch — re-fetch and retry' });
+    }
     audit.record(db, {
       action: 'pp_diocese_update',
       actor: req.auth?.actor || 'parentpoint',

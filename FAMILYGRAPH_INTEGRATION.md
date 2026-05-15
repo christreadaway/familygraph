@@ -867,3 +867,113 @@ Migration 0013 + the new endpoints + scenario coverage added 40 more
 cases. The full suite went from 390 → 431 passing (1 skipped on root,
 as before).
 
+---
+
+## Appendix C — Audit pass and bug fixes (2026-05-15)
+
+A comprehensive multi-agent audit of the v0.1 + v0.2 surface caught a
+batch of real bugs across the contract. Every one is now fixed and
+covered by a regression test; the full suite went from 431 → 463
+passing (+32 cases).
+
+### Critical fixes
+
+- **Archived persons used to leak full PII through the
+  `/v1/persons/changed` feed.** `personObject` decrypted firstName,
+  lastName, primaryEmail, phones, mailingAddress for archived rows.
+  The change feed now tombstones non-active records — the response is
+  `{ personId, active: false, status, updatedAt }` only. Direct GET
+  `/v1/persons/:id` still returns the full record because operator UIs
+  need it for the historical view; same pattern for households.
+- **The retention sweep deleted the latest `entity_changes` snapshot
+  for each entity** when retention was configured. That broke the
+  audit trail for currently-archived records (the operator couldn't
+  see WHEN/WHY the archive happened). The sweep now preserves
+  `MAX(rowid) GROUP BY entity_kind, entity_code` — a floor that
+  guarantees the latest event for every entity survives regardless of
+  age. Operators can still cap retention; the floor is the safety net.
+- **`person_consent_overrides` were orphaned on merge.** When person A
+  was merged into person B, A's per-school overrides stayed on A's
+  code and became unreachable through `listOverridesForPerson(B)`.
+  `people.merge` now re-points overrides to the winner. When both
+  sides have an override for the same school, the more-restrictive
+  value per field wins (`deny > group_only > allow` for photo;
+  `deny > allow` for directory). `person_consents`, `eim_certifications`,
+  and `school_contexts` get the same treatment.
+- **`DELETE` endpoints bypassed idempotency on retry.** The middleware
+  only ran for POST/PATCH, and the `captureResponse` wrapper only
+  caught `res.json` (not `res.end`). Retrying
+  `DELETE /v1/persons/:id/photoConsent?schoolId=...` re-executed the
+  clear, potentially nuking an override the operator re-set in
+  between attempts. The middleware now includes DELETE, the capture
+  wraps both `res.json` and `res.end`, and the replay path uses
+  `.end()` for cached null-body 204s.
+
+### High fixes
+
+- **`GET /v1/dioceses?status=all`** returned an empty list. The query
+  did `WHERE status = 'all'` which never matches; now `all` skips the
+  WHERE clause entirely and returns active + archived together.
+- **`people.merge` / `families.merge` / `families.split` didn't write
+  to `entity_changes`.** The architectural ask was that every
+  meaningful write be loggable; merges and splits were holes. Now all
+  four operations emit a row with the loser/new-family code in
+  `related_codes` so a manual un-merge workflow can reconstruct.
+- **`schoolId` validation** wasn't enforced consistently. Slashes in a
+  schoolId broke the composite history entity_code
+  (`${person}/${schoolId}`). The validator
+  (`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`) is now applied at every
+  write boundary in consents and schoolContext.
+
+### Medium fixes
+
+- **Snapshot serializer recursion.** `_normaliseValue` only handled
+  top-level Buffers; nested Buffers got silently dropped to `{}` by
+  JSON.stringify. Now recurses, handles Buffer / Uint8Array / Date /
+  BigInt / NaN / Infinity, and strips `__proto__` / `constructor` /
+  `prototype` defensively. Circular detection switched from
+  any-prior-sight to ancestor-only so siblings that share a reference
+  (e.g. two memberships pointing at one address row) serialise
+  correctly instead of one being marked `[circular]`.
+- **`dioceses.update` camelCase / snake_case asymmetry.** A patch
+  with `eimRenewalYears` was previously preferred over
+  `eim_renewal_years` only when the snake_case key was absent; now a
+  `_normalisePatch` helper maps the camelCase form into the
+  snake_case slot if no snake_case key exists, and snake_case wins on
+  tie-breaks (matching what FG itself emits).
+- **`PATCH /v1/dioceses/:code` was racy.** The handler did a read for
+  ETag and a read inside `dioceses.update` separately. Concurrent
+  writes could slip between them. The ETag check now runs INSIDE the
+  update transaction, returning a sentinel that the router maps to a
+  412.
+- **`diocese_record_id` length cap.** The column is unbounded TEXT;
+  the helper now rejects values over 256 chars.
+- **Webhook URL SSRF guard.** `webhooks.subscribe` rejects loopback,
+  link-local, RFC1918, and the cloud metadata endpoint
+  (169.254.169.254). Plain http:// is allowed but logs a warning at
+  subscription time (signed payloads are integrity-protected but not
+  confidential).
+- **Webhook dispatcher graceful shutdown.** `stop()` now returns the
+  in-flight delivery promise so the boot path can await it during
+  SIGINT/SIGTERM — an orphaned fetch mid-delivery used to leave the
+  delivery `pending` and trigger a re-send on the next process start.
+
+### Atomicity hardening
+
+- Every write path that touches an entity AND writes a history row
+  now runs inside a single `db.transaction(() => ...)`. Pre-fix, a
+  history.record() failure (e.g. unknown kind, snapshot serialiser
+  bug) left the data row written but no log row recorded — a
+  state-vs-audit-trail divergence that violated the architectural
+  ask. Covered: people.create / update / archive / reinstate /
+  merge, families.create / update / archive / reinstate / merge /
+  split, dioceses.create / update / archive / reinstate,
+  consents.set / setOverride / clearOverride, certifications.add.
+
+### Test count
+
+The audit + fix pass added 32 cases (parentpoint-bugfixes.test.js,
+parentpoint-merge-migration.test.js, plus updates to existing tests).
+The full suite went from 431 → 463 passing (1 skipped on root, as
+before).
+

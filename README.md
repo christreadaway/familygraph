@@ -468,6 +468,17 @@ Quick sketch:
   Same pattern for households + dioceses. The change history is
   readable at `GET /v1/persons/:id/history` and
   `GET /v1/households/:id/history`.
+- Archived persons in the `/v1/persons/changed?since=` feed appear
+  as tombstones (`{ personId, active: false, status, updatedAt }`),
+  not as full records — the feed's job is "tell PP what to
+  invalidate," not "rebroadcast PII for a removed record." Direct
+  `GET /v1/persons/:id` still returns the full record for operator
+  UIs that want the historical view.
+- Every meaningful write (create, update, archive, reinstate, merge,
+  split, consent set, EIM cert add, school context upsert) is logged
+  to `entity_changes` with a full row snapshot. The write and the log
+  row are wrapped in one transaction so a log failure rolls back the
+  data write — there's no path that leaves data and audit out of sync.
 - Webhooks fire from `POST /v1/persons`, `PATCH /v1/persons/:id`,
   `POST /v1/persons/:id/photoConsent` (with optional `schoolId` in the
   payload), `POST /v1/persons/:id/eimCertifications`, archive/reinstate,

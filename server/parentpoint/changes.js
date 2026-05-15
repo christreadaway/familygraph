@@ -45,13 +45,17 @@ function listChangedPersons(db, secrets, since, { limit = 200 } = {}) {
   ).all(sinceIso, sinceIso, lim);
 
   // Deduplicate (same code can appear from both subqueries). Preserve
-  // ascending order of updated_at.
+  // ascending order of updated_at. Archived persons are tombstoned —
+  // the feed's job is "tell PP what to invalidate," not "rebroadcast
+  // PII for a record the operator removed." Direct
+  // GET /v1/persons/:id still returns the full record so the operator
+  // UI can render historical detail.
   const seen = new Set();
   const items = [];
   for (const r of rows) {
     if (seen.has(r.code)) continue;
     seen.add(r.code);
-    const obj = objects.personObject(db, secrets, r.code);
+    const obj = objects.personObject(db, secrets, r.code, { tombstone: true });
     if (!obj) continue;
     items.push(obj);
   }
@@ -74,7 +78,7 @@ function listChangedHouseholds(db, secrets, since, { limit = 200 } = {}) {
         ORDER BY updated_at ASC LIMIT ?`
   ).all(sinceIso, lim);
   const items = rows
-    .map(r => objects.householdObject(db, secrets, r.code))
+    .map(r => objects.householdObject(db, secrets, r.code, { tombstone: true }))
     .filter(Boolean);
   const lastUpdated = items.length ? items[items.length - 1].updatedAt : sinceIso;
   return {

@@ -88,53 +88,61 @@ function add(db, secrets, personCode, input = {}, audit = {}) {
   const completed = _normIsoDate(enriched.completed_on || enriched.eim_completed_on);
   const expires = _normIsoDate(enriched.expires_on || enriched.eim_expires_on);
   const source = enriched.source ? String(enriched.source).slice(0, 120) : null;
-  const dioceseRecordId = input.diocese_record_id || input.dioceseRecordId || null;
-
-  const code = newCode('audit').replace(/^au_/, 'eim_');
-  db.prepare(
-    `INSERT INTO eim_certifications
-       (code, person_code, status, completed_on, expires_on, source, notes_ct,
-        diocese_code, diocese_record_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    code, target, status, completed, expires, source,
-    enc.encrypt(secrets, enriched.notes),
-    dioceseCode, dioceseRecordId,
-  );
-
-  const after = db.prepare(`SELECT * FROM eim_certifications WHERE code = ?`).get(code);
-  history.record(db, {
-    entityKind: 'eim_certification', entityCode: code, operation: 'create',
-    before: null, after,
-    actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
-    relatedCodes: [target].concat(dioceseCode ? [dioceseCode] : []),
-  });
-
-  // Promote logic (unchanged from v0.1 contract): later expiration
-  // promotes; pending promotes when current is null/expired; expired
-  // historical backfill never demotes a live cert.
-  const personRow = db.prepare(
-    `SELECT eim_status, eim_completed_on, eim_expires_on FROM persons WHERE code = ?`
-  ).get(target);
-  const shouldPromote = (
-    status !== 'expired'
-    && (
-      !personRow.eim_status
-      || (expires && (!personRow.eim_expires_on || expires >= personRow.eim_expires_on))
-      || (status === 'pending' && personRow.eim_status === 'expired')
-    )
-  );
-  if (shouldPromote) {
-    people.update(db, secrets, target, {
-      eim_status: status,
-      eim_completed_on: completed,
-      eim_expires_on: expires,
-      ...(enriched.notes !== undefined ? { eim_notes: enriched.notes } : {}),
-    });
-  } else {
-    people.touchUpdatedAt(db, target);
+  let dioceseRecordId = input.diocese_record_id || input.dioceseRecordId || null;
+  if (dioceseRecordId != null) {
+    if (typeof dioceseRecordId !== 'string') dioceseRecordId = String(dioceseRecordId);
+    if (dioceseRecordId.length > 256) {
+      throw new Error('dioceseRecordId too long (max 256 chars)');
+    }
   }
 
+  const code = newCode('audit').replace(/^au_/, 'eim_');
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO eim_certifications
+         (code, person_code, status, completed_on, expires_on, source, notes_ct,
+          diocese_code, diocese_record_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      code, target, status, completed, expires, source,
+      enc.encrypt(secrets, enriched.notes),
+      dioceseCode, dioceseRecordId,
+    );
+
+    const after = db.prepare(`SELECT * FROM eim_certifications WHERE code = ?`).get(code);
+    history.record(db, {
+      entityKind: 'eim_certification', entityCode: code, operation: 'create',
+      before: null, after,
+      actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+      relatedCodes: [target].concat(dioceseCode ? [dioceseCode] : []),
+    });
+
+    // Promote logic (unchanged from v0.1 contract): later expiration
+    // promotes; pending promotes when current is null/expired; expired
+    // historical backfill never demotes a live cert.
+    const personRow = db.prepare(
+      `SELECT eim_status, eim_completed_on, eim_expires_on FROM persons WHERE code = ?`
+    ).get(target);
+    const shouldPromote = (
+      status !== 'expired'
+      && (
+        !personRow.eim_status
+        || (expires && (!personRow.eim_expires_on || expires >= personRow.eim_expires_on))
+        || (status === 'pending' && personRow.eim_status === 'expired')
+      )
+    );
+    if (shouldPromote) {
+      people.update(db, secrets, target, {
+        eim_status: status,
+        eim_completed_on: completed,
+        eim_expires_on: expires,
+        ...(enriched.notes !== undefined ? { eim_notes: enriched.notes } : {}),
+      });
+    } else {
+      people.touchUpdatedAt(db, target);
+    }
+  });
+  tx();
   return code;
 }
 

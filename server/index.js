@@ -291,10 +291,14 @@ function start() {
     }
   }
 
-  function shutdown() {
+  async function shutdown() {
     if (watcher) watcher.close();
     if (connectorSched && connectorSched.stop) connectorSched.stop();
-    if (ppWebhookDispatcher && ppWebhookDispatcher.stop) ppWebhookDispatcher.stop();
+    // Stop the PP webhook dispatcher; await any in-flight POST so we
+    // don't orphan a delivery mid-fetch.
+    if (ppWebhookDispatcher && ppWebhookDispatcher.stop) {
+      try { await ppWebhookDispatcher.stop(); } catch (_) { /* swallow */ }
+    }
     clearInterval(idemSweep);
     clearInterval(entityChangesSweep);
     server.close(() => process.exit(0));

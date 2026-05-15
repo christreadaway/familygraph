@@ -66,9 +66,42 @@ function _row2sub(db, secrets, row) {
   };
 }
 
+// SSRF guard. We POST signed payloads to operator-supplied URLs. A
+// loopback / link-local / metadata-service target is almost never
+// what an operator actually means, so reject those outright. Plain
+// http:// passes (we sign the body for integrity) but logs a warning
+// — confidentiality is the operator's network responsibility.
+function _isLoopbackOrLinkLocal(hostname) {
+  if (!hostname) return false;
+  const h = hostname.toLowerCase();
+  if (h === 'localhost') return true;
+  if (h === '0.0.0.0') return true;
+  if (/^127\./.test(h)) return true;
+  if (h === '::1' || h === '[::1]') return true;
+  if (/^169\.254\./.test(h)) return true;       // IPv4 link-local + cloud metadata
+  if (/^fe80:/i.test(h)) return true;           // IPv6 link-local
+  if (/^10\./.test(h)) return true;             // RFC1918 — block by default
+  if (/^192\.168\./.test(h)) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h)) return true;
+  return false;
+}
+
 function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint = null } = {}) {
   if (!url || typeof url !== 'string') throw new Error('url required');
-  try { new URL(url); } catch (_) { throw new Error('invalid url'); }
+  let parsed;
+  try { parsed = new URL(url); } catch (_) { throw new Error('invalid url'); }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`unsupported url scheme: ${parsed.protocol}`);
+  }
+  if (_isLoopbackOrLinkLocal(parsed.hostname)) {
+    throw new Error('webhook url cannot target loopback / link-local / private addresses');
+  }
+  if (parsed.protocol === 'http:') {
+    log.warn('pp_webhook.insecure_subscription', {
+      host: parsed.hostname,
+      detail: 'plain http; signed payload is integrity-protected but not confidential',
+    });
+  }
   // Allowed `events` values: '*' (all) or a comma-separated list of
   // known event names.
   let normalizedEvents = '*';
@@ -331,20 +364,32 @@ async function dispatchPending(db, secrets, { now = new Date(), sender = _defaul
 // Background ticker (mirrors the notifications dispatcher). Stop with the
 // returned controller; tests call dispatchPending directly so they don't
 // need the ticker at all.
+//
+// `stop()` is async-friendly: it stops scheduling new ticks AND awaits
+// any in-flight dispatch so a graceful shutdown doesn't orphan a fetch
+// mid-delivery. Callers that don't care can ignore the returned
+// promise; setInterval-style callers should `await stop()` before
+// closing the database.
 function start(db, secrets, { intervalMs = 60_000 } = {}) {
   let stopped = false;
+  let inflight = Promise.resolve();
   const tick = () => {
     if (stopped) return;
-    dispatchPending(db, secrets).catch(e => {
+    const p = dispatchPending(db, secrets).catch(e => {
       log.error('pp_webhook.dispatch_failed', { message: String(e && e.message || e), stack: e && e.stack });
     });
+    inflight = p;
   };
   // Fire once immediately so a process restart doesn't park pending rows.
   tick();
   const handle = setInterval(tick, intervalMs);
   if (typeof handle.unref === 'function') handle.unref();
   return {
-    stop() { stopped = true; clearInterval(handle); },
+    stop() {
+      stopped = true;
+      clearInterval(handle);
+      return inflight;
+    },
   };
 }
 

@@ -102,11 +102,28 @@ function _contactsForPerson(db, secrets, personCode) {
 }
 
 // Person object for §6.1. Returns null when the code resolves to nothing.
-function personObject(db, secrets, personCode) {
+//
+// When the person is archived or merged, return a TOMBSTONE — just
+// `{ personId, active: false, updatedAt }`. The changed-since feed uses
+// this to signal "purge from your cache" without re-broadcasting PII
+// for a record the operator deliberately removed. Direct GETs use the
+// `tombstone: false` opt-in path so operator UIs that want to render
+// "Annie Lee, archived May 12 because graduated" can still see the
+// full record.
+function personObject(db, secrets, personCode, { tombstone = false } = {}) {
   const target = aliases.resolveAlias(db, personCode);
   if (!target) return null;
   const row = db.prepare(`SELECT * FROM persons WHERE code = ?`).get(target);
   if (!row) return null;
+
+  if (tombstone && row.status !== 'active') {
+    return {
+      personId: target,
+      active: false,
+      status: row.status,
+      updatedAt: row.updated_at,
+    };
+  }
 
   const { emails, phones } = _contactsForPerson(db, secrets, target);
   const primaryE = _primaryEmail(emails);
@@ -165,10 +182,19 @@ function personObject(db, secrets, personCode) {
 }
 
 // Household object for §6.2.
-function householdObject(db, secrets, familyCode) {
+function householdObject(db, secrets, familyCode, { tombstone = false } = {}) {
   const target = aliases.resolveAlias(db, familyCode);
   const fam = db.prepare(`SELECT * FROM families WHERE code = ?`).get(target);
   if (!fam) return null;
+
+  if (tombstone && fam.status !== 'active') {
+    return {
+      householdId: target,
+      active: false,
+      status: fam.status,
+      updatedAt: fam.updated_at,
+    };
+  }
 
   const memberRows = db.prepare(
     `SELECT m.* FROM memberships m
@@ -199,6 +225,7 @@ function householdObject(db, secrets, familyCode) {
     members,
     primaryContactPersonId: primary,
     communicationLanguage: fam.communication_language || 'en',
+    active: fam.status === 'active',
     updatedAt: fam.updated_at,
   };
 }

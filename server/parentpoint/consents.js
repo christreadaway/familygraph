@@ -20,6 +20,22 @@ const history = require('../identity/history');
 const PHOTO_VALUES = new Set(['allow', 'group_only', 'deny']);
 const DIR_VALUES = new Set(['allow', 'deny']);
 
+// schoolId is operator-supplied (PP's tenant slug). We use it as part
+// of the entity_changes composite code `${person}/${school}` and as a
+// webhook schoolHint, so reject characters that break either: forward
+// slash is a delimiter in the composite code, whitespace is fragile in
+// shell / log surfaces, and control characters could land in HTTP
+// headers. We allow `[A-Za-z0-9._-]` which covers every real tenant
+// slug we've seen.
+const _SCHOOL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+function _validateSchoolId(v) {
+  if (v === null || v === undefined || v === '') throw new Error('schoolId required');
+  if (typeof v !== 'string' || !_SCHOOL_ID_RE.test(v)) {
+    throw new Error('invalid schoolId: use [A-Za-z0-9._-], max 128 chars, starting with alphanumeric');
+  }
+  return v;
+}
+
 function _coerce(value, valid, name) {
   if (value === null || value === undefined) return null;
   const v = String(value).toLowerCase();
@@ -61,41 +77,45 @@ function set(db, personCode, { photoConsent, directoryListing } = {}, {
   const photo = _coerce(photoConsent, PHOTO_VALUES, 'photoConsent');
   const dir = _coerce(directoryListing, DIR_VALUES, 'directoryListing');
 
-  const existing = db.prepare(
-    `SELECT * FROM person_consents WHERE person_code = ?`
-  ).get(target);
+  const tx = db.transaction(() => {
+    const existing = db.prepare(
+      `SELECT * FROM person_consents WHERE person_code = ?`
+    ).get(target);
 
-  const nextPhoto = photo != null ? photo : (existing ? existing.photo_consent : 'allow');
-  const nextDir   = dir   != null ? dir   : (existing ? existing.directory_listing : 'allow');
+    const nextPhoto = photo != null ? photo : (existing ? existing.photo_consent : 'allow');
+    const nextDir   = dir   != null ? dir   : (existing ? existing.directory_listing : 'allow');
 
-  if (existing) {
-    db.prepare(
-      `UPDATE person_consents
-          SET photo_consent = ?, directory_listing = ?,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE person_code = ?`
-    ).run(nextPhoto, nextDir, target);
-  } else {
-    db.prepare(
-      `INSERT INTO person_consents (person_code, photo_consent, directory_listing)
-         VALUES (?, ?, ?)`
-    ).run(target, nextPhoto, nextDir);
-  }
-  const after = db.prepare(`SELECT * FROM person_consents WHERE person_code = ?`).get(target);
-  history.record(db, {
-    entityKind: 'consent', entityCode: target,
-    operation: existing ? 'update' : 'create',
-    before: existing || null, after,
-    actor, actorKind, requestId,
+    if (existing) {
+      db.prepare(
+        `UPDATE person_consents
+            SET photo_consent = ?, directory_listing = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE person_code = ?`
+      ).run(nextPhoto, nextDir, target);
+    } else {
+      db.prepare(
+        `INSERT INTO person_consents (person_code, photo_consent, directory_listing)
+           VALUES (?, ?, ?)`
+      ).run(target, nextPhoto, nextDir);
+    }
+    const after = db.prepare(`SELECT * FROM person_consents WHERE person_code = ?`).get(target);
+    history.record(db, {
+      entityKind: 'consent', entityCode: target,
+      operation: existing ? 'update' : 'create',
+      before: existing || null, after,
+      actor, actorKind, requestId,
+    });
+    people.touchUpdatedAt(db, target);
   });
-  // Bump persons.updated_at so the changed-since feed surfaces this person.
-  people.touchUpdatedAt(db, target);
+  tx();
   return get(db, target);
 }
 
 // Override read for one (person, school). Returns the override row or
-// null. Each column is independently nullable.
+// null. Each column is independently nullable. Validates schoolId so a
+// caller-malformed value can't masquerade as another tenant's data.
 function getOverride(db, personCode, schoolId) {
+  _validateSchoolId(schoolId);
   const target = aliases.resolveAlias(db, personCode);
   const row = db.prepare(
     `SELECT * FROM person_consent_overrides WHERE person_code = ? AND school_id = ?`
@@ -108,61 +128,60 @@ function setOverride(db, personCode, schoolId, { photoConsent, directoryListing 
 } = {}) {
   const target = aliases.resolveAlias(db, personCode);
   _assertPersonExists(db, target);
-  if (!schoolId) throw new Error('schoolId required');
+  _validateSchoolId(schoolId);
   const photo = _coerce(photoConsent, PHOTO_VALUES, 'photoConsent');
   const dir = _coerce(directoryListing, DIR_VALUES, 'directoryListing');
 
-  const existing = getOverride(db, target, schoolId);
+  const tx = db.transaction(() => {
+    const existing = getOverride(db, target, schoolId);
 
-  // Override columns are independently nullable. A caller that omits
-  // one field keeps whatever was there; an explicit `null` clears that
-  // field's override (which falls back to the base).
-  const nextPhoto = (photoConsent === null) ? null
-    : (photo != null ? photo : (existing ? existing.photo_consent : null));
-  const nextDir = (directoryListing === null) ? null
-    : (dir != null ? dir : (existing ? existing.directory_listing : null));
+    const nextPhoto = (photoConsent === null) ? null
+      : (photo != null ? photo : (existing ? existing.photo_consent : null));
+    const nextDir = (directoryListing === null) ? null
+      : (dir != null ? dir : (existing ? existing.directory_listing : null));
 
-  // If both columns end up null, the override row is meaningless — drop it.
-  if (nextPhoto == null && nextDir == null) {
+    if (nextPhoto == null && nextDir == null) {
+      if (existing) {
+        db.prepare(
+          `DELETE FROM person_consent_overrides WHERE person_code = ? AND school_id = ?`
+        ).run(target, schoolId);
+        history.record(db, {
+          entityKind: 'consent_override',
+          entityCode: `${target}/${schoolId}`,
+          operation: 'delete',
+          before: existing, after: null,
+          actor, actorKind, requestId,
+        });
+        people.touchUpdatedAt(db, target);
+      }
+      return { person_code: target, school_id: schoolId, photo_consent: null, directory_listing: null, defaulted: true };
+    }
+
     if (existing) {
       db.prepare(
-        `DELETE FROM person_consent_overrides WHERE person_code = ? AND school_id = ?`
-      ).run(target, schoolId);
-      history.record(db, {
-        entityKind: 'consent_override',
-        entityCode: `${target}/${schoolId}`,
-        operation: 'delete',
-        before: existing, after: null,
-        actor, actorKind, requestId,
-      });
-      people.touchUpdatedAt(db, target);
+        `UPDATE person_consent_overrides
+            SET photo_consent = ?, directory_listing = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE person_code = ? AND school_id = ?`
+      ).run(nextPhoto, nextDir, target, schoolId);
+    } else {
+      db.prepare(
+        `INSERT INTO person_consent_overrides (person_code, school_id, photo_consent, directory_listing)
+           VALUES (?, ?, ?, ?)`
+      ).run(target, schoolId, nextPhoto, nextDir);
     }
-    return { person_code: target, school_id: schoolId, photo_consent: null, directory_listing: null, defaulted: true };
-  }
-
-  if (existing) {
-    db.prepare(
-      `UPDATE person_consent_overrides
-          SET photo_consent = ?, directory_listing = ?,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE person_code = ? AND school_id = ?`
-    ).run(nextPhoto, nextDir, target, schoolId);
-  } else {
-    db.prepare(
-      `INSERT INTO person_consent_overrides (person_code, school_id, photo_consent, directory_listing)
-         VALUES (?, ?, ?, ?)`
-    ).run(target, schoolId, nextPhoto, nextDir);
-  }
-  const after = getOverride(db, target, schoolId);
-  history.record(db, {
-    entityKind: 'consent_override',
-    entityCode: `${target}/${schoolId}`,
-    operation: existing ? 'update' : 'create',
-    before: existing || null, after,
-    actor, actorKind, requestId,
+    const after = getOverride(db, target, schoolId);
+    history.record(db, {
+      entityKind: 'consent_override',
+      entityCode: `${target}/${schoolId}`,
+      operation: existing ? 'update' : 'create',
+      before: existing || null, after,
+      actor, actorKind, requestId,
+    });
+    people.touchUpdatedAt(db, target);
+    return after;
   });
-  people.touchUpdatedAt(db, target);
-  return after;
+  return tx();
 }
 
 function clearOverride(db, personCode, schoolId, opts = {}) {

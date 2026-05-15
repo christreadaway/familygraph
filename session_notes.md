@@ -2205,4 +2205,149 @@ dashboard is the next step.
 
 ---
 
+## v13 follow-up — Comprehensive audit + bug fixes (Claude Code, 2026-05-15)
+
+The operator said: "please test comprehensively and fix all
+low-to-critical bugs you find." I ran four parallel audit agents
+across the v0.1 + v0.2 surface (consent overrides, entity_changes log,
+dioceses + EIM, webhooks + idempotency + ETag) and then two more
+(PII safety + auth, contract drift). Triaged the findings, fixed the
+real bugs, and added 32 regression tests. Final state: 431 → 463
+passing.
+
+**Critical bugs caught:**
+
+The `/v1/persons/changed` feed was rebroadcasting full PII for
+archived persons. The feed's purpose is "tell PP what to invalidate" —
+shipping firstName, primaryEmail, mailingAddress for a record the
+operator just removed defeats the deletion. Fix: `personObject` and
+`householdObject` now take a `tombstone` option that returns only
+`{personId|householdId, active: false, status, updatedAt}` for
+non-active rows. The changes module passes `tombstone: true`; direct
+GETs leave it false so operator UIs can still render historical
+detail.
+
+The retention sweep on `entity_changes` deleted the latest snapshot
+for each entity if retention was configured short enough. That broke
+the audit trail for currently-archived records — the operator could
+no longer see WHEN/WHY an archive happened, only that the row was
+flagged 'archived'. The reinstate path didn't depend on the snapshot
+(it's just a status flip), but the audit story collapsed. New sweep
+preserves `MAX(rowid) GROUP BY entity_kind, entity_code` as a floor.
+Retention still caps growth; the latest event per entity never gets
+swept.
+
+person_consent_overrides were orphaned on merge. A → B merge moved
+memberships, emails, phones, addresses, ministry assignments, but
+not the override table. `listOverridesForPerson(B)` then returned
+zero even though A's overrides were still in the database. Fix:
+people.merge now walks `person_consents`, `person_consent_overrides`,
+`eim_certifications`, and `school_contexts` and re-points everything
+onto the winner. The conflict rule for overlapping consent values is
+more-restrictive-wins ('deny' > 'group_only' > 'allow' for photo,
+'deny' > 'allow' for directory) — a school that said "no photos"
+shouldn't get clobbered by a merge into a record that said "allow."
+
+DELETE 204 responses skipped the idempotency cache. The middleware
+only ran on POST/PATCH, and the captureResponse wrapper only caught
+res.json (not res.end). A retry on
+`DELETE /v1/persons/:id/photoConsent?schoolId=...` re-executed and
+potentially nuked an override the operator re-set between attempts.
+Fix: middleware applies to all writes (POST/PATCH/DELETE), capture
+wraps both `res.json` and `res.end`, and the replay path uses
+`.end()` for cached null-body 204s so PP gets the same wire shape on
+the second call.
+
+**High-impact fixes:**
+
+`GET /v1/dioceses?status=all` returned an empty list because the
+underlying query did `WHERE status = 'all'`. The 'all' value now
+skips the WHERE entirely. people.merge, families.merge, and
+families.split now write merge/split rows to entity_changes (the
+architectural ask said "every meaningful write" and these were
+holes). schoolId validation is enforced at every consents +
+schoolContext boundary so a value with '/' can't corrupt the
+composite history entity_code.
+
+**Atomicity hardening — the unglamorous big fix:**
+
+Every write path that touches data AND writes a history row now runs
+inside a single `db.transaction(() => ...)`. Without this, a
+history.record() failure (unknown kind, snapshot serializer bug,
+disk full) would leave the data row written without an audit row —
+violating the contract that "every meaningful write is loggable."
+Covered: people.create / update / archive / reinstate / merge,
+families.create / update / archive / reinstate / merge / split,
+dioceses.create / update / archive / reinstate,
+consents.set / setOverride / clearOverride, certifications.add.
+Two regression tests force history.record to throw and assert the
+data writes rolled back.
+
+**Medium-impact fixes:**
+
+The snapshot serializer was shallow — it base64-encoded top-level
+Buffers but missed Buffers inside nested objects (which silently
+serialized as `{}`). Rewrote `_normaliseValue` to recurse. Added
+handling for Date / BigInt / NaN / Infinity / shared (non-circular)
+references. Also strips `__proto__` / `constructor` / `prototype`
+keys defensively so a malicious PP payload can't smuggle pollution
+into a careless downstream consumer.
+
+dioceses.update accepted both camelCase and snake_case but the
+existing logic preferred camelCase only when snake_case was absent.
+That's inconsistent with the create path which checks snake_case
+first. New `_normalisePatch` helper maps `eimRenewalYears` →
+`eim_renewal_years` if snake_case is missing, and snake_case wins on
+tie-breaks. Same pattern for contactUrl / eimProgramName.
+
+PATCH /v1/dioceses was racy — the ETag read and the update read
+happened in separate transactions. Concurrent writes could slip in
+between. Fix: the If-Match check runs INSIDE the update transaction
+via a sentinel `ETAG_MISMATCH` symbol that the router maps to a 412.
+
+Webhook URL SSRF guard. The dispatcher POSTs to operator-supplied
+URLs; we used to accept anything that parsed as a URL. Loopback,
+link-local (including the cloud metadata endpoint 169.254.169.254),
+and RFC1918 hosts are now rejected at subscription time. Plain
+http:// is allowed but logs a warning — signed payloads are
+integrity-protected, not confidential, and that's the operator's
+network responsibility.
+
+Webhook dispatcher graceful shutdown. `stop()` previously cleared the
+setInterval but didn't await any in-flight delivery. A SIGTERM
+mid-fetch would orphan the request and leave the delivery row
+`pending`, triggering a re-send on next boot. `stop()` now returns
+the in-flight promise; the boot path awaits it.
+
+**False positives in the audit:**
+
+The Bearer token regex was flagged for accepting empty strings. Trace:
+`/^Bearer\s+(.+)$/i` requires at least one character after the
+whitespace, so `"Bearer "` (with no following token) doesn't match
+and the handler returns 401 with reason `no_bearer`. Not a bug.
+
+The webhook listDeliveries WHERE-clause concatenation was flagged for
+injection. The filter list is hardcoded strings ('status = ?',
+'subscription_code = ?'); user input only flows into the parameter
+binding. Safe.
+
+The "audit_log metadata field names leak PII" claim. The PATCH
+handler logs `Object.keys(body)` — the schema NAMES (firstName,
+lastName) are not PII, just identifiers for which fields changed.
+Values never reach the log. Confirmed safe by tracing the redactor.
+
+The "JSON.parse of `__proto__` pollutes Object.prototype" claim.
+Modern Node creates an own property; no pollution. Still added a
+defensive strip in the snapshot serializer for the
+`Object.assign(target, parsed)` case where a downstream consumer
+might inadvertently pull the keys in.
+
+**Final state.** 464 tests, 463 passing, 1 skipped on root. Smoke
+tested end-to-end through a full create → update → archive → history
+chain. `schema_version = 13`. The contract surface is now hardened
+against the full v0.1 + v0.2 ask plus everything the audit pass
+caught.
+
+---
+
 *End of session notes*
