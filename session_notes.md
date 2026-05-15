@@ -2503,6 +2503,15 @@ endpoint still returns the same shape, every webhook still fires,
 every idempotency replay still works. The hardening sits underneath
 the contract without altering the contract.
 
+**Shipped to main as PR #14 (2026-05-15).** Verified on the
+post-merge main tip: `_errors.js`, `rate-limit.js`,
+`security-hardening.test.js` all present; Appendix D in
+`FAMILYGRAPH_INTEGRATION.md`; PP guide at revision 2; schema v13
+with all 11 numbered migrations intact; 489 tests passing on the
+merged commit. Branch and main are content-identical post-merge —
+the apparent "4 commits behind" on the feature branch is just the
+merge commits from PRs #11–14 of this same branch.
+
 ---
 
 *End of session notes*
