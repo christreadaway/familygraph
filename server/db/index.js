@@ -19,7 +19,13 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //   9 — persons.employer / title / do_not_contact / not_living_together.
 //  10 — connector_runs table + conflicts.metadata + import_runs.trigger.
 //  11 — persons.eim_* fields + ministries / ministry_assignments tables.
-const SCHEMA_VERSION = 11;
+//  12 — ParentPoint contract: persons.kind / preferred_name_ct,
+//       families.primary_contact_person_code / communication_language,
+//       memberships.relation_label, phones.e164 / sms_consent, plus
+//       person_consents / eim_certifications / school_contexts /
+//       pp_webhook_subscriptions / pp_webhook_deliveries /
+//       pp_idempotency_keys tables.
+const SCHEMA_VERSION = 12;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

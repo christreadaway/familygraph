@@ -39,17 +39,56 @@ function attachEmailToPerson(db, personCode, emailCode, { isPrimary = false } = 
   ).run(p, e, isPrimary ? 1 : 0);
 }
 
+// Best-effort E.164 normalization. We default to US (+1) when a 10-digit
+// number arrives bare; callers can pass an explicit countryCode for other
+// regions. Returns the canonical string or null when the input has no
+// recoverable digits.
+function toE164(value, { countryCode = '1' } = {}) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  // Capture an explicit + prefix; otherwise we'll prepend the configured
+  // country code on a 10-digit "bare" North-American number.
+  const hadPlus = raw.startsWith('+');
+  const digits = raw.replace(/\D+/g, '');
+  if (!digits) return null;
+  if (hadPlus) return `+${digits}`;
+  // North-American convention: 11 digits starting with 1 → already
+  // includes the country code.
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  if (digits.length === 10) return `+${countryCode}${digits}`;
+  // Anything else: pass through with a + so we don't silently drop
+  // international numbers that already include the country code without
+  // the leading +.
+  return `+${digits}`;
+}
+
 // Phone
-function upsertPhone(db, secrets, value, { kind = 'other' } = {}) {
+function upsertPhone(db, secrets, value, { kind = 'other', smsConsent = false } = {}) {
   const norm = enc.normalizePhone(value);
   if (!norm) return null;
   const hash = enc.hmac(secrets, norm);
-  const existing = db.prepare('SELECT code FROM phones WHERE norm_hash = ?').get(hash);
-  if (existing) return existing.code;
+  const e164 = toE164(value);
+  const existing = db.prepare('SELECT code, e164, sms_consent FROM phones WHERE norm_hash = ?').get(hash);
+  if (existing) {
+    // Backfill e164 / sms_consent on existing rows when the caller supplies
+    // a more specific value. Don't downgrade an existing 'true' sms_consent
+    // to 'false' without an explicit caller signal — the doc treats consent
+    // as a deliberate per-write attribute.
+    const updates = [];
+    const params = [];
+    if (!existing.e164 && e164) { updates.push('e164 = ?'); params.push(e164); }
+    if (smsConsent && !existing.sms_consent) { updates.push('sms_consent = 1'); }
+    if (updates.length) {
+      params.push(existing.code);
+      db.prepare(`UPDATE phones SET ${updates.join(', ')} WHERE code = ?`).run(...params);
+    }
+    return existing.code;
+  }
   const code = newCode('phone');
   db.prepare(
-    `INSERT INTO phones (code, value_ct, norm_hash, kind) VALUES (?, ?, ?, ?)`
-  ).run(code, enc.encrypt(secrets, value), hash, kind);
+    `INSERT INTO phones (code, value_ct, norm_hash, kind, e164, sms_consent) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(code, enc.encrypt(secrets, value), hash, kind, e164, smsConsent ? 1 : 0);
   return code;
 }
 
@@ -61,9 +100,26 @@ function getPhone(db, secrets, code, { includePii = false } = {}) {
   return {
     code: row.code,
     kind: row.kind,
+    e164: row.e164 || null,
+    sms_consent: !!row.sms_consent,
     created_at: row.created_at,
     value: includePii ? enc.decrypt(secrets, row.value_ct) : null,
   };
+}
+
+// Update sms_consent (and optionally kind/e164) on an existing phone row.
+// Returns true if the row existed.
+function updatePhone(db, code, { kind, smsConsent } = {}) {
+  if (!isValidCode(code, 'phone')) return false;
+  const target = aliases.resolveAlias(db, code);
+  const sets = [];
+  const params = [];
+  if (kind !== undefined) { sets.push('kind = ?'); params.push(kind); }
+  if (smsConsent !== undefined) { sets.push('sms_consent = ?'); params.push(smsConsent ? 1 : 0); }
+  if (!sets.length) return false;
+  params.push(target);
+  const r = db.prepare(`UPDATE phones SET ${sets.join(', ')} WHERE code = ?`).run(...params);
+  return r.changes > 0;
 }
 
 function attachPhoneToPerson(db, personCode, phoneCode, { isPrimary = false } = {}) {
@@ -204,10 +260,12 @@ module.exports = {
   attachEmailToPerson,
   upsertPhone,
   getPhone,
+  updatePhone,
   attachPhoneToPerson,
   upsertAddress,
   getAddress,
   attachAddressToFamily,
   attachAddressToPerson,
   familyContacts,
+  toE164,
 };

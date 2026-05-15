@@ -285,7 +285,7 @@ existing **paste / file-upload** path still works exactly the same.
 The Bearer can be the master token (full access) or a per-app `sk_…` scoped
 token issued via `POST /api/keys` with one or more of the scopes
 `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`, `import`,
-`rules.write`, or `*`.
+`rules.write`, `parentpoint`, or `*`.
 
 Consuming apps SHOULD set the `X-Family-Graph-Actor` header to a short
 stable identifier (e.g. `missioniq`, `parentpoint`). It is recorded on
@@ -435,6 +435,34 @@ Input records accept both flat shapes (`first_name`, `last_name`,
 `emails[]`, `phones[]`, `address: {...}`) so the calling app passes
 through whatever its native rows look like.
 
+### ParentPoint × FamilyGraph contract (`/v1/...`)
+
+A separate, versioned API surface for the ParentPoint integration. The
+contract (read / write objects, webhook shape, idempotency rules,
+versioning) is documented in
+[`FAMILYGRAPH_INTEGRATION.md`](./FAMILYGRAPH_INTEGRATION.md); the
+as-built endpoints are summarised in Appendix A of that file.
+
+Quick sketch:
+
+- Mount point: `/v1/...`. All routes require Bearer with the
+  `parentpoint` scope (master token also works).
+- Every request should send `X-PP-Contract-Version: v0.1`. Unknown
+  versions get `426 Upgrade Required`.
+- Writes (POST / PATCH) honour `X-Request-Id` for 24-hour idempotency
+  and surface `X-FG-Idempotent-Replay: true` when a duplicate is hit.
+- GETs return ETag + `Cache-Control: max-age=30`. PATCHes honour
+  `If-Match` and return 412 on a stale token.
+- Webhooks fire from `POST /v1/persons`, `PATCH /v1/persons/:id`,
+  `POST /v1/persons/:id/photoConsent`, `POST /v1/persons/:id/eimCertifications`,
+  `POST /v1/households`, and `POST /v1/households/:id/members`. Body is
+  HMAC-signed via `X-FG-Signature: sha256=...` using each
+  subscription's stored secret.
+- Subscriptions are managed at `POST /v1/webhooks` / `GET /v1/webhooks`
+  / `DELETE /v1/webhooks/:code` and the delivery queue is visible at
+  `GET /v1/webhooks/:code/deliveries`. Disable the dispatcher with
+  `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1` for debugging.
+
 ### Auto-merge vs prompt-the-user (the matching gate)
 
 `server/identity/matching.js` ports missionIQ's scoring with one
@@ -502,6 +530,7 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
 | `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
 | `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
+| `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS` | unset | set to `1` to disable the ParentPoint webhook dispatcher (pending rows accumulate until re-enabled) |
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |
 | `FAMILY_GRAPH_LOG_FILE` | `$FAMILY_GRAPH_HOME/logs/server.log` | JSON-lines log destination (mirrored to stderr) |

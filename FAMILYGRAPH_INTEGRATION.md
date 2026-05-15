@@ -569,3 +569,156 @@ tags `source` and every identity-editing UI gates on
 `useFamilyGraphMode()`.
 
 Last updated: 2026-05-15.
+
+---
+
+## Appendix A — As-built FamilyGraph contract surface (2026-05-15)
+
+This appendix records what shipped on the FamilyGraph side against v0.1 of
+the contract. Any divergence from the spec sections above is documented
+here rather than rewritten into the body, per the convention in
+`CLAUDE.md` (PRDs are historical records of intent; the appendix records
+what shipped).
+
+### Schema additions (migration 0012)
+
+New columns on existing tables:
+
+- `persons.kind` — `'adult' | 'child' | NULL`. Pre-contract rows are
+  NULL; the operator can backfill via the existing PATCH path.
+- `persons.preferred_name_ct` — AES-256-GCM ciphertext. Surfaces as
+  `preferredName` in the §6.1 person object.
+- `families.primary_contact_person_code` — soft pointer at the primary
+  contact (the household object's `primaryContactPersonId`). Soft because
+  a merge can retire the referenced code; the API falls back to the
+  first active adult member.
+- `families.communication_language` — ISO-639-1 short code. Default `en`.
+  Surfaces as `communicationLanguage`.
+- `memberships.relation_label` — finer-grained label than the existing
+  `role` bucket: `mother | father | step_parent | guardian | grandparent
+  | other | child`. Lets the household members[] round-trip without
+  losing the mother-vs-father distinction.
+- `phones.e164` — canonical `+15125550101` representation. Existing rows
+  get e164 populated lazily on the next write that touches the row.
+- `phones.sms_consent` — per-phone SMS opt-in. Surfaces inside the
+  phones[] array of the person object.
+
+New tables:
+
+- `person_consents` — photo + directory consent per person. Lazy-created
+  on first set; missing rows read as the contract default `'allow'` for
+  both fields. `person_consents.updated_at` feeds the changed-since
+  endpoint.
+- `eim_certifications` — history of safe-environment certs per person.
+  The existing `persons.eim_*` columns continue to hold the "current"
+  cert pointer for the expiring-soon dashboard view; the new table
+  preserves the audit trail of every renewal.
+- `school_contexts` — PP-pushed enrichment snapshots, unique per
+  `(person_code, school_id)`. POSTs overwrite (the doc treats activities
+  as current state, not a log).
+- `pp_webhook_subscriptions` / `pp_webhook_deliveries` — registered PP
+  endpoints + per-attempt delivery rows with exponential backoff. Same
+  retry shape as the existing notifications queue.
+- `pp_idempotency_keys` — `X-Request-Id` dedupe cache. 24-hour TTL per
+  the contract; lazy expiry on lookup, sweep every 6h.
+
+### HTTP surface
+
+Mounted at `/v1/...`. All routes require Bearer auth with the new
+`parentpoint` scope (master token also works). The router lives in
+`server/api/parentpoint.js`; helper modules under `server/parentpoint/`:
+`objects`, `consents`, `certifications`, `schoolContext`, `webhooks`,
+`changes`, `etag`, `idempotency`.
+
+| Verb + path | Purpose | Notes |
+|---|---|---|
+| `GET /v1/persons?email=` | Lookup by email | Normalised hash match |
+| `GET /v1/persons/changed?since=` | Incremental pull | `since` is ISO-8601 |
+| `GET /v1/persons/:personId` | Hydrate one person | ETag + `Cache-Control: max-age=30` |
+| `GET /v1/persons/:personId/schoolContext` | Read snapshot(s) | `?schoolId=` for one |
+| `GET /v1/persons/:personId/consent` | Read consent | Defaults applied |
+| `POST /v1/persons` | Suggest a new identity | Body accepts both PP shape and FG shape |
+| `PATCH /v1/persons/:personId` | Update contact fields | Honors `If-Match` (412 on mismatch) |
+| `POST /v1/persons/:personId/photoConsent` | Update consent | Emits `consent.updated` webhook |
+| `POST /v1/persons/:personId/eimCertifications` | Add/extend EIM cert | Promotes to current when later than existing |
+| `POST /v1/persons/:personId/schoolContext` | Enrichment snapshot upsert | Overwrites previous snapshot |
+| `GET /v1/households?personId=` | Find a person's household | First active membership |
+| `GET /v1/households/changed?since=` | Incremental pull | Includes families with merged-in updates |
+| `GET /v1/households/:householdId` | Render the household | ETag + Cache-Control |
+| `POST /v1/households` | Suggest a new household | Optional members[] at create time |
+| `POST /v1/households/:id/members` | Add a member | Bumps family.updated_at |
+| `POST /v1/webhooks` | Subscribe a PP webhook URL | Body: `{ url, secret, events?, schoolHint? }` |
+| `GET /v1/webhooks` | List subscriptions | |
+| `DELETE /v1/webhooks/:code` | Unsubscribe | Cascades pending deliveries |
+| `GET /v1/webhooks/:code/deliveries` | Recent attempt rows | Filter `?status=` |
+
+Per-request middleware:
+
+- `X-PP-Contract-Version` is recorded on every call. Unknown values
+  return `426 Upgrade Required`; missing values are accepted and logged
+  (some early PP clients won't set the header).
+- `X-Source-App` / `X-Source-Tenant` are recorded on writes. Tenant doubles
+  as the school-hint when fanning out webhook deliveries — only
+  subscriptions that match the hint or have no hint receive the event.
+- `X-Request-Id` triggers idempotency dedupe on POST/PATCH. A second
+  request with the same id within 24h replays the cached response and
+  sets `X-FG-Idempotent-Replay: true`.
+- GET responses set `ETag` (weak validator, sha-256 of stable JSON) and
+  `Cache-Control`.
+- PATCH compares `If-Match` against the current ETag. Mismatch → 412.
+
+### Webhook emission
+
+POSTs the §6.5 body shape to every matching subscription:
+
+```
+POST <subscription.url>
+Headers:
+  Content-Type: application/json
+  X-FG-Signature: sha256=<HMAC-SHA256(secret, body)>
+  X-FG-Contract-Version: v0.1
+  User-Agent: familygraph-webhook/0.1
+```
+
+Triggered by:
+
+- `POST /v1/persons` and `PATCH /v1/persons/:id` → `person.updated`
+- `POST /v1/persons/:id/photoConsent` → `consent.updated`
+- `POST /v1/persons/:id/eimCertifications` → `person.updated`
+- `POST /v1/households` → `household.updated`
+- `POST /v1/households/:id/members` → `household.updated`
+
+Delivery semantics mirror the existing notifications queue: 5 attempts,
+exponential backoff (30s / 2m / 10m / 1h / 6h). Dispatcher runs once per
+60s in the background; disable with `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1`.
+
+### Authentication
+
+A new `parentpoint` scope on the existing per-app key surface
+(`server/auth/api-keys.js`). Provision a key with that scope and PP
+calls go through; the master token continues to work. mTLS (Q3) is not
+implemented in v0.1; the signed-webhook + scoped-bearer combination is
+the v0.1 answer.
+
+### What's deliberately NOT in scope yet
+
+- The conflict-resolution UI for §7.4 (`schools/{sid}/familygraph_conflicts`
+  in PP, `/admin/familygraph-conflicts` UI). FamilyGraph already has a
+  conflict queue at `/api/conflicts` — wiring "PP detected a divergence"
+  rows into it is a follow-up.
+- `do_not_photo` per-school override (§11 Q5). The current consent table
+  is single-tenant; the per-school override needs a join table that the
+  product team hasn't decided on.
+- Diocese-as-source-of-truth for EIM (§11 Q6). FamilyGraph caches the
+  certification payload as PP sends it; the diocesan integration is a
+  separate workstream.
+- `person.deleted` / `household.deleted` webhook emission. Both are
+  defined in the contract but FamilyGraph never deletes today (status
+  flips to `'archived'` or `'merged'`). When the archive workflow ships,
+  the emission point will be wired to it.
+
+### Test count
+
+Migration 0012 + the contract surface + scenario tests added 80 cases.
+The full suite went from 310 → 390 passing (1 skipped on root, as before).
+

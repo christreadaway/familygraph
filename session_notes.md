@@ -1911,4 +1911,155 @@ empty-state branching, before considering the UI audit closed.
 
 ---
 
+## v12 — ParentPoint × FamilyGraph contract (Claude Code, 2026-05-15)
+
+The operator dropped `FAMILYGRAPH_INTEGRATION.md` (v0.1, May 2026) into
+the repo with one ask: build comprehensively against it. That doc reads
+from ParentPoint's perspective - "FG must expose endpoints A, B, C; FG
+must accept POSTs of shape X, Y, Z; FG must emit webhooks of shape W."
+The job was to make every one of those things real on the FamilyGraph
+side without breaking anything in the existing repo.
+
+**What shipped, top to bottom.**
+
+Migration 0012. New columns on `persons` (`kind`, `preferred_name_ct`),
+`families` (`primary_contact_person_code`, `communication_language`),
+`memberships` (`relation_label`), `phones` (`e164`, `sms_consent`). New
+tables for `person_consents`, `eim_certifications`, `school_contexts`,
+`pp_webhook_subscriptions`, `pp_webhook_deliveries`, and
+`pp_idempotency_keys`. Both `schema.sql` (the bootstrap path for fresh
+installs) and the numbered migration (the upgrade path for existing
+deploys) carry the changes; `SCHEMA_VERSION` bumped 11 → 12.
+
+Eight helper modules under `server/parentpoint/`: `objects` (FG row →
+PP shape converters for the §6.1/§6.2/§6.3 objects), `consents`
+(photo + directory CRUD with defaults), `certifications` (EIM history
+that promotes a later cert to "current" but never demotes a still-valid
+one when an expired-historical backfill arrives), `schoolContext`
+(upsert keyed by (person, school) per §7.3), `webhooks` (subscription
+store, HMAC-SHA256 signature over the body, exponential backoff
+mirroring `server/notify`), `changes` (the `/changed?since=` queries
+that drive PP's hourly catch-up cron), `etag` (deterministic weak
+validator on stable JSON, plus `If-Match` matching), `idempotency`
+(`X-Request-Id` 24h dedupe with lazy expiry on lookup).
+
+The HTTP surface lives in `server/api/parentpoint.js` and mounts at
+`/v1/...`. 17 endpoints covering every verb-path pair in §6.4 and §7.1
+of the contract, plus webhook subscription management. Per-request
+middleware enforces the contract version header (426 on unknown
+versions, accepted-with-log on missing), replays idempotent responses
+on duplicate `X-Request-Id`, computes ETags on GETs, validates
+`If-Match` on PATCHes. A new `parentpoint` scope on the per-app key
+surface gates the whole router; the master token continues to work.
+
+Webhook dispatcher boots in `server/index.js` alongside the
+notifications dispatcher and the connector scheduler. Fires once at
+boot, then every 60s; disable with `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1`.
+Idempotency-key sweeper runs every 6h as belt-and-suspenders cleanup
+for rows that never get queried again after their TTL.
+
+**Decisions that aren't in the doc and need to be remembered.**
+
+The contract uses `personId` like `fg_p_01HQX...` (a ULID with a
+prefix); FG already issues codes like `p_a7b3c91d`. The two formats
+aren't compatible. Decision: `personId = p_xxxxxxxx`. PP stores
+whatever FG returns. The doc's example IDs are illustrative; the
+contract's "FamilyGraph-issued, immutable" requirement is satisfied by
+the existing identifier scheme.
+
+PP roles (`mother | father | step_parent | guardian | grandparent |
+other | child`) don't match FG memberships.role (`parent | child |
+guardian | grandparent | spouse | other_adult | head | member`). Added
+`memberships.relation_label` for the finer-grained PP label; kept
+`role` as the bucket the resolver and family-list views care about.
+Inbound writes always set both columns; outbound responses prefer the
+label, fall back through the role bucket when the label is null
+(pre-contract memberships).
+
+Phones grew an `e164` column. `normalizePhone` already strips to
+digits; the new `toE164` helper produces the canonical "+15125550101"
+representation. North-American convention (10 digits → +1; 11 digits
+starting with 1 → +1; explicit + → pass through) covers v0.1. For
+international roll-out the helper takes an explicit `countryCode`
+parameter so callers can override per-row.
+
+Consents default to `'allow'` for both fields when no row exists.
+The doc doesn't say what to do for an un-configured person; default to
+allow leaks the least information ("we don't have a flag here, treat
+as the permissive case") and matches the bulk-import workflow where
+PP would have to flip every legacy person to `'deny'` if the default
+flipped the other way.
+
+EIM cert promotion. The new history table records every renewal; the
+existing `persons.eim_*` columns hold the "current" cert pointer so
+the expiring-soon dashboard keeps working without joining a new table.
+Promotion rules: a new cert with a later `expires_on` always promotes;
+a new `'expired'` row (historical backfill) never demotes a still-
+valid cert; a `'pending'` row promotes only when the current pointer
+is `'expired'` or null. This last rule is the only piece that's not in
+the doc verbatim - the doc says "add/extend" and leaves the precedence
+implicit. Wrote it down explicitly here so the rule is the contract.
+
+`person.deleted` and `household.deleted` webhook events are defined
+in the contract but never fire today. FamilyGraph doesn't delete; it
+flips `status` to `'archived'` or `'merged'`. The fanout point will
+be wired to the archive workflow once that exists - tracked in the
+Appendix's "deliberately not in scope" section. The same applies to
+the `/admin/familygraph-conflicts` UI in §7.4: FG already has a
+conflict queue, but routing PP-detected divergences into it is a
+follow-up.
+
+**Bugs caught during the build.**
+
+The `eim.deriveExpiration` helper reads `eim_completed_on`/
+`eim_expires_on` keys (the column names). The contract uses the shorter
+`completed_on`/`expires_on`. First pass of `certifications.add` passed
+the raw input through and the renewal-years auto-fill never kicked in.
+Fix was to mirror both key shapes into the `aliased` patch before
+calling `deriveExpiration`. The test
+`certifications > add auto-derives expiration from renewal years
+setting` covers this exact case.
+
+Idempotency capture reads `res.statusCode` inside the wrapped
+`res.json` rather than at middleware-install time. Express's
+`.status(code)` is always called before `.json(body)`, so reading
+inside the wrapper picks up 412/400/201 alike. Tested with both the
+If-Match 412 path and the create 201 path; the recorded row matches
+the wire status in both.
+
+The change-feed query uses a strict `>` predicate on both branches of
+the `UNION` (persons.updated_at and person_consents.updated_at) so the
+boundary case "row updated at exactly the cursor timestamp" is
+excluded - otherwise the caller would get every record once per
+poll. The test for the changed-since endpoint uses a 2ms sleep
+between the boundary write and the comparison write so the second
+timestamp is strictly greater than the cursor.
+
+**Test count moved 310 → 390** (+80 new). One skip remains conditional
+on running as root (the EACCES test from v11). All new tests use the
+same `newDb()`/`newSecrets()` harness; no new test dependencies.
+
+**What I did not do.**
+
+No client-side UI yet. The contract is purely server-to-server in
+v0.1, and the existing dashboard doesn't reference any of the new
+tables. When the operator wants visibility into the webhook queue or
+the consent overrides, those pages will go in
+`client/src/views/` and use the same Bearer pattern as the existing
+admin surfaces.
+
+No `mTLS` between repos (§11 Q3). The doc lists mTLS as an open
+question; for v0.1 the answer is the existing Bearer + signed
+webhooks combination. Revisit when the PP repo is concrete enough to
+share certificate infrastructure with.
+
+No backwards-compat shim for old PP clients that don't send
+`X-PP-Contract-Version`. Decided on accept-with-log because the
+contract is v0.1 and the doc itself says "every FG API call PP makes
+WILL include the header" - the FG side is allowed to assume that
+forward. Logged warnings make the gap visible without breaking the
+honest path during early integration.
+
+---
+
 *End of session notes*

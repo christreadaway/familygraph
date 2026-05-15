@@ -17,6 +17,7 @@ function row2person(row, secrets, { includePii }) {
     merged_into: row.merged_into,
     tags,
     grade: row.grade || null,
+    kind: row.kind || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -44,6 +45,7 @@ function row2person(row, secrets, { includePii }) {
     given_name: enc.decrypt(secrets, row.given_name_ct),
     family_name: enc.decrypt(secrets, row.family_name_ct),
     middle_name: enc.decrypt(secrets, row.middle_name_ct),
+    preferred_name: enc.decrypt(secrets, row.preferred_name_ct),
     prefix: enc.decrypt(secrets, row.prefix_ct),
     suffix: enc.decrypt(secrets, row.suffix_ct),
     display_name: enc.decrypt(secrets, row.display_name_ct),
@@ -57,6 +59,14 @@ function row2person(row, secrets, { includePii }) {
     not_living_together: !!row.not_living_together,
     eim_notes: enc.decrypt(secrets, row.eim_notes_ct),
   };
+}
+
+const KIND_VALUES = new Set(['adult', 'child']);
+function normalizeKind(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const s = String(v).toLowerCase();
+  if (!KIND_VALUES.has(s)) throw new Error(`invalid kind: ${v}`);
+  return s;
 }
 
 const EIM_STATUSES = new Set(['pending', 'certified', 'expired']);
@@ -94,20 +104,22 @@ function create(db, secrets, input) {
   const eimStatus = normalizeEimStatus(enriched.eim_status);
   const eimCompleted = normalizeIsoDate(enriched.eim_completed_on);
   const eimExpires = normalizeIsoDate(enriched.eim_expires_on);
+  const kind = normalizeKind(input.kind);
   const stmt = db.prepare(
     `INSERT INTO persons (
-       code, given_name_ct, family_name_ct, middle_name_ct, prefix_ct, suffix_ct,
+       code, given_name_ct, family_name_ct, middle_name_ct, preferred_name_ct, prefix_ct, suffix_ct,
        display_name_ct, given_name_hash, family_name_hash,
        date_of_birth_ct, gender_ct, notes_ct,
        employer_ct, title_ct, do_not_contact, do_not_contact_reason_ct, not_living_together,
-       eim_status, eim_completed_on, eim_expires_on, eim_notes_ct
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       eim_status, eim_completed_on, eim_expires_on, eim_notes_ct, kind
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   stmt.run(
     code,
     enc.encrypt(secrets, input.given_name),
     enc.encrypt(secrets, input.family_name),
     enc.encrypt(secrets, input.middle_name),
+    enc.encrypt(secrets, input.preferred_name),
     enc.encrypt(secrets, input.prefix),
     enc.encrypt(secrets, input.suffix),
     enc.encrypt(secrets, display),
@@ -125,6 +137,7 @@ function create(db, secrets, input) {
     eimCompleted,
     eimExpires,
     enc.encrypt(secrets, input.eim_notes),
+    kind,
   );
   return code;
 }
@@ -163,6 +176,7 @@ function update(db, secrets, code, patch) {
     given_name: 'given_name' in patch ? patch.given_name : enc.decrypt(secrets, existing.given_name_ct),
     family_name: 'family_name' in patch ? patch.family_name : enc.decrypt(secrets, existing.family_name_ct),
     middle_name: 'middle_name' in patch ? patch.middle_name : enc.decrypt(secrets, existing.middle_name_ct),
+    preferred_name: 'preferred_name' in patch ? patch.preferred_name : enc.decrypt(secrets, existing.preferred_name_ct),
     prefix: 'prefix' in patch ? patch.prefix : enc.decrypt(secrets, existing.prefix_ct),
     suffix: 'suffix' in patch ? patch.suffix : enc.decrypt(secrets, existing.suffix_ct),
     date_of_birth: 'date_of_birth' in patch ? patch.date_of_birth : enc.decrypt(secrets, existing.date_of_birth_ct),
@@ -184,20 +198,22 @@ function update(db, secrets, code, patch) {
   const eimNotesCt = 'eim_notes' in patch
     ? enc.encrypt(secrets, patch.eim_notes)
     : existing.eim_notes_ct;
+  const kind = 'kind' in patch ? normalizeKind(patch.kind) : (existing.kind || null);
   const display = patch.display_name || buildDisplayName(merged);
   db.prepare(
     `UPDATE persons SET
-       given_name_ct = ?, family_name_ct = ?, middle_name_ct = ?, prefix_ct = ?,
+       given_name_ct = ?, family_name_ct = ?, middle_name_ct = ?, preferred_name_ct = ?, prefix_ct = ?,
        suffix_ct = ?, display_name_ct = ?, given_name_hash = ?, family_name_hash = ?,
        date_of_birth_ct = ?, gender_ct = ?, notes_ct = ?,
        employer_ct = ?, title_ct = ?, do_not_contact = ?, do_not_contact_reason_ct = ?, not_living_together = ?,
-       eim_status = ?, eim_completed_on = ?, eim_expires_on = ?, eim_notes_ct = ?,
+       eim_status = ?, eim_completed_on = ?, eim_expires_on = ?, eim_notes_ct = ?, kind = ?,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
      WHERE code = ?`
   ).run(
     enc.encrypt(secrets, merged.given_name),
     enc.encrypt(secrets, merged.family_name),
     enc.encrypt(secrets, merged.middle_name),
+    enc.encrypt(secrets, merged.preferred_name),
     enc.encrypt(secrets, merged.prefix),
     enc.encrypt(secrets, merged.suffix),
     enc.encrypt(secrets, display),
@@ -215,8 +231,20 @@ function update(db, secrets, code, patch) {
     eimCompleted,
     eimExpires,
     eimNotesCt,
+    kind,
     target
   );
+  return target;
+}
+
+// Helper used by the ParentPoint contract layer (and other write paths) to
+// bump `updated_at` without changing any other column. Surfaced as a public
+// API so callers don't have to embed strftime in their own SQL.
+function touchUpdatedAt(db, code) {
+  const target = aliases.resolveAlias(db, code);
+  db.prepare(
+    `UPDATE persons SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+  ).run(target);
   return target;
 }
 
@@ -275,4 +303,4 @@ function merge(db, secrets, loserCode, winnerCode) {
   return winner;
 }
 
-module.exports = { create, get, list, findByName, update, merge };
+module.exports = { create, get, list, findByName, update, merge, touchUpdatedAt };

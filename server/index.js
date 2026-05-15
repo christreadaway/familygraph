@@ -38,6 +38,9 @@ const buildConnectors = require('./api/connectors');
 const buildMinistries = require('./api/ministries');
 const connectorScheduler = require('./connectors/scheduler');
 const eim = require('./identity/eim');
+const buildParentPointApi = require('./api/parentpoint');
+const ppWebhooks = require('./parentpoint/webhooks');
+const ppIdempotency = require('./parentpoint/idempotency');
 
 // method2scope: chooses one of two scoped middlewares depending on the HTTP
 // method. GET/HEAD use the read middleware; everything else uses the write
@@ -71,6 +74,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   const bearerImport = auth.bearerAuth(secrets, { db, scope: 'import' });
   const bearerRulesWrite = auth.bearerAuth(secrets, { db, scope: 'rules.write' });
   const bearerMaster = auth.bearerAuth(secrets, { db, scope: '*' });
+  const bearerParentPoint = auth.bearerAuth(secrets, { db, scope: 'parentpoint' });
   const loopback = auth.loopbackOnly();
 
   // Health (open).
@@ -108,6 +112,14 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   // Volunteer ministries + EIM. Reads are gated on pii.read because per-
   // assignment notes can contain operator commentary; writes need pii.write.
   app.use('/api/ministries', method2scope(bearerRead, bearerWrite), buildMinistries({ db, secrets, includePii: true }));
+
+  // ParentPoint × FamilyGraph contract surface (FAMILYGRAPH_INTEGRATION.md
+  // v0.1). All routes live under /v1/... so the URL shape matches the
+  // contract verbatim and PP integrations don't have to remember a
+  // distinct "FG-side" prefix. Single dedicated scope so an operator can
+  // issue a scoped key to ParentPoint without granting it the full PII
+  // surface.
+  app.use('/v1', bearerParentPoint, buildParentPointApi({ db, secrets }));
 
   // Static client (built React UI).
   const clientDir = path.join(__dirname, '..', 'client', 'dist');
@@ -228,6 +240,28 @@ function start() {
     log.error('connector.scheduler.start_failed', { message: e.message, stack: e.stack });
   }
 
+  // ParentPoint webhook dispatcher. Picks up pending pp_webhook_deliveries
+  // rows and fires HTTP POSTs with signed payloads. Disable via
+  // FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1 — useful for tests and for
+  // operators who want to debug the queue manually.
+  let ppWebhookDispatcher = null;
+  if (process.env.FAMILY_GRAPH_DISABLE_PP_WEBHOOKS !== '1') {
+    try {
+      ppWebhookDispatcher = ppWebhooks.start(db, secrets, { intervalMs: 60_000 });
+    } catch (e) {
+      log.error('pp_webhook.dispatcher.start_failed', { message: e.message, stack: e.stack });
+    }
+  }
+
+  // Idempotency-key sweeper. Runs every 6h. The lookup path lazily expires
+  // its own row on read so steady-state pressure stays bounded; this sweep
+  // is the belt-and-suspenders cleanup for the long tail of rows that
+  // never get queried again.
+  const idemSweep = setInterval(() => {
+    try { ppIdempotency.sweep(db); } catch (_) { /* ignore */ }
+  }, 6 * 60 * 60 * 1000);
+  idemSweep.unref();
+
   let watcher = null;
   if (process.env.FAMILY_GRAPH_DISABLE_WATCH !== '1') {
     try {
@@ -250,6 +284,8 @@ function start() {
   function shutdown() {
     if (watcher) watcher.close();
     if (connectorSched && connectorSched.stop) connectorSched.stop();
+    if (ppWebhookDispatcher && ppWebhookDispatcher.stop) ppWebhookDispatcher.stop();
+    clearInterval(idemSweep);
     server.close(() => process.exit(0));
   }
   process.on('SIGINT', shutdown);

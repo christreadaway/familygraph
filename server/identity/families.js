@@ -15,6 +15,8 @@ function row2family(row, secrets, { includePii }) {
     status: row.status,
     merged_into: row.merged_into,
     tags,
+    primary_contact_person_code: row.primary_contact_person_code || null,
+    communication_language: row.communication_language || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -72,9 +74,35 @@ function update(db, secrets, code, patch) {
   if (!row) return null;
   const display = 'display_name' in patch ? patch.display_name : enc.decrypt(secrets, row.display_name_ct);
   const notes = 'notes' in patch ? patch.notes : enc.decrypt(secrets, row.notes_ct);
+  const primary = 'primary_contact_person_code' in patch
+    ? patch.primary_contact_person_code
+    : (row.primary_contact_person_code || null);
+  const lang = 'communication_language' in patch
+    ? (patch.communication_language || null)
+    : (row.communication_language || null);
   db.prepare(
-    `UPDATE families SET display_name_ct = ?, notes_ct = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
-  ).run(enc.encrypt(secrets, display), enc.encrypt(secrets, notes), target);
+    `UPDATE families SET display_name_ct = ?, notes_ct = ?,
+         primary_contact_person_code = ?, communication_language = ?,
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE code = ?`
+  ).run(
+    enc.encrypt(secrets, display),
+    enc.encrypt(secrets, notes),
+    primary,
+    lang,
+    target
+  );
+  return target;
+}
+
+// Bump updated_at without changing any other column. Used by the
+// ParentPoint contract layer when a linked person / consent / membership
+// changes — the household-changed feed needs to surface the family.
+function touchUpdatedAt(db, code) {
+  const target = aliases.resolveAlias(db, code);
+  db.prepare(
+    `UPDATE families SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+  ).run(target);
   return target;
 }
 
@@ -97,6 +125,7 @@ function members(db, secrets, code, { activeOnly = true, includePii = false } = 
     membership_code: r.code,
     person_code: r.person_code,
     role: r.role,
+    relation_label: r.relation_label || null,
     custody: r.custody,
     started_at: r.started_at,
     ended_at: r.ended_at,
@@ -125,13 +154,13 @@ function members(db, secrets, code, { activeOnly = true, includePii = false } = 
   }));
 }
 
-function addMember(db, secrets, familyCode, personCode, { role = 'member', custody = null } = {}) {
+function addMember(db, secrets, familyCode, personCode, { role = 'member', custody = null, relationLabel = null } = {}) {
   const family = aliases.resolveAlias(db, familyCode);
   const person = aliases.resolveAlias(db, personCode);
   const code = newCode('membership');
   db.prepare(
-    `INSERT INTO memberships (code, family_code, person_code, role, custody) VALUES (?, ?, ?, ?, ?)`
-  ).run(code, family, person, role, custody);
+    `INSERT INTO memberships (code, family_code, person_code, role, relation_label, custody) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(code, family, person, role, relationLabel, custody);
   return code;
 }
 
@@ -214,4 +243,4 @@ function split(db, secrets, familyCode, personCodes, { displayName = null, notes
   return newFamily;
 }
 
-module.exports = { create, get, list, update, members, addMember, endMembership, merge, split };
+module.exports = { create, get, list, update, members, addMember, endMembership, merge, split, touchUpdatedAt };
