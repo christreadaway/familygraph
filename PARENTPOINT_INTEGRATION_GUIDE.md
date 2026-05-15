@@ -1,5 +1,8 @@
 # ParentPoint × FamilyGraph — Implementation Guide
 
+**Date:** 2026-05-15
+**Revision:** 1 (initial)
+
 **Audience:** the ParentPoint engineer wiring the FamilyGraph
 connector. Read `FAMILYGRAPH_INTEGRATION.md` first for the contract
 itself; this doc walks through how to actually implement against it.
@@ -11,7 +14,6 @@ hub).
 **Versions covered:**
 - Contract: `X-PP-Contract-Version: v0.1`
 - FamilyGraph schema: `v13`
-- This guide: 2026-05-15
 
 ---
 
