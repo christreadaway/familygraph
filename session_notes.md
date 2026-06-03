@@ -623,59 +623,29 @@ Operator workflow on first boot:
 
 ---
 
-## Rename: Sanctus → Family Graph (Claude Code, 2026-04-28, continued)
+## Rename to Family Graph (Claude Code, 2026-04-28, continued)
 
-The product is no longer called Sanctus. It is **Family Graph**. Clean break,
+The product is no longer called by its earlier codename. It is **Family Graph**. Clean break,
 no backward-compat aliases — the product is pre-production and has no
 external integrations yet, so a hard rename is cheaper than a
 deprecation period.
 
 ### Surface area touched
 
-- **CLI:** `bin/sanctus.js` → `bin/family-graph.js`. `package.json#bin` now
-  publishes `family-graph`. The catch-all `npm` aliases in `package.json`
-  (`rotate-secret`, `backup`, `restore`) were repointed at
-  `bin/family-graph.js` since the original separate `bin/rotate-secret.js`
-  / `bin/backup.js` / `bin/restore.js` files never existed; a `status`
-  alias was added.
-- **Environment variables:** `SANCTUS_*` → `FAMILY_GRAPH_*` across the
-  server, the CLI, the README, and tests:
-    `FAMILY_GRAPH_HOME`, `FAMILY_GRAPH_DB`, `FAMILY_GRAPH_SECRET`, `FAMILY_GRAPH_PORT`,
-    `FAMILY_GRAPH_BIND`, `FAMILY_GRAPH_WATCH_DIR`, `FAMILY_GRAPH_OUT_DIR`,
-    `FAMILY_GRAPH_AUTO_MERGE`, `FAMILY_GRAPH_REVIEW`, `FAMILY_GRAPH_DISABLE_WATCH`,
-    `FAMILY_GRAPH_WATCH_PROCESS_EXISTING`, `FAMILY_GRAPH_DISABLE_NOTIFY`,
-    `FAMILY_GRAPH_POSTMARK_TOKEN`, `FAMILY_GRAPH_ENV`.
-- **Default filesystem paths:** `~/.sanctus/` → `~/.family-graph/`. The
-  default DB filename is now `family-graph.sqlite`. The encrypted backup
-  extension is now `.family-graph-backup` (magic header bytes
-  `FGRAPH01`). Existing `.sanctus-backup` files would no longer
-  decrypt — fine, since none have been issued in production.
-- **HTTP header:** `X-Sanctus-Actor` → `X-Family-Graph-Actor`. Apps that
-  identify themselves to the audit log set the new header.
-- **Email subjects:** `[Sanctus]` → `[Family Graph]`. Body signature line
-  updated. The deep link in templates points to `dashboard_url` as
-  before; only the brand text changes.
-- **Dashboard:** sidebar `<h1>Family Graph</h1>`, `<title>Family Graph</title>`,
-  token-banner copy, and the "X is running" splash all updated.
-- **Documentation:** README, `business_spec.md`, `product_spec.md`,
-  `session_notes.md`, and `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md`
-  now read "Family Graph" throughout.
-- **Source comments:** every `// Family Graph …` and SQL header comment
-  swapped. Audit-log header comment swapped.
-- **Lock files:** both `package-lock.json` and
-  `client/package-lock.json` regenerated so the package name in
-  the lock matches the new `name` field.
+The rename swept the CLI binary (`bin/family-graph.js`, plus the
+`rotate-secret` / `backup` / `restore` / `status` npm aliases), every
+environment variable (now `FAMILY_GRAPH_*`), the default home
+(`~/.family-graph/`), the `family-graph.sqlite` database, the encrypted-backup
+extension `.family-graph-backup` (magic header `FGRAPH01`), the audit-actor
+header (`X-Family-Graph-Actor`), email subjects (`[Family Graph]`), the
+dashboard chrome, both lock files, and all docs and source comments.
 
 ### Verification
 
 - 139 / 139 `node:test` cases still pass after the rename.
-- End-to-end smoke: `npm start`, `node bin/family-graph.js status`, `health`
-  endpoint, scoped-token issuance, queued notification (subject
-  `[Family Graph] Test notification`), and the `X-Family-Graph-Actor` header all
+- End-to-end smoke: `npm start`, `node bin/family-graph.js status`, the
+  `health` endpoint, scoped-token issuance, and a queued notification all
   exercise cleanly.
-- `grep -rIl --exclude-dir=node_modules --exclude-dir=.git
-  --exclude-dir=dist 'sanctus\|Sanctus\|SANCTUS' .` returns zero
-  matches.
 
 ---
 
@@ -707,41 +677,26 @@ The 139-case `node:test` suite continues to pass after these changes.
 
 ---
 
-## Rename: Custos → Family Graph + structured logging (Claude Code, 2026-04-28, continued)
+## Rename to Family Graph + structured logging (Claude Code, 2026-04-28, continued)
 
-Operator renamed the product. Clean break, same as the Sanctus → Custos
-swap before it. Also added structured logging because the operator hit
+Operator renamed the product again. Clean break, same as the earlier
+rename before it. Also added structured logging because the operator hit
 an unfixable-from-the-UI auth issue (stale token in browser localStorage
 masking a fresh paste) and we couldn't see why from the server side.
 
 ### Rename surface
 
-- CLI: `bin/custos.js` → `bin/family-graph.js`. `package.json#bin`
-  publishes `family-graph`.
-- Env vars: every `CUSTOS_*` → `FAMILY_GRAPH_*` plus two new ones for
-  logging (`_LOG_LEVEL`, `_LOG_FILE`).
-- Default home: `~/.custos` → `~/.family-graph`.
-- DB filename: `custos.sqlite` → `family-graph.sqlite`.
-- Backup magic: `CUSTOS1` → `FGRAPH01`.
-- HTTP header: `X-Custos-Actor` → `X-Family-Graph-Actor`.
-- Email subjects: `[Custos]` → `[Family Graph]`.
-- Dashboard: `<title>`, sidebar `<h1>`, token banner.
-- localStorage key: `custos.bearer` → `family-graph.bearer` — which
-  conveniently fixed the operator's stuck-on-stale-token issue, since
-  the browser starts fresh under the new key.
-- Docs: README, business_spec, product_spec, session_notes,
-  ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.
-- The git-clone URL in the README still points at
-  `github.com/christreadaway/custos.git` because the GitHub repo wasn't
-  renamed; we clone it into a `family-graph` working copy.
+Same mechanical sweep as the first rename: the CLI, every `FAMILY_GRAPH_*` env
+var (plus new `_LOG_LEVEL` / `_LOG_FILE`), the default home, the
+`family-graph.sqlite` DB, the `FGRAPH01` backup header, the
+`X-Family-Graph-Actor` header, email subjects, dashboard chrome, the
+dashboard's `family-graph.bearer` localStorage key, and the docs. Rotating the
+localStorage key incidentally fixed the operator's stuck-on-stale-token issue,
+since the browser starts fresh under the new key.
 
-Two sed artifacts cleaned up after the bulk replace:
-
-- `X-Custos-Actor` had become `X-Family Graph-Actor` (broken hyphen +
-  space). Restored to `X-Family-Graph-Actor`.
-- `nssm install Custos …` had become `nssm install Family Graph …` —
-  service name with a space breaks NSSM's argument parsing. Switched
-  to `family-graph` (kebab) for the service name.
+Two lessons worth keeping: a service name with a space breaks NSSM's argument
+parsing (use the kebab `family-graph`), and a careless bulk find-replace can
+mangle the hyphenated `X-Family-Graph-Actor` header - check it afterward.
 
 ### Structured logging
 
@@ -998,8 +953,8 @@ Audit of all five `.md` files at the end of the session.
   `/api/import/fetch-sheet`, `/api/imports`, `/api/imports/:code`,
   `/api/conflicts/assign`, `/api/notifications/*`, `/api/keys`. Logging
   section + cross-platform notes + env-var table all current.
-- **business_spec.md**: branded as Family Graph; no stale Sanctus or
-  Custos references. The "Family Graph does NOT do donor analysis"
+- **business_spec.md**: branded as Family Graph; no stale legacy-codename
+  references. The "Family Graph does NOT do donor analysis"
   posture remains accurate — we ingest donation files identity-only,
   no amounts persisted.
 - **session_notes.md**: ten dated entries from v1 build through this
@@ -2582,77 +2537,52 @@ proceed) in a clean checkout.
 
 ---
 
-## De-brand for open source: portfolio names out, Apache-2.0 in (Claude Code, 2026-06-03)
+## Open-source prep: de-brand + relicense (Claude Code, 2026-06-03)
 
-Operator is open-sourcing Family Graph. Two jobs: scrub every proprietary
-brand name, and add real attribution + a license.
+Prepared the repo for a public release. Two jobs: strip proprietary product
+names out of the codebase and docs, and add a real license plus author
+attribution.
 
-The important realization was architectural, not cosmetic. The `/v1` surface
-was filed under a `parentpoint` namespace as if Family Graph carried per-app
-integration code. It doesn't. Webhooks, idempotency, ETags, consents,
-certifications, school-context, the changed feed, dioceses - all of it is
-generic hub machinery that any app exercises. So this wasn't a rename to a new
-brand; it was de-branding the contract into Family Graph's own public
-Integration API, which is how the code was already organized underneath.
+The substantive part was architectural, not cosmetic. The `/v1` surface had
+been organized under a single consumer app's namespace, as if Family Graph
+carried per-app integration code. It doesn't - webhooks, idempotency, ETags,
+consents, certifications, school-context, the changed feed, and dioceses are
+all generic hub machinery that any app exercises. So the fix wasn't a rename to
+a different brand; it was re-framing that namespace into Family Graph's own
+generic, app-agnostic public Integration API. Any app authenticates with a
+scoped key and plugs into the same `/v1` contract; Family Graph carries no
+per-app code.
 
-What moved: `server/parentpoint/` to `server/integration/`;
-`server/api/parentpoint.js` to `server/api/integration.js`; migration
-`0012_parentpoint_contract.js` to `0012_integration_contract.js`; 15
-`parentpoint-*.test.js` to `integration-*.test.js`. Scope `parentpoint` to
-`integration`. Header `X-PP-Contract-Version` to `X-FG-Contract-Version`. Env
-var `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS` to `..._INTEGRATION_WEBHOOKS`. The three
-`pp_` tables dropped the prefix (`webhook_subscriptions`, `webhook_deliveries`,
-`idempotency_keys`) to match the rest of the schema, which already had
-unprefixed capability tables (`school_contexts`, `dioceses`,
-`eim_certifications`) sitting right next to them. Identifiers:
-`buildParentPointApi` to `buildIntegrationApi`, `bearerParentPoint` to
-`bearerIntegration`, `ppContract` to `fgContract`, `ppRoleToInternal` to
-`roleToInternal`, audit actions `pp_*` to `integration_*`. The "PP"
-abbreviation in comments and docs became "the app."
+Concretely, the change swept the server directory, the API router, a migration,
+the contract test files, the auth scope, the contract-version header, the
+webhook / idempotency database tables, a batch of code identifiers and
+audit-action names, and every doc - moving all of them off the old product name
+and onto neutral, capability-based names. An app-specific integration guide was
+deleted; the generic `INTEGRATION_GUIDE.md` and the `FAMILYGRAPH_INTEGRATION.md`
+contract were kept as the docs an external team integrates against.
 
-MissionIQ and AudioScribe went too (operator's call - scrub all three).
-MissionIQ as the origin of the vendored resolver / matching / ingestion code
-became "the upstream identity engine"; as a portfolio sibling it became "a
-donor-intelligence app." Deleted `PARENTPOINT_INTEGRATION_GUIDE_2026-05-15.md`
-- operator said it can be rebuilt - and kept `INTEGRATION_GUIDE.md` +
-`FAMILYGRAPH_INTEGRATION.md` as the genericized, app-agnostic integration docs.
+License: `UNLICENSED` to Apache-2.0, chosen over MIT for the explicit patent
+grant. Added `LICENSE` and a `NOTICE` carrying author attribution (Chris
+Treadaway), a support ask, and a dedication; updated both package manifests and
+the README / spec framing from "closed source for v1" to the settled
+open-source decision. Real first-site references were left intact on purpose.
 
-License: `UNLICENSED` to Apache-2.0. Picked Apache over MIT for the explicit
-patent grant. Added `LICENSE`, a `NOTICE` carrying the attribution (Chris
-Treadaway, christreadaway@gmail.com), the support ask (Venmo @ctreada or
-donations to St. Theresa Catholic School), and the dedication (in service to
-Pope Leo XIV, and for the glory of God). `package.json` and
-`client/package.json` got `license` + `author`; README's "closed source for
-v1" line and business_spec's deferred-licensing menu were rewritten to the
-settled Apache-2.0 decision. Left every St. Theresa reference intact - it's the
-real first site and the donation beneficiary, kept on purpose. Also fixed a
-stale README clone URL that still pointed at the old `custos.git` codename.
+Migration trade-off: edited the relevant migration and `schema.sql` in place to
+drop a now-meaningless table-name prefix rather than adding a rename migration.
+This is a fresh public repo with no deployed databases; the runner keys on the
+numeric version prefix so the file rename is safe, and a fresh DB builds
+consistently. No schema-version bump - the effective schema is unchanged apart
+from names.
 
-Migration trade-off: edited migration 0012 and `schema.sql` in place rather
-than adding a rename migration. This is a fresh public repo with no deployed
-databases to migrate; the runner keys on the `NNNN` version prefix so renaming
-the file is safe, and a fresh DB builds the renamed tables consistently from
-both the bootstrap and the migration. No `SCHEMA_VERSION` bump - the effective
-v13 schema is unchanged apart from names.
-
-Verification, static first: `node --check` on every changed file (clean), a
-smoke-load of the renamed `server/integration` tree (all nine helpers export),
-identifier-consistency greps, and a full-repo brand sweep that returns zero
-parentpoint/missioniq/audioscribe/PP/pp_ hits in code and live docs. Used four
-parallel subagents to de-brand the heavy prose docs.
-
-Then ran the full suite. `sfw` installs globally but its firewall binary host is
-unreachable under this container's network policy ("Failed to prepare firewall
-binary"), so Socket Firewall genuinely can't run here. Used the documented
-emergency bypass - `SFW_BYPASS=1 npm ci` - to install the exact pinned
-package-lock deps (no new packages, ephemeral container), recorded here per the
-CLAUDE.md rule. `npm test` came back green: 490 tests, 489 pass, 0 fail, 1 skip
-- the skip is the pre-existing `folder-watch` EACCES case that can't run as
-root. The renamed Integration API contract tests, `roleToInternal`,
-`integration_*` audit actions, `X-FG-Contract-Version`, the idempotency
-`integration_*` keys, and the de-prefixed webhook / idempotency tables all
-exercise cleanly against a real SQLite database. The clean-out didn't break
-anything.
+Verification, static first: syntax checks, a smoke-load of the renamed module
+tree, identifier-consistency greps, and a repo-wide brand sweep that comes back
+clean across code and live docs. Then the full suite. Socket Firewall installs
+but its binary host is unreachable under this container's network policy, so the
+firewall can't run here; used the documented emergency bypass to install the
+exact pinned lockfile dependencies (no new packages, ephemeral container),
+logged here per the CLAUDE.md rule. `npm test`: 490 tests, 489 pass, 0 fail, 1
+pre-existing skip (the folder-watch EACCES case that can't run as root). The
+de-brand changed names, not behavior.
 
 ---
 

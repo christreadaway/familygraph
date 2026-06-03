@@ -3,7 +3,9 @@
 **Audience:** engineers building an app that wants to use
 FamilyGraph as the identity / household / consent layer. A
 parent-engagement app, a parish faith-formation app, or a
-school-events app would each be an example.
+school-events app would each be an example. This guide is
+self-contained and app-agnostic - hand it to any team integrating
+with a FamilyGraph install.
 
 **Status:** v0.2 of the contract, May 2026. The contract is versioned
 via the `X-FG-Contract-Version` header (current value: `v0.1`).
