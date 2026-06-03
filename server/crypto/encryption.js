@@ -86,7 +86,7 @@ function normalizeEmail(email) {
 function normalizePhone(phone) {
   if (!phone) return null;
   // Strip everything but digits; leading country-code 1 dropped for North-American
-  // canonicalization (matches MissionIQ's resolver convention).
+  // canonicalization (matches the upstream identity engine's resolver convention).
   let digits = String(phone).replace(/\D+/g, '');
   if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
   return digits || null;

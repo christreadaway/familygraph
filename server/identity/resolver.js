@@ -1,6 +1,6 @@
 'use strict';
 
-// Identity resolver. Vendored from missionIQ — both the matching primitives
+// Identity resolver. Vendored from the upstream identity engine — both the matching primitives
 // (in ./matching.js) and the auto-merge / prompt-the-user gate that this
 // module wraps.
 //
@@ -9,7 +9,7 @@
 //     deterministic signal (last-name, first-name, every email, every phone,
 //     and the address) and looking each one up in the indexed hash columns.
 //   - Score each candidate using matching.scoreMatch — vendored from
-//     missionIQ — which returns { confidence, reasons, definitive }.
+//     the upstream identity engine — which returns { confidence, reasons, definitive }.
 //   - DECISION GATE:
 //       definitive (exact email/phone/strong address) AND no address conflict
 //                                            → auto_merge
@@ -168,7 +168,7 @@ function _toMatcherRecord(incoming) {
 }
 
 // Gather candidate persons by every deterministic signal we can hash against.
-// Vendored conceptually from missionIQ.findMatchingContact.
+// Vendored conceptually from the upstream resolver.
 function findCandidates(db, secrets, incoming) {
   const seen = new Map();   // code → row
   const fh = enc.hmac(secrets, enc.normalizeName(incoming.family_name));

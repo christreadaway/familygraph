@@ -1,7 +1,7 @@
 'use strict';
 
 // End-to-end scenarios from §10 of FAMILYGRAPH_INTEGRATION.md. These exercise
-// the contract from "ParentPoint admin clicks a button" through to the
+// the contract from "Integration admin clicks a button" through to the
 // FamilyGraph side effects (mirrored writes, queued webhooks).
 
 const test = require('node:test');
@@ -13,7 +13,7 @@ const { newDb, newSecrets, defaultThresholds, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
 const families = require('../server/identity/families');
 const contacts = require('../server/identity/contacts');
-const webhooks = require('../server/parentpoint/webhooks');
+const webhooks = require('../server/integration/webhooks');
 
 function listen(app) {
   return new Promise(resolve => {
@@ -57,13 +57,13 @@ async function makeServer(t) {
 
 const auth = (secrets, extra = {}) => ({
   authorization: `Bearer ${secrets.master}`,
-  'x-family-graph-actor': 'parentpoint-scenario-test',
-  'x-pp-contract-version': 'v0.1',
-  'x-source-app': 'parentpoint',
+  'x-family-graph-actor': 'integration-scenario-test',
+  'x-fg-contract-version': 'v0.1',
+  'x-source-app': 'integration',
   ...extra,
 });
 
-test('scenario §10.1 → admin adds a family in standalone-like mode (PP suggests identities to FG)', async t => {
+test('scenario §10.1 → admin adds a family in standalone-like mode (the app suggests identities to FG)', async t => {
   const { port, db, secrets } = await makeServer(t);
   // Admin adds a parent.
   const mom = await request(port, {
@@ -99,11 +99,11 @@ test('scenario §10.1 → admin adds a family in standalone-like mode (PP sugges
   assert.equal(hh.body.household.primaryContactPersonId, mom.body.person.personId);
 });
 
-test('scenario §10.3 → parent updates phone in FG, webhook queues for PP', async t => {
+test('scenario §10.3 → parent updates phone in FG, webhook queues for the app', async t => {
   const { port, db, secrets } = await makeServer(t);
-  // Subscribe PP's webhook.
+  // Subscribe the app's webhook.
   const sub = webhooks.subscribe(db, secrets, {
-    url: 'https://us-central1-pp.cloudfunctions.net/familyGraphWebhook',
+    url: 'https://us-central1-demo.cloudfunctions.net/familyGraphWebhook',
     secret: 'shhhh',
     events: '*',
     schoolHint: 'st-theresa',
@@ -223,19 +223,19 @@ test('scenario > consent change generates a consent.updated webhook event', asyn
   assert.equal(payload.personId, annie);
 });
 
-test('scenario > PP push that creates a person then references that personId in a household round-trips correctly', async t => {
+test('scenario > app push that creates a person then references that personId in a household round-trips correctly', async t => {
   const { port, secrets } = await makeServer(t);
   // Create three people via the contract.
   const mom = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'pp_create_mom' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'integration_create_mom' }),
     body: { firstName: 'Amanda', lastName: 'Lee', kind: 'adult', primaryEmail: 'amanda@example.com' },
   });
   const dad = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'pp_create_dad' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'integration_create_dad' }),
     body: { firstName: 'Tim', lastName: 'Lee', kind: 'adult' },
   });
   const kid = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'pp_create_kid' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'integration_create_kid' }),
     body: { firstName: 'Annie', lastName: 'Lee', kind: 'child' },
   });
   // Compose them into a household.
@@ -262,7 +262,7 @@ test('scenario > PP push that creates a person then references that personId in 
 test('scenario > resend of the same X-Request-Id returns the cached response (idempotency)', async t => {
   const { port, secrets } = await makeServer(t);
   const body = { firstName: 'Pio', lastName: 'Pietrelcina', kind: 'adult' };
-  const headers = auth(secrets, { 'x-request-id': 'pp_idempotent' });
+  const headers = auth(secrets, { 'x-request-id': 'integration_idempotent' });
   const first = await request(port, { method: 'POST', path: '/v1/persons', headers, body });
   const second = await request(port, { method: 'POST', path: '/v1/persons', headers, body });
   assert.equal(first.status, 201);

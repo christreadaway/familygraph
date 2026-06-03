@@ -11,9 +11,9 @@ const { buildApp } = require('../server');
 const { newDb, newSecrets, defaultThresholds, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
 const families = require('../server/identity/families');
-const consents = require('../server/parentpoint/consents');
-const dioceses = require('../server/parentpoint/dioceses');
-const schoolContext = require('../server/parentpoint/schoolContext');
+const consents = require('../server/integration/consents');
+const dioceses = require('../server/integration/dioceses');
+const schoolContext = require('../server/integration/schoolContext');
 const history = require('../server/identity/history');
 
 function listen(app) {
@@ -58,9 +58,9 @@ async function makeServer(t) {
 
 const auth = (secrets, extra = {}) => ({
   authorization: `Bearer ${secrets.master}`,
-  'x-family-graph-actor': 'pp-bugfix-test',
-  'x-pp-contract-version': 'v0.1',
-  'x-source-app': 'parentpoint',
+  'x-family-graph-actor': 'integration-bugfix-test',
+  'x-fg-contract-version': 'v0.1',
+  'x-source-app': 'integration',
   ...extra,
 });
 
@@ -73,7 +73,7 @@ test('bugfix > DELETE /v1/persons/:id/photoConsent with X-Request-Id replays the
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   consents.setOverride(db, p, 'st-theresa', { photoConsent: 'deny' });
 
-  const headers = auth(secrets, { 'x-request-id': 'pp_delete_idem_1' });
+  const headers = auth(secrets, { 'x-request-id': 'integration_delete_idem_1' });
   const first = await request(port, {
     method: 'DELETE', path: `/v1/persons/${p}/photoConsent?schoolId=st-theresa`, headers,
   });
@@ -101,7 +101,7 @@ test('bugfix > DELETE /v1/webhooks/:code with X-Request-Id replays on retry', as
     body: { url: 'https://x.example/cb' },
   });
   const code = sub.body.subscription.code;
-  const headers = auth(secrets, { 'x-request-id': 'pp_wh_delete_1' });
+  const headers = auth(secrets, { 'x-request-id': 'integration_wh_delete_1' });
   const first = await request(port, { method: 'DELETE', path: `/v1/webhooks/${code}`, headers });
   assert.equal(first.status, 204);
   const replay = await request(port, { method: 'DELETE', path: `/v1/webhooks/${code}`, headers });
@@ -355,7 +355,7 @@ test('bugfix > /v1/households/changed tombstones archived households', async t =
 
 test('bugfix > webhook subscribe rejects loopback URLs', async t => {
   const { db, secrets } = await makeServer(t);
-  const webhooks = require('../server/parentpoint/webhooks');
+  const webhooks = require('../server/integration/webhooks');
   assert.throws(() => webhooks.subscribe(db, secrets, { url: 'http://localhost:5432/x' }), /loopback/);
   assert.throws(() => webhooks.subscribe(db, secrets, { url: 'http://127.0.0.1/cb' }), /loopback/);
   assert.throws(() => webhooks.subscribe(db, secrets, { url: 'http://169.254.169.254/latest/meta-data/' }), /loopback/);
@@ -365,16 +365,16 @@ test('bugfix > webhook subscribe rejects loopback URLs', async t => {
 
 test('bugfix > webhook subscribe rejects file://, ws://, etc.', async t => {
   const { db, secrets } = await makeServer(t);
-  const webhooks = require('../server/parentpoint/webhooks');
+  const webhooks = require('../server/integration/webhooks');
   assert.throws(() => webhooks.subscribe(db, secrets, { url: 'file:///etc/passwd' }), /unsupported url scheme/);
   assert.throws(() => webhooks.subscribe(db, secrets, { url: 'ws://example.com/cb' }), /unsupported url scheme/);
 });
 
 test('bugfix > webhook subscribe accepts a normal https URL', async t => {
   const { db, secrets } = await makeServer(t);
-  const webhooks = require('../server/parentpoint/webhooks');
+  const webhooks = require('../server/integration/webhooks');
   const sub = webhooks.subscribe(db, secrets, {
-    url: 'https://us-central1-pp.cloudfunctions.net/familyGraphWebhook',
+    url: 'https://us-central1-demo.cloudfunctions.net/familyGraphWebhook',
   });
   assert.match(sub.code, /^wh_/);
 });

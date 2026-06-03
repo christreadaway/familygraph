@@ -233,7 +233,7 @@ surviving family's data with the surviving code in `family.code`.
 
 The resolver lives in `server/identity/resolver.js` and uses the pure
 matching primitives in `server/identity/matching.js` (vendored from
-missionIQ; see `session_notes.md` v9). The decision flow:
+the upstream identity engine; see `session_notes.md` v9). The decision flow:
 
 **1. Candidate gathering (`findCandidates`).** Block on every
 deterministic signal we can hash:
@@ -298,9 +298,9 @@ free-form reason.
 `rescorePerson(code)` re-runs the scorer for a single person — used
 after manual edits.
 
-**Critical correctness note.** missionIQ collapses two persons with
+**Critical correctness note.** The upstream identity engine collapses two persons with
 unrelated first names at the same address into one person. Family
-Graph does NOT — Mary Escamilla and John Torre at 123 Main St are a
+Graph does NOT - Mary Escamilla and John Torre at 123 Main St are a
 couple, not duplicates. Address only becomes a person-merge signal
 when paired with a name overlap; otherwise it's a family signal.
 

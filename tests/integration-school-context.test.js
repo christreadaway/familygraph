@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const { newDb, newSecrets, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
-const sc = require('../server/parentpoint/schoolContext');
+const sc = require('../server/integration/schoolContext');
 
 function setup(t) {
   const { db, dir } = newDb();
@@ -37,7 +37,7 @@ test('schoolContext > upsert stores the §7.3 snapshot and returns it', async t 
   assert.equal(got.classroomName, 'Room 204 — Ms. Lee');
   assert.equal(got.activities.length, 2);
   assert.deepEqual(got.allergies, ['peanuts']);
-  assert.equal(got.sourceApp, 'parentpoint');
+  assert.equal(got.sourceApp, 'integration');
 });
 
 test('schoolContext > upsert overwrites the previous snapshot for (person, school)', async t => {

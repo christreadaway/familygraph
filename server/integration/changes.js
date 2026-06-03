@@ -5,12 +5,12 @@
 //   GET /v1/households/changed?since=<iso>
 //
 // We answer from the existing `updated_at` columns on `persons` and
-// `families`. The ParentPoint contract layer bumps `updated_at` on linked
+// `families`. The Integration contract layer bumps `updated_at` on linked
 // writes (emails, phones, consents, memberships) so this feed surfaces the
 // person/household even when only a sub-record changed.
 //
 // Deleted (`status != 'active'`) rows are included with `active: false`
-// so PP can purge its cached copy. The doc says webhook events include
+// so the app can purge its cached copy. The doc says webhook events include
 // 'person.deleted' / 'household.deleted'; the changed-since feed is the
 // recovery channel when a webhook delivery dropped on the floor.
 
@@ -30,7 +30,7 @@ function listChangedPersons(db, secrets, since, { limit = 200 } = {}) {
   const lim = Math.max(1, Math.min(1000, Number(limit) || 200));
   // Union the two sources of "person changed": the persons row itself, and
   // its consent row. Each updated_at bumps when its respective record
-  // changes, and the ParentPoint write paths bump persons.updated_at on
+  // changes, and the Integration write paths bump persons.updated_at on
   // linked email/phone/consent writes — but a webhook to consent.updated
   // might still arrive without a persons.updated_at bump if the operator
   // updated consent through some future surface. The union is cheap.
@@ -46,7 +46,7 @@ function listChangedPersons(db, secrets, since, { limit = 200 } = {}) {
 
   // Deduplicate (same code can appear from both subqueries). Preserve
   // ascending order of updated_at. Archived persons are tombstoned —
-  // the feed's job is "tell PP what to invalidate," not "rebroadcast
+  // the feed's job is "tell the app what to invalidate," not "rebroadcast
   // PII for a record the operator removed." Direct
   // GET /v1/persons/:id still returns the full record so the operator
   // UI can render historical detail.

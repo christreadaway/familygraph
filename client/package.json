@@ -2,6 +2,8 @@
   "name": "family-graph-client",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
+  "author": "Chris Treadaway <christreadaway@gmail.com>",
   "type": "module",
   "scripts": {
     "preinstall": "node ../scripts/preinstall-sfw-check.js",

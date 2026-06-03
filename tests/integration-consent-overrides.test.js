@@ -5,8 +5,8 @@ const assert = require('node:assert/strict');
 
 const { newDb, newSecrets, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
-const consents = require('../server/parentpoint/consents');
-const objects = require('../server/parentpoint/objects');
+const consents = require('../server/integration/consents');
+const objects = require('../server/integration/objects');
 const history = require('../server/identity/history');
 
 function setup(t) {

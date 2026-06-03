@@ -1,6 +1,6 @@
 'use strict';
 
-// Verify that a person merge moves all the ParentPoint-contract tables
+// Verify that a person merge moves all the Integration-contract tables
 // (person_consents, person_consent_overrides, eim_certifications,
 // school_contexts) onto the winner. Pre-fix these rows were orphaned
 // on the loser code — the alias chain made the loser unreadable but
@@ -11,9 +11,9 @@ const assert = require('node:assert/strict');
 
 const { newDb, newSecrets, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
-const consents = require('../server/parentpoint/consents');
-const certifications = require('../server/parentpoint/certifications');
-const schoolContext = require('../server/parentpoint/schoolContext');
+const consents = require('../server/integration/consents');
+const certifications = require('../server/integration/certifications');
+const schoolContext = require('../server/integration/schoolContext');
 const history = require('../server/identity/history');
 
 function setup(t) {

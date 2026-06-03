@@ -1,6 +1,6 @@
 # Family Graph
 
-**Local family registry for Catholic institutions.** Closed source for v1.
+**Local family registry for Catholic institutions.** Open source under the Apache-2.0 license.
 
 Family Graph is the source of truth for family identity in an institution's data
 ecosystem. It accepts files from existing systems (FACTS, RenWeb, Ministry
@@ -123,7 +123,7 @@ shipped with Windows) also works.
 ### Clone and start
 
 ```powershell
-git clone https://github.com/christreadaway/custos.git family-graph
+git clone https://github.com/christreadaway/familygraph.git family-graph
 cd family-graph
 $env:SFW = "1"
 sfw npm install
@@ -254,7 +254,7 @@ count of rows skipped as blank. The dashboard's **Imports log** lists
 every run; click into one to see exactly which families and people that
 file produced.
 
-The auto-mapper is vendored from missionIQ's ingestion module
+The auto-mapper is vendored from the upstream identity engine's ingestion module
 (`server/sources/csv.js`). Every column header is scored against a
 dictionary of ~250 alias variants — including primary/secondary slots
 ("Parent 1 First Name", "P2 First", "Spouse Last", "Husband Email",
@@ -293,7 +293,7 @@ Family Graph deliberately does not store financial facts. If a donation
 file contains date/amount/payment-method columns, those columns are
 parsed and discarded; only the identity columns produce database rows.
 The category + tags survive on the source-record so the operator can
-audit the provenance later. Money lives in MissionIQ, not here.
+audit the provenance later. Money lives in a consuming app, not here.
 
 ### Importing from a Google Sheets link
 
@@ -333,10 +333,10 @@ existing **paste / file-upload** path still works exactly the same.
 The Bearer can be the master token (full access) or a per-app `sk_…` scoped
 token issued via `POST /api/keys` with one or more of the scopes
 `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`, `import`,
-`rules.write`, `parentpoint`, or `*`.
+`rules.write`, `integration`, or `*`.
 
 Consuming apps SHOULD set the `X-Family-Graph-Actor` header to a short
-stable identifier (e.g. `missioniq`, `parentpoint`). It is recorded on
+stable identifier (e.g. `donor_app`, `engagement_app`). It is recorded on
 every audit row so the operator can see who read or wrote what. For
 master tokens the header is honoured verbatim; for scoped tokens the
 actor is forced to the key's name so a consuming app cannot spoof a
@@ -462,9 +462,9 @@ Notes on the catalog:
 
 ### External-app identity API
 
-Sibling apps (missionIQ, ParentPoint, future tools) bring in their own
-domain data (donations, engagement events) and delegate the identity
-decision to Family Graph. Three endpoints under `/api/identity/`:
+Consuming apps bring in their own domain data (donations, engagement
+events) and delegate the identity decision to Family Graph. Three
+endpoints under `/api/identity/`:
 
 - `POST /api/identity/match` — read-only peek. Body: `{ record: {...} }`.
   Returns `{ action, confidence, reasons, definitive, candidate, thresholds }`
@@ -483,9 +483,9 @@ Input records accept both flat shapes (`first_name`, `last_name`,
 `emails[]`, `phones[]`, `address: {...}`) so the calling app passes
 through whatever its native rows look like.
 
-### ParentPoint × FamilyGraph contract (`/v1/...`)
+### FamilyGraph Integration API (`/v1/...`)
 
-A separate, versioned API surface for the ParentPoint integration.
+A separate, versioned API surface that any app integrates against.
 
 **Documentation map:**
 - [`FAMILYGRAPH_INTEGRATION.md`](./FAMILYGRAPH_INTEGRATION.md) — the
@@ -493,24 +493,16 @@ A separate, versioned API surface for the ParentPoint integration.
   v0.1 launch, v0.2 additions (per-school overrides, dioceses,
   restorable deletions), and the audit-pass bug fixes.
 - [`INTEGRATION_GUIDE.md`](./INTEGRATION_GUIDE.md) — generic,
-  app-agnostic reference for any sibling app that wants to consume
+  app-agnostic reference for any app that wants to consume
   FamilyGraph as the identity layer. Use this when wiring a future
   app (parish faith-formation, school-events, etc.) on top of the
   same hub.
-- [`PARENTPOINT_INTEGRATION_GUIDE_2026-05-15.md`](./PARENTPOINT_INTEGRATION_GUIDE_2026-05-15.md)
-  — ParentPoint-specific implementation guide. Step-by-step on the
-  PP side: HTTP client, read flows, write flows, per-school consent
-  overrides, diocesan EIM, webhook handlers, archive / reinstate,
-  standalone → connected migration, common pitfalls. The date in the
-  filename pins the revision; future updates land as new files
-  (`..._YYYY-MM-DD.md`) so PP engineers can diff against the version
-  their code targets.
 
 Quick sketch:
 
 - Mount point: `/v1/...`. All routes require Bearer with the
-  `parentpoint` scope (master token also works).
-- Every request should send `X-PP-Contract-Version: v0.1`. Unknown
+  `integration` scope (master token also works).
+- Every request should send `X-FG-Contract-Version: v0.1`. Unknown
   versions get `426 Upgrade Required`.
 - Writes (POST / PATCH) honour `X-Request-Id` for 24-hour idempotency
   and surface `X-FG-Idempotent-Replay: true` when a duplicate is hit.
@@ -533,7 +525,7 @@ Quick sketch:
   `GET /v1/households/:id/history`.
 - Archived persons in the `/v1/persons/changed?since=` feed appear
   as tombstones (`{ personId, active: false, status, updatedAt }`),
-  not as full records — the feed's job is "tell PP what to
+  not as full records — the feed's job is "tell the app what to
   invalidate," not "rebroadcast PII for a removed record." Direct
   `GET /v1/persons/:id` still returns the full record for operator
   UIs that want the historical view.
@@ -553,11 +545,11 @@ Quick sketch:
   preserves the row + secret; pass `?status=all` to see disabled
   subscriptions and use the helper module's `resubscribe()` to bring
   one back. Disable the dispatcher with
-  `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1`.
+  `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS=1`.
 
 ### Auto-merge vs prompt-the-user (the matching gate)
 
-`server/identity/matching.js` ports missionIQ's scoring with one
+`server/identity/matching.js` ports the upstream identity engine's scoring with one
 correctness fix. The decision flow:
 
 1. **Definitive signals** (auto-merge at 0.95 confidence):
@@ -598,7 +590,7 @@ the operator to record the WHY ("father and son, confirmed via parish
 records") before clicking merge / reject / dismiss; closed conflicts
 display the stored note verbatim under the row.
 
-**Critical correctness fix vs missionIQ:** address-only auto-merge with
+**Critical correctness fix vs the upstream identity engine:** address-only auto-merge with
 unrelated names is treated as a *family* signal in Family Graph, not a
 person signal. Mary Escamilla and John Torre at the same address are a
 couple, not duplicates of one person. The family resolver attaches them
@@ -622,7 +614,7 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
 | `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
 | `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
-| `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS` | unset | set to `1` to disable the ParentPoint webhook dispatcher (pending rows accumulate until re-enabled) |
+| `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS` | unset | set to `1` to disable the integration webhook dispatcher (pending rows accumulate until re-enabled) |
 | `FAMILY_GRAPH_DISABLE_RATE_LIMIT` | unset | set to `1` to disable per-Bearer-token rate limiting on `/api` and `/v1`. Defaults: 600/min for `/api`, 1200/min for `/v1`, 60/min for `/api/sanitize`, 30/min for `/api/import`. Disable only for diagnostics; the limits are deliberately generous and shouldn't trip legitimate integration traffic. |
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |
@@ -775,3 +767,26 @@ and that the design tokens resolve. CI should run both.
   explicit consent and a destination, and are logged to the tier-2 audit
   trail.
 - **No telemetry, no analytics, no phone-home.**
+
+---
+
+## Author & license
+
+Family Graph was created by **Chris Treadaway**
+([christreadaway@gmail.com](mailto:christreadaway@gmail.com)).
+
+Licensed under the **Apache License 2.0**. See [`LICENSE`](./LICENSE) and
+[`NOTICE`](./NOTICE). You are free to use, modify, and distribute this
+software; please keep the attribution above.
+
+### Support the project
+
+If Family Graph saved you time and you want to say thanks:
+
+- **Venmo tips:** [@ctreada](https://venmo.com/u/ctreada)
+- **Donations:** to **St. Theresa Catholic School**, which this work
+  supports.
+
+### Dedication
+
+Built in service to **Pope Leo XIV**, and for the **glory of God**.

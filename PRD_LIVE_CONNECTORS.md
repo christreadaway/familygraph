@@ -26,7 +26,7 @@ A pair of **live API connectors** for Family Graph that pull family/person/conta
 |---|---|
 | **St. Theresa operator (initial)** | One-time credential entry per system. Daily automatic sync. No more uploading CSVs from FACTS or Ministry Platform. |
 | **Future Catholic school + parish operators** | Same connector framework, configured for their own FACTS / Ministry Platform tenants. |
-| **Sibling apps (MissionIQ, ParentPoint)** | No change. They still call `/api/identity/match` and `/api/identity/resolve`. They benefit because Family Graph's ledger is now fresh. |
+| **Sibling apps in the portfolio** | No change. They still call `/api/identity/match` and `/api/identity/resolve`. They benefit because Family Graph's ledger is now fresh. |
 
 ---
 
@@ -298,7 +298,7 @@ Write-back requires its own consent model: every write is operator-confirmed (or
 **Write-back to Ministry Platform (v2 candidate).** MP's REST API supports `POST` and `PUT` on most tables. Candidate writes:
 - *Updated contact info* — same logic as FACTS write-back.
 - *New household registrations* — if Family Graph becomes the front door for new parishioner sign-ups (via a public form), creating the corresponding MP household automatically.
-- *Engagement events from sibling apps* — ParentPoint or MissionIQ recording an event in their own system, then pushing a summary to MP's Contact Logs table so parish staff see it without leaving MP.
+- *Engagement events from sibling apps* — a sibling app recording an event in its own system, then pushing a summary to MP's Contact Logs table so parish staff see it without leaving MP.
 
 Same consent model as FACTS write-back: explicit, logged, reversible.
 
@@ -515,7 +515,7 @@ tests/
 - Document any field mappings that needed adjustment.
 
 ### Phase 4 — Open the door for sibling apps
-- MissionIQ and ParentPoint can now consume a Family Graph that's actively synced from both FACTS and MP, without either app needing its own connector code.
+- Sibling apps can now consume a Family Graph that's actively synced from both FACTS and MP, without any app needing its own connector code.
 - Architectural memo's "Phase 0: Family Graph stability" criterion (30 days production) starts the clock from end of Phase 2.
 
 ---

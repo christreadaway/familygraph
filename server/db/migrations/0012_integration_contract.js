@@ -1,6 +1,6 @@
 'use strict';
 
-// Migration 0012: ParentPoint × FamilyGraph integration contract.
+// Migration 0012: Integration × FamilyGraph integration contract.
 //
 // Adds the schema FamilyGraph needs to expose the read / write surface
 // described in FAMILYGRAPH_INTEGRATION.md (v0.1). All additions are
@@ -9,12 +9,12 @@
 //
 // New columns on existing tables:
 //   persons.kind                  TEXT  'adult' | 'child' | NULL
-//                                       Populated when ParentPoint POSTs a
-//                                       new person and PP knows; NULL for
+//                                       Populated when Integration POSTs a
+//                                       new person and the app knows; NULL for
 //                                       pre-contract rows (the operator can
 //                                       hand-edit later).
 //   persons.preferred_name_ct     BLOB  AES-256-GCM ciphertext. Surfaced as
-//                                       `preferredName` in the PP person
+//                                       `preferredName` in the app person
 //                                       object so messaging can use "Mandy"
 //                                       instead of "Amanda".
 //   families.primary_contact_person_code  TEXT  Soft pointer at the
@@ -33,13 +33,13 @@
 //                                       | 'guardian' | 'grandparent'
 //                                       | 'other' | 'child' | NULL
 //                                       Finer-grained label than the existing
-//                                       `role` bucket; lets PP's household
+//                                       `role` bucket; lets the app's household
 //                                       members[] round-trip without losing
 //                                       the mother-vs-father distinction.
 //   phones.e164                   TEXT  Normalized to +<country><digits>
 //                                       (no spaces or punctuation). Provides
 //                                       a deterministic write target and
-//                                       lets PP queries match phone numbers
+//                                       lets app queries match phone numbers
 //                                       across sources cleanly.
 //   phones.sms_consent            INTEGER NOT NULL DEFAULT 0  Per-phone SMS
 //                                       opt-in flag. Surfaced inside the
@@ -53,17 +53,17 @@
 //                                 hold the "current" cert (queried by the
 //                                 expiring-soon view); this table preserves
 //                                 the audit trail of every renewal.
-//   school_contexts               PP-pushed enrichment snapshot keyed by
+//   school_contexts               app-pushed enrichment snapshot keyed by
 //                                 (school_id, person_code). One row per
-//                                 (school, person) pair; the doc says PP
+//                                 (school, person) pair; the doc says the app
 //                                 overwrites on every POST so we model that
 //                                 as an upsert.
-//   pp_webhook_subscriptions      Subscribed PP cloud-function endpoints.
+//   webhook_subscriptions      Subscribed app cloud-function endpoints.
 //                                 Body signed with HMAC-SHA256 over the
 //                                 secret.
-//   pp_webhook_deliveries         Per-attempt delivery rows with exponential
+//   webhook_deliveries         Per-attempt delivery rows with exponential
 //                                 backoff (mirrors the notifications queue).
-//   pp_idempotency_keys           X-Request-Id dedupe for inbound PP writes.
+//   idempotency_keys           X-Request-Id dedupe for inbound app writes.
 //                                 Per §7.2: "FamilyGraph dedupes within 24h
 //                                 so retries on flaky networks don't
 //                                 double-create."
@@ -147,9 +147,9 @@ exports.up = function up(db) {
   `);
 
   // --- school_contexts ---
-  // PP's enrichment snapshot. Unique on (person_code, school_id) — PP
+  // the app's enrichment snapshot. Unique on (person_code, school_id) — the app
   // overwrites on every POST (§7.3). Activities + allergies are JSON arrays
-  // because the shape is fully controlled by PP; FG just stores and serves.
+  // because the shape is fully controlled by the app; FG just stores and serves.
   db.exec(`
     CREATE TABLE IF NOT EXISTS school_contexts (
       code                              TEXT PRIMARY KEY,
@@ -173,12 +173,12 @@ exports.up = function up(db) {
     CREATE INDEX IF NOT EXISTS school_contexts_updated_at_idx ON school_contexts (updated_at);
   `);
 
-  // --- pp_webhook_subscriptions ---
+  // --- webhook_subscriptions ---
   // Secret stored as ciphertext: even though it's symmetric and primarily
   // used for HMAC computation on our side, the file-leak threat model says
   // any rotating secret should be encrypted at rest.
   db.exec(`
-    CREATE TABLE IF NOT EXISTS pp_webhook_subscriptions (
+    CREATE TABLE IF NOT EXISTS webhook_subscriptions (
       code               TEXT PRIMARY KEY,
       url                TEXT NOT NULL,
       secret_ct          BLOB,
@@ -191,17 +191,17 @@ exports.up = function up(db) {
       last_status        TEXT,
       last_error         TEXT
     );
-    CREATE INDEX IF NOT EXISTS pp_webhook_subs_enabled_idx ON pp_webhook_subscriptions (enabled);
+    CREATE INDEX IF NOT EXISTS webhook_subs_enabled_idx ON webhook_subscriptions (enabled);
   `);
 
-  // --- pp_webhook_deliveries ---
+  // --- webhook_deliveries ---
   // Same shape as notifications: pending rows get picked up by the
   // dispatcher, success flips to 'sent', failure backs off exponentially
   // until MAX_ATTEMPTS, then 'failed'.
   db.exec(`
-    CREATE TABLE IF NOT EXISTS pp_webhook_deliveries (
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
       code               TEXT PRIMARY KEY,
-      subscription_code  TEXT NOT NULL REFERENCES pp_webhook_subscriptions(code) ON DELETE CASCADE,
+      subscription_code  TEXT NOT NULL REFERENCES webhook_subscriptions(code) ON DELETE CASCADE,
       event              TEXT NOT NULL,
       person_code        TEXT,
       family_code        TEXT,
@@ -215,17 +215,17 @@ exports.up = function up(db) {
       sent_at            TEXT,
       CHECK (status IN ('pending','sent','failed','cancelled'))
     );
-    CREATE INDEX IF NOT EXISTS pp_deliveries_sub_idx           ON pp_webhook_deliveries (subscription_code);
-    CREATE INDEX IF NOT EXISTS pp_deliveries_status_idx        ON pp_webhook_deliveries (status);
-    CREATE INDEX IF NOT EXISTS pp_deliveries_next_attempt_idx  ON pp_webhook_deliveries (status, next_attempt_at);
+    CREATE INDEX IF NOT EXISTS webhook_deliveries_sub_idx           ON webhook_deliveries (subscription_code);
+    CREATE INDEX IF NOT EXISTS webhook_deliveries_status_idx        ON webhook_deliveries (status);
+    CREATE INDEX IF NOT EXISTS webhook_deliveries_next_attempt_idx  ON webhook_deliveries (status, next_attempt_at);
   `);
 
-  // --- pp_idempotency_keys ---
+  // --- idempotency_keys ---
   // We cache the response by (request_id, method, path) for 24h. The body
   // is small JSON; we store it inline. Sweep happens lazily on each lookup
   // and via the daily audit sweep loop.
   db.exec(`
-    CREATE TABLE IF NOT EXISTS pp_idempotency_keys (
+    CREATE TABLE IF NOT EXISTS idempotency_keys (
       request_id    TEXT NOT NULL,
       method        TEXT NOT NULL,
       path          TEXT NOT NULL,
@@ -235,6 +235,6 @@ exports.up = function up(db) {
       created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       PRIMARY KEY (request_id, method, path)
     );
-    CREATE INDEX IF NOT EXISTS pp_idempotency_expires_idx ON pp_idempotency_keys (expires_at);
+    CREATE INDEX IF NOT EXISTS idempotency_expires_idx ON idempotency_keys (expires_at);
   `);
 };

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
 const { newDb, newSecrets, cleanup } = require('./_helpers');
-const webhooks = require('../server/parentpoint/webhooks');
+const webhooks = require('../server/integration/webhooks');
 
 function setup(t) {
   const { db, dir } = newDb();
@@ -17,13 +17,13 @@ function setup(t) {
 test('webhooks > subscribe stores a row and returns metadata', async t => {
   const { db, secrets } = setup(t);
   const sub = webhooks.subscribe(db, secrets, {
-    url: 'https://us-central1-parentpoint.cloudfunctions.net/familyGraphWebhook',
+    url: 'https://us-central1-integration.cloudfunctions.net/familyGraphWebhook',
     secret: 'shhhh',
     events: '*',
     schoolHint: 'st-theresa',
   });
   assert.match(sub.code, /^wh_/);
-  assert.equal(sub.url, 'https://us-central1-parentpoint.cloudfunctions.net/familyGraphWebhook');
+  assert.equal(sub.url, 'https://us-central1-integration.cloudfunctions.net/familyGraphWebhook');
   assert.equal(sub.events, '*');
   assert.equal(sub.school_hint, 'st-theresa');
   assert.equal(sub.has_secret, true);
@@ -123,7 +123,7 @@ test('webhooks > dispatchPending gives up after MAX_ATTEMPTS', async t => {
   const codes = webhooks.enqueue(db, secrets, { event: 'person.updated', personCode: 'p_a' });
   const code = codes[0];
   // Bump attempts to MAX_ATTEMPTS - 1 so the next failure trips 'failed'.
-  db.prepare(`UPDATE pp_webhook_deliveries SET attempts = ?, next_attempt_at = NULL WHERE code = ?`)
+  db.prepare(`UPDATE webhook_deliveries SET attempts = ?, next_attempt_at = NULL WHERE code = ?`)
     .run(webhooks.MAX_ATTEMPTS - 1, code);
   const sender = async () => { throw new Error('still down'); };
   await webhooks.dispatchPending(db, secrets, { sender });
@@ -161,7 +161,7 @@ test('webhooks > disabled subscription is skipped by the dispatcher', async t =>
   const { db, secrets } = setup(t);
   const sub = webhooks.subscribe(db, secrets, { url: 'https://x.example/cb', secret: 's' });
   webhooks.enqueue(db, secrets, { event: 'person.updated', personCode: 'p_a' });
-  db.prepare(`UPDATE pp_webhook_subscriptions SET enabled = 0 WHERE code = ?`).run(sub.code);
+  db.prepare(`UPDATE webhook_subscriptions SET enabled = 0 WHERE code = ?`).run(sub.code);
   const sender = async () => { throw new Error('should not fire'); };
   const out = await webhooks.dispatchPending(db, secrets, { sender });
   assert.deepEqual(out, []);

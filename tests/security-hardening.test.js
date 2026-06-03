@@ -20,7 +20,7 @@ const { buildApp } = require('../server');
 const { newDb, newSecrets, defaultThresholds, cleanup } = require('./_helpers');
 const audit = require('../server/audit');
 const { userFacingMessage } = require('../server/api/_errors');
-const webhooks = require('../server/parentpoint/webhooks');
+const webhooks = require('../server/integration/webhooks');
 
 function listen(app) {
   return new Promise(resolve => {
@@ -144,7 +144,7 @@ test('security > /v1 rejects oversize JSON bodies (256 KB cap)', async t => {
   const huge = Array(20_000).fill('parent_name').join(', ');
   const r = await request(port, {
     method: 'POST', path: '/v1/persons',
-    headers: { ...auth(secrets), 'x-pp-contract-version': 'v0.1' },
+    headers: { ...auth(secrets), 'x-fg-contract-version': 'v0.1' },
     body: { firstName: 'A', lastName: 'B', notes: huge.repeat(50) },
   });
   assert.equal(r.status, 413, 'oversize body returns 413 Payload Too Large');
@@ -212,7 +212,7 @@ test('security > webhook subscription strips userinfo + query from audit metadat
   webhooks.subscribe(db, secrets, {
     url: 'https://example.org/cb?token=secret-token-123',
   });
-  const rows = audit.list(db, { action: 'pp_webhook_subscribe' });
+  const rows = audit.list(db, { action: 'integration_webhook_subscribe' });
   assert.equal(rows.length, 1);
   const url = rows[0].metadata.url;
   assert.equal(url.includes('?'), false, 'query string stripped');
@@ -356,11 +356,11 @@ test('security > /v1/persons?email=<miss> writes an audit row with a query_hash'
   const { port, db, secrets } = await makeServer(t);
   const r = await request(port, {
     path: '/v1/persons?email=ghost@example.org',
-    headers: { ...auth(secrets), 'x-pp-contract-version': 'v0.1' },
+    headers: { ...auth(secrets), 'x-fg-contract-version': 'v0.1' },
   });
   assert.equal(r.status, 404);
   const audit = require('../server/audit');
-  const rows = audit.list(db, { action: 'pp_person_lookup_email_miss' });
+  const rows = audit.list(db, { action: 'integration_person_lookup_email_miss' });
   assert.equal(rows.length, 1);
   assert.ok(rows[0].metadata.query_hash, 'miss audit carries a query_hash');
   assert.equal(rows[0].metadata.hit, false);

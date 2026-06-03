@@ -1,11 +1,11 @@
 'use strict';
 
-// Idempotency cache for inbound PP writes. §7.2: ParentPoint sends
-// `X-Request-Id: pp_{uuid}` and FamilyGraph dedupes within 24h so retries
+// Idempotency cache for inbound app writes. §7.2: Integration sends
+// `X-Request-Id: integration_{uuid}` and FamilyGraph dedupes within 24h so retries
 // on flaky networks don't double-create.
 //
 // Key shape: (request_id, method, path). Different methods or paths with
-// the same request_id are independent — PP could legitimately retry a
+// the same request_id are independent — the app could legitimately retry a
 // patch then issue an unrelated POST with the same UUID because the
 // caller generates it per attempt, not per logical call. The doc commits
 // to 24h, so we set expires_at = now + 24h on each insert.
@@ -26,13 +26,13 @@ function _nowIso() {
 function lookup(db, { requestId, method, path }) {
   if (!requestId || !method || !path) return null;
   const row = db.prepare(
-    `SELECT response_code, response_body, expires_at FROM pp_idempotency_keys
+    `SELECT response_code, response_body, expires_at FROM idempotency_keys
        WHERE request_id = ? AND method = ? AND path = ?`
   ).get(requestId, method, path);
   if (!row) return null;
   if (row.expires_at <= _nowIso()) {
     db.prepare(
-      `DELETE FROM pp_idempotency_keys WHERE request_id = ? AND method = ? AND path = ?`
+      `DELETE FROM idempotency_keys WHERE request_id = ? AND method = ? AND path = ?`
     ).run(requestId, method, path);
     return null;
   }
@@ -47,7 +47,7 @@ function record(db, { requestId, method, path, status, body }) {
   if (!requestId || !method || !path) return;
   const serialized = body == null ? null : JSON.stringify(body);
   db.prepare(
-    `INSERT OR REPLACE INTO pp_idempotency_keys
+    `INSERT OR REPLACE INTO idempotency_keys
         (request_id, method, path, response_code, response_body, expires_at, created_at)
         VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
   ).run(requestId, method, path, status, serialized, _expiry());
@@ -56,7 +56,7 @@ function record(db, { requestId, method, path, status, body }) {
 // Periodic sweep. Returns the number of rows removed; cheap when the
 // table is small.
 function sweep(db) {
-  const r = db.prepare(`DELETE FROM pp_idempotency_keys WHERE expires_at <= ?`).run(_nowIso());
+  const r = db.prepare(`DELETE FROM idempotency_keys WHERE expires_at <= ?`).run(_nowIso());
   return r.changes;
 }
 

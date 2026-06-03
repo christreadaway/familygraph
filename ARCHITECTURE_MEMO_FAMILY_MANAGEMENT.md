@@ -1,8 +1,8 @@
 # Architectural Memo: Centralizing Family Management
 
-**How MissionIQ, ParentPoint, and future apps will consume identity from a shared registry.**
+**How a portfolio of mission-aligned apps will consume identity from a shared registry.**
 
-For: MissionIQ project, ParentPoint project, and any future Catholic Digital Commons app that handles family data.
+For: any current or future Catholic Digital Commons app that handles family data.
 
 | | |
 |---|---|
@@ -16,7 +16,7 @@ For: MissionIQ project, ParentPoint project, and any future Catholic Digital Com
 
 ## The decision
 
-Family management — knowing which families exist, who lives in them, where they live, who's related to whom — is being extracted out of MissionIQ and ParentPoint and into a standalone local registry called Family Graph. Each app will eventually stop maintaining its own family records and instead query Family Graph for identity. Each app retains its own domain data (donations for MissionIQ, engagement for ParentPoint) but stores that data against Family Graph identifiers.
+Family management — knowing which families exist, who lives in them, where they live, who's related to whom — is being extracted out of the individual apps in the portfolio and into a standalone local registry called Family Graph. Each app will eventually stop maintaining its own family records and instead query Family Graph for identity. Each app retains its own domain data (donations for a donor-intelligence app, engagement for a parent-engagement app) but stores that data against Family Graph identifiers.
 
 This memo describes the architectural target. It does not specify the migration plan for any individual app. Each project will write its own migration PRD against this memo, on its own timeline, after Family Graph is stable in production at St. Theresa.
 
@@ -24,18 +24,18 @@ This memo describes the architectural target. It does not specify the migration 
 
 ## Why this is happening
 
-Today, MissionIQ and ParentPoint each maintain their own family graph. When the operator uploads a tuition list, both apps independently parse it, run their own resolution logic, and create their own records. The result is three problems.
+Today, each app in the portfolio maintains its own family graph. When the operator uploads a tuition list, every app independently parses it, runs its own resolution logic, and creates its own records. The result is three problems.
 
 ### Three problems
 
 1. **Duplicated effort.** The same identity-resolution logic runs in two codebases. A bug fix in one doesn't propagate.
-2. **Drift.** Operator merges two families in MissionIQ. ParentPoint still has them as separate. The operator has to remember to do the same edit twice. They won't.
-3. **PII handling is inconsistent.** MissionIQ may handle PII one way; ParentPoint another. AI integrations in each app face the same anonymization problem and solve it differently.
+2. **Drift.** Operator merges two families in one app. Another app still has them as separate. The operator has to remember to do the same edit twice. They won't.
+3. **PII handling is inconsistent.** One app may handle PII one way; another a different way. AI integrations in each app face the same anonymization problem and solve it differently.
 
 ### What Family Graph solves
 
 - One place to maintain the family graph. The operator works in Family Graph's dashboard for identity edits.
-- Stable identifiers across the entire portfolio. The same family has the same code in MissionIQ, ParentPoint, and every future app.
+- Stable identifiers across the entire portfolio. The same family has the same code in every app, current and future.
 - PII vs pseudonym is decided centrally. Apps request what they need; AI workflows always get pseudonyms; export consent is logged in one audit trail.
 - The hard problem of identity resolution is solved once, by the team that cares about it most.
 
@@ -43,7 +43,7 @@ Today, MissionIQ and ParentPoint each maintain their own family graph. When the 
 
 ## What Family Graph is, in one paragraph
 
-A local desktop service that runs on the same machine as MissionIQ, ParentPoint, and any other consuming app. It exposes an HTTP API on `localhost:3500`. It owns a persistent SQLite database, encrypted at rest, that holds families, people, addresses, contact info, relationships, and household composition. Every family and every person has a stable opaque identifier (e.g., `f_a7b3c91d`, `p_e4d2f8a1`) that never changes. The API serves either PII (real names, real emails, real addresses) or pseudonyms (just the identifiers), based on the caller's authentication. Family Graph is the single source of truth for who is who.
+A local desktop service that runs on the same machine as any consuming app in the portfolio. It exposes an HTTP API on `localhost:3500`. It owns a persistent SQLite database, encrypted at rest, that holds families, people, addresses, contact info, relationships, and household composition. Every family and every person has a stable opaque identifier (e.g., `f_a7b3c91d`, `p_e4d2f8a1`) that never changes. The API serves either PII (real names, real emails, real addresses) or pseudonyms (just the identifiers), based on the caller's authentication. Family Graph is the single source of truth for who is who.
 
 ---
 
@@ -71,14 +71,14 @@ Future: each app contains its own domain tables (donations, engagement events) k
 - **Display.** When an app's UI needs to show a family name, it fetches from Family Graph. Apps may cache for performance but must respect Family Graph as authoritative.
 - **Edits.** Operators edit family records in Family Graph's dashboard, not in the consuming app. The consuming app's UI may link out to Family Graph for identity edits, or display the data read-only.
 - **Exports.** Default to pseudonyms. PII in exports requires explicit user consent and gets logged to Family Graph's audit trail via `POST /api/audit/external-export`.
-- **AI workflows.** Always pseudonyms. No exception. If an AI feature in MissionIQ or ParentPoint needs family data, it requests pseudonyms only.
+- **AI workflows.** Always pseudonyms. No exception. If an AI feature in any consuming app needs family data, it requests pseudonyms only.
 
 ### What does NOT change
 
-- Each app's domain expertise. MissionIQ still does donor intelligence. ParentPoint still does parent engagement.
+- Each app's domain expertise. A donor-intelligence app still does donor intelligence. A parent-engagement app still does parent engagement.
 - Each app's UI. The consumer-facing experience stays similar; the data plumbing changes underneath.
 - The operator's workflow. They still upload files, see analysis, run reports — but identity reconciliation moves to Family Graph's dashboard, where it's a better experience anyway.
-- Each app's storage of its own domain data. Donations stay in MissionIQ. Engagement events stay in ParentPoint.
+- Each app's storage of its own domain data. Donations stay in the donor-intelligence app. Engagement events stay in the parent-engagement app.
 
 ---
 
@@ -102,11 +102,11 @@ Family Graph exposes an HTTP API on `localhost:3500`. Apps authenticate via a sh
 
 ### The identity match/resolve pattern (the back-and-forth)
 
-This is how missionIQ / ParentPoint bring in their own data while
+This is how an integrating app brings in its own data while
 delegating identity to Family Graph:
 
 ```
-┌─ missionIQ ─────────────┐         ┌─ Family Graph ──────────┐
+┌─ an app ────────────────┐         ┌─ Family Graph ──────────┐
 │ ingest donation row:    │         │                         │
 │ { name, email, amount } │         │                         │
 │                         │         │                         │
@@ -128,9 +128,9 @@ delegating identity to Family Graph:
 └─────────────────────────┘         └─────────────────────────┘
 ```
 
-Family Graph's role is purely identity. missionIQ keeps owning
+Family Graph's role is purely identity. The integrating app keeps owning
 donations, engagement events, in-kind gifts, and donor research notes
-— it just keys them by FG's `p_*` / `f_*` codes instead of maintaining
+- it just keys them by FG's `p_*` / `f_*` codes instead of maintaining
 its own person/family tables.
 
 ---
@@ -182,7 +182,7 @@ Two acceptable token shapes in v1:
 
 Consuming apps SHOULD identify themselves on every PII call by setting
 the `X-Family-Graph-Actor` header to a short, stable string (e.g.,
-`missioniq`, `parentpoint`). The actor is recorded on every audit row
+`donor_app`, `engagement_app`). The actor is recorded on every audit row
 and surfaced in the dashboard's audit log so the operator can see who
 read or wrote what. For master tokens the header is honoured verbatim;
 for scoped tokens the actor is forced to the key's name (the operator's
@@ -253,7 +253,7 @@ This is the architectural commitment that makes the whole portfolio coherent. Ea
 
 - **Default to pseudonyms.** Whenever an app is unsure whether PII is needed, it asks for pseudonyms. The PII surface is the exception, not the default.
 - **AI sees pseudonyms only.** No exceptions. Any AI feature, whether it's a summarization, a chat agent, or an embedding pipeline, receives pseudonymous data only.
-- **Exports default to pseudonyms.** When the user exports a CSV from MissionIQ for a board report, it should contain identifiers, not real names. The user can override, but it's an explicit action with a consent step.
+- **Exports default to pseudonyms.** When the user exports a CSV from a consuming app for a board report, it should contain identifiers, not real names. The user can override, but it's an explicit action with a consent step.
 - **PII export consent is logged centrally.** Every time the user overrides the default and exports real names, the app calls `POST /api/audit/external-export` with the calling app, the operator, the entity codes, and the destination. Family Graph's audit log becomes the operator's single view of "what PII has left this machine."
 - **In-app display of PII is the consuming app's call.** Family Graph does not gatekeep what your UI shows to the user who's logged in. That's your decision based on your app's settings, the user's role, and the screen they're on.
 
@@ -288,22 +288,22 @@ If Family Graph is unreachable (process crashed, machine offline), consuming app
 
 ## Notes specific to each app
 
-### MissionIQ
+### The donor-intelligence app (origin of the identity engine)
 
-MissionIQ has the most mature identity logic in the portfolio. The Family Graph identity module is vendored from MissionIQ. The migration is conceptually a re-routing exercise: MissionIQ stops calling its own resolver and starts calling Family Graph's API instead.
+This app has the most mature identity logic in the portfolio. Family Graph's identity module is the upstream identity engine vendored from it. The migration is conceptually a re-routing exercise: the app stops calling its own resolver and starts calling Family Graph's API instead.
 
-- MissionIQ's existing JSON export becomes the format for the one-time bulk import that seeds Family Graph.
-- MissionIQ's resolution rules table gets translated into Family Graph's `resolution_rules` during the seed import.
-- MissionIQ's UI for conflict review may eventually be retired in favor of Family Graph's dashboard, or kept as a thin wrapper that links to Family Graph.
-- MissionIQ's domain data (donations, giving history, engagement scoring) stays in MissionIQ, keyed by Family Graph identifiers.
+- The app's existing JSON export becomes the format for the one-time bulk import that seeds Family Graph.
+- The app's resolution rules table gets translated into Family Graph's `resolution_rules` during the seed import.
+- The app's UI for conflict review may eventually be retired in favor of Family Graph's dashboard, or kept as a thin wrapper that links to Family Graph.
+- The app's domain data (donations, giving history, engagement scoring) stays in the app, keyed by Family Graph identifiers.
 
-### ParentPoint
+### The parent-engagement app
 
-ParentPoint's family management is less mature than MissionIQ's. The migration is more of a green-field opportunity: ParentPoint has been doing limited family resolution; Family Graph replaces that work entirely.
+This app's family management is less mature than the donor-intelligence app's. The migration is more of a green-field opportunity: the app has been doing limited family resolution; Family Graph replaces that work entirely.
 
-- ParentPoint's school registration imports go through Family Graph from the start of the migration, not after a transition period.
-- ParentPoint's domain data (engagement events, parent communication preferences, etc.) stays in ParentPoint, keyed by Family Graph identifiers.
-- Custody and household complexity, which ParentPoint may have been handling lightly, becomes Family Graph's responsibility. ParentPoint queries Family Graph for custody designation and acts on it (e.g., "who gets the email when the child has joint custody").
+- The app's school registration imports go through Family Graph from the start of the migration, not after a transition period.
+- The app's domain data (engagement events, parent communication preferences, etc.) stays in the app, keyed by Family Graph identifiers.
+- Custody and household complexity, which the app may have been handling lightly, becomes Family Graph's responsibility. The app queries Family Graph for custody designation and acts on it (e.g., "who gets the email when the child has joint custody").
 
 ### Future apps
 

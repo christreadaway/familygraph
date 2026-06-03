@@ -18,9 +18,9 @@ const FG_DATA = {
     audit_live: true,
     actor: "operator",
     consumers: [
-      { name: "missioniq",   scopes: ["pii.read","sanitize"], last_seen: "12s ago", state: "live" },
-      { name: "parentpoint", scopes: ["pii.read","import"],   last_seen: "4m ago",  state: "live" },
-      { name: "audioscribe", scopes: ["sanitize"],            last_seen: "2h ago",  state: "idle" },
+      { name: "donor_app",      scopes: ["pii.read","sanitize"], last_seen: "12s ago", state: "live" },
+      { name: "engagement_app", scopes: ["pii.read","import"],   last_seen: "4m ago",  state: "live" },
+      { name: "scribe_app",     scopes: ["sanitize"],            last_seen: "2h ago",  state: "idle" },
     ],
   },
   counters: {
@@ -44,10 +44,10 @@ const FG_DATA = {
     { code: "imp_2026_04_22a", file: "ladies-guild-roster.csv",   source: "CSV",              cat: "other",  ran_at: "Apr 22",       rows:  41, created:  2, attached:  39, conflicts: 0,  actor: "operator" },
   ],
   audit_recent: [
-    { t: "09:42:11", actor: "missioniq",   action: "read_pii",        target: "f_a7b3c91d", note: "donor-detail panel" },
+    { t: "09:42:11", actor: "donor_app",   action: "read_pii",        target: "f_a7b3c91d", note: "donor-detail panel" },
     { t: "09:41:58", actor: "operator",   action: "conflict_merged", target: "conf_8a1f...", note: "→ p_e4d2f8a1" },
-    { t: "09:39:02", actor: "missioniq",   action: "sanitize",        target: "tk_a1b2c3d4", note: "238 tokens, board-summary draft" },
-    { t: "09:37:44", actor: "parentpoint", action: "read_pii",        target: "p_71f8a2c3", note: "preferred-contact lookup" },
+    { t: "09:39:02", actor: "donor_app",   action: "sanitize",        target: "tk_a1b2c3d4", note: "238 tokens, board-summary draft" },
+    { t: "09:37:44", actor: "engagement_app", action: "read_pii",    target: "p_71f8a2c3", note: "preferred-contact lookup" },
     { t: "09:30:15", actor: "operator",   action: "external_export", target: "9 families",  note: "→ board-report.csv (PII consented)", tier: 2 },
     { t: "09:28:01", actor: "operator",   action: "bulk_import",     target: "imp_2026_04_28a", note: "facts_q1_2026.csv · 312 rows" },
     { t: "09:14:33", actor: "system",     action: "boot",            target: "schema=17",  note: "audit count carries forward" },

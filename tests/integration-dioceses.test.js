@@ -4,8 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { newDb, newSecrets, cleanup } = require('./_helpers');
-const dioceses = require('../server/parentpoint/dioceses');
-const certifications = require('../server/parentpoint/certifications');
+const dioceses = require('../server/integration/dioceses');
+const certifications = require('../server/integration/certifications');
 const people = require('../server/identity/people');
 const history = require('../server/identity/history');
 

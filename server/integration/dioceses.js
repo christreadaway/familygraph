@@ -103,7 +103,7 @@ function _normalisePatch(patch) {
 // Sentinel surfaced through the audit object so the HTTP layer can map
 // it onto a 412 Precondition Failed without leaking implementation
 // detail into the helper return type.
-const ETAG_MISMATCH = Symbol.for('parentpoint.dioceses.etagMismatch');
+const ETAG_MISMATCH = Symbol.for('integration.dioceses.etagMismatch');
 
 function update(db, secrets, code, patch, audit = {}) {
   if (!isValidCode(code, 'diocese')) return null;

@@ -1,16 +1,22 @@
-# ParentPoint × FamilyGraph — Integration Contract
+# FamilyGraph Integration Contract
 
-**Audience:** engineers building the FamilyGraph repo + future ParentPoint
-contributors wiring the connector.
+**Audience:** engineers building the FamilyGraph repo + contributors wiring an
+integrating app to the connector.
 **Status:** Draft v0.1 — May 2026.
 **Companion file:** none required on the FamilyGraph side yet, but this doc
 defines the read / write contract FamilyGraph must satisfy.
 
+This is the app-agnostic integration contract. FamilyGraph exposes generic
+identity and household APIs; any consuming app plugs into them. FamilyGraph
+carries no per-app code. The sections below describe what such an app reads
+from and writes to FamilyGraph; where a worked example needs a concrete
+actor, it refers to "your app."
+
 ---
 
-## 1. What ParentPoint is
+## 1. What a consuming app is
 
-ParentPoint is an AI-powered family-engagement app for a single Catholic
+A typical consuming app is a family-engagement app for a single Catholic
 school community. A school's parents, teachers, coaches, school admins,
 after-care staff, and enrichment instructors all sign in to one tenant and
 get a role-appropriate view of:
@@ -24,23 +30,23 @@ get a role-appropriate view of:
 - Volunteer hours with required-per-family minimums
 - EIM (Ethics in Ministry) certification tracking
 - Outbound push (email + SMS) for admins
-- Optional MissionIQ family-sync mirror for enrollment
+- Optional family-sync mirror for enrollment
 
-Data is multi-tenant by school: `schools/{schoolId}/...` under one Firebase
-project. A single hardcoded superadmin can impersonate roles and switch
-tenants. Auth today is Firebase: Google, Microsoft, passwordless email link,
-and a salted-SHA-256 email allowlist baked into the bundle (beta).
+Such an app is multi-tenant by school: `schools/{schoolId}/...` under one
+Firebase project. A single hardcoded superadmin can impersonate roles and
+switch tenants. Auth today is Firebase: Google, Microsoft, passwordless email
+link, and a salted-SHA-256 email allowlist baked into the bundle (beta).
 
-ParentPoint stands up **standalone** today — every roster is entered by an
+A consuming app stands up **standalone** today - every roster is entered by an
 administrator (CSV or in-app CRUD). FamilyGraph is the planned identity
-layer; ParentPoint must continue to work without it.
+layer; an integrating app must continue to work without it.
 
 ## 2. What FamilyGraph is (assumed)
 
 A separate repository that hosts the **identity** and **household** layer for
-people who appear in more than one community on the same campus — e.g. a
+people who appear in more than one community on the same campus - e.g. a
 parish + its school. One person, one record, regardless of how many
-ParentPoint-style apps reference them.
+integrating apps reference them.
 
 FamilyGraph is the place where:
 - A person's name, email, phone, mailing address live.
@@ -49,8 +55,8 @@ FamilyGraph is the place where:
 - Photo / communication consent flags that follow the person across contexts
   live.
 
-FamilyGraph is **not** an identity provider. ParentPoint continues to use
-Google / Microsoft / email-link / password sign-in. FamilyGraph is a data
+FamilyGraph is **not** an identity provider. The integrating app continues to
+use Google / Microsoft / email-link / password sign-in. FamilyGraph is a data
 backend; the auth handshake stays in Firebase.
 
 ---
@@ -58,46 +64,46 @@ backend; the auth handshake stays in Firebase.
 ## 3. Boundary of ownership *(connected mode)*
 
 The line is: **identity and family structure belong to FamilyGraph; the
-school context that wraps an identity belongs to ParentPoint.** Standalone
-mode collapses this entirely — see §4.1.
+school context that wraps an identity belongs to the integrating app.**
+Standalone mode collapses this entirely - see §4.1.
 
-| Entity / fact | FamilyGraph (when connected) | ParentPoint |
+| Entity / fact | FamilyGraph (when connected) | Integrating app |
 |---|---|---|
 | **Person record** (name, preferred name, email, phone, address) | ✅ source of truth | cached read-only mirror |
 | **Household** (which adults are linked to which kids, custodial flag, relationship label) | ✅ source of truth | cached read-only mirror |
 | **Photo / DNP consent** | ✅ source of truth | cached, surfaced per-school |
 | **EIM / safe-environment certifications** | ✅ source of truth (follows the person) | cached read-only mirror |
-| **Identity ID** (`personId`, `householdId`) | ✅ issuer | stored on every PP entity that references a person |
-| **Student → grade** (e.g. "Annie is in 3rd grade for 2026-2027") | mirror (read-only, pushed by PP) | ✅ source of truth |
-| **Student → classroom + teacher** | mirror (read-only, pushed by PP) | ✅ source of truth |
+| **Identity ID** (`personId`, `householdId`) | ✅ issuer | stored on every app entity that references a person |
+| **Student → grade** (e.g. "Annie is in 3rd grade for 2026-2027") | mirror (read-only, pushed by the app) | ✅ source of truth |
+| **Student → classroom + teacher** | mirror (read-only, pushed by the app) | ✅ source of truth |
 | **Teacher → classroom assignment** | ❌ | ✅ source of truth |
-| **School role** (parent / teacher / coach / school_admin / after_care / enrichment) | mirror (read-only, pushed by PP) | ✅ source of truth |
-| **Child interests / activities** (e.g. "plays basketball", "drama camp", "after-care MWF") | mirror (read-only, pushed by PP, see §7.3) | ✅ source of truth |
+| **School role** (parent / teacher / coach / school_admin / after_care / enrichment) | mirror (read-only, pushed by the app) | ✅ source of truth |
+| **Child interests / activities** (e.g. "plays basketball", "drama camp", "after-care MWF") | mirror (read-only, pushed by the app, see §7.3) | ✅ source of truth |
 | **School year** | ❌ | ✅ source of truth |
 | **Messaging, lunch orders, attendance, athletics, volunteer hours, EIM expiration tracking per school** | ❌ | ✅ source of truth |
 
 > **Hard rule from product:** *"Assignment of students to grades and classes
-> happens in ParentPoint, by school administrators."* FamilyGraph never
-> writes a grade or classroom into a ParentPoint record. Even when FG is
-> connected, the AdminClassRosters editor in ParentPoint remains the only
-> place a student gets dropped into a classroom. The reverse direction —
-> ParentPoint pushing the resulting grade / classroom / activities up to
-> FamilyGraph so FG has a fuller picture of the child — is in §7.3.
+> happens in the integrating app, by school administrators."* FamilyGraph
+> never writes a grade or classroom into an app's record. Even when FG is
+> connected, the class-rosters editor in the integrating app remains the only
+> place a student gets dropped into a classroom. The reverse direction - the
+> app pushing the resulting grade / classroom / activities up to FamilyGraph
+> so FG has a fuller picture of the child - is in §7.3.
 
 ## 4. Modes of operation
 
-ParentPoint has two persisted modes. The active mode is set per tenant at
+A consuming app has two persisted modes. The active mode is set per tenant at
 `schools/{schoolId}/settings/integrations.familyGraph.enabled` and is
 read at boot.
 
 ### 4.1 Standalone mode (default)
 
-**ParentPoint owns 100% of the data.** No FamilyGraph involvement
-whatsoever — no read calls, no write calls, no webhook handler running.
+**Your app owns 100% of the data.** No FamilyGraph involvement
+whatsoever - no read calls, no write calls, no webhook handler running.
 Everything an administrator needs is uploaded or entered directly into
-ParentPoint.
+your app.
 
-What the superadmin / school admin maintains directly in ParentPoint:
+What the superadmin / school admin maintains directly in the app:
 
 - **Families & parents** — name, primary + secondary email, phone(s),
   mailing address, custody flags, photo / directory consent. Editable
@@ -131,34 +137,35 @@ When the superadmin adds a person via any of these screens:
    them to the existing record so no temp password is ever needed.
 
 Bulk import is supported in every roster surface (CSV + Google Sheet
-URL) so the superadmin can lift an entire school's data into ParentPoint
+URL) so the superadmin can lift an entire school's data into the app
 in one pass without any external system.
 
 ### 4.2 FamilyGraph-connected mode
 - Identity / household data is **read from FamilyGraph**. Local CRUD on
   identity fields is disabled in the UI; "Edit in FamilyGraph" buttons
   deep-link out.
-- ParentPoint still owns the school-context fields (grade, classroom,
+- Your app still owns the school-context fields (grade, classroom,
   teacher, role) and writes them.
 - New FamilyGraph events (a parent updates their phone) propagate to
-  ParentPoint via webhook or pull-on-read cache invalidation.
-- School-context changes that imply identity changes — e.g. an admin
-  adds a brand-new student who isn't yet in FamilyGraph — POST a
+  the app via webhook or pull-on-read cache invalidation.
+- School-context changes that imply identity changes - e.g. an admin
+  adds a brand-new student who isn't yet in FamilyGraph - POST a
   create-suggestion to FamilyGraph and block enrollment until it's
   accepted (configurable: hard-block vs soft-create-stub).
 
 ### 4.3 Mode-aware data layer
-Every ParentPoint repo write tags `source: 'manual' | 'familygraph'` so
+Every app repo write tags `source: 'manual' | 'familygraph'` so
 that a future audit knows which writes came from a sync vs an admin
 keystroke. Repos preserve `manual` edits even if FamilyGraph later
-returns conflicting data — see §7.
+returns conflicting data - see §7.
 
 ---
 
-## 5. ParentPoint data model recap
+## 5. Consuming-app data model recap
 
 Read this section as the **target** that FamilyGraph syncs need to satisfy.
-All collections live under `schools/{schoolId}/`.
+This is the shape a typical integrating app keeps locally. All collections
+live under `schools/{schoolId}/`.
 
 | Collection | Doc id convention | Holds |
 |---|---|---|
@@ -172,7 +179,7 @@ All collections live under `schools/{schoolId}/`.
 | `eim_certifications` | random | Per-person EIM training, required to volunteer |
 | `do_not_photo` | random | Per-student photo restrictions |
 
-ParentPoint's `UserRole` is:
+A typical app's `UserRole` is:
 ```
 'parent' | 'teacher' | 'school_admin' | 'platform_admin'
   | 'coach' | 'after_care' | 'enrichment'
@@ -180,16 +187,16 @@ ParentPoint's `UserRole` is:
 
 Today the join keys are **email addresses**. Onboarding matches a parent's
 email against `class_rosters[].students[].parentEmails`. When FamilyGraph
-is connected we add a stable `personId` to every parent/student/staff
+is connected the app adds a stable `personId` to every parent/student/staff
 record so reassignments (email change, remarriage) stay linked even when
 the email rotates.
 
 ---
 
-## 6. Read contract — what ParentPoint needs to read from FamilyGraph
+## 6. Read contract - what an integrating app reads from FamilyGraph
 
-FamilyGraph must expose a stable HTTPS API (REST or GraphQL — TBD). The
-shape below describes the **semantics** ParentPoint needs, regardless of
+FamilyGraph must expose a stable HTTPS API (REST or GraphQL - TBD). The
+shape below describes the **semantics** a consuming app needs, regardless of
 transport.
 
 ### 6.1 Identity object
@@ -235,7 +242,7 @@ transport.
 }
 ```
 
-`role` values match ParentPoint's existing
+`role` values match a typical app's
 `ClassRosterParentLinkage.relationship`: `mother | father | step_parent |
 guardian | grandparent | other | child`.
 
@@ -250,7 +257,7 @@ guardian | grandparent | other | child`.
 }
 ```
 
-### 6.4 Endpoints ParentPoint expects
+### 6.4 Endpoints the integrating app expects
 
 | Verb + path | Purpose | Caller |
 |---|---|---|
@@ -262,11 +269,11 @@ guardian | grandparent | other | child`.
 | `GET /v1/households/changed?since={iso}` | Incremental pull for caches | Cloud Function (cron) |
 
 All `GET` responses **must** include `Cache-Control: max-age` and an
-`ETag` so ParentPoint can avoid re-pulling unchanged objects.
+`ETag` so the integrating app can avoid re-pulling unchanged objects.
 
-### 6.5 Webhook ParentPoint expects to consume
+### 6.5 Webhook the integrating app expects to consume
 
-FamilyGraph POSTs to a ParentPoint Cloud Function endpoint when an
+FamilyGraph POSTs to the app's Cloud Function endpoint when an
 identity / household record changes:
 
 ```jsonc
@@ -279,11 +286,11 @@ Body: {
   "personId": "fg_p_...",
   "householdId": "fg_h_...",       // when applicable
   "updatedAt": "2026-05-15T10:31:22Z",
-  "schoolHints": ["st-theresa"]    // optional, FG knows which PP tenants reference this person
+  "schoolHints": ["st-theresa"]    // optional, FG knows which app tenants reference this person
 }
 ```
 
-ParentPoint's webhook handler does **two** things:
+The app's webhook handler does **two** things:
 1. Invalidates the cached copy of that personId / householdId across all
    tenants in `schoolHints` (or all tenants if absent).
 2. Fans out to any derived records — e.g. updating
@@ -292,17 +299,17 @@ ParentPoint's webhook handler does **two** things:
 
 ---
 
-## 7. Write contract — what ParentPoint writes to FamilyGraph
+## 7. Write contract - what an integrating app writes to FamilyGraph
 
-ParentPoint writes two kinds of things to FamilyGraph:
+A consuming app writes two kinds of things to FamilyGraph:
 
-1. **Identity events** (§7.1) — suggestions to create / update an
-   identity or household record that originated in ParentPoint.
-2. **Child enrichment context** (§7.3) — a read-only mirror of what
-   ParentPoint knows about each child: current grade, classroom, the
+1. **Identity events** (§7.1) - suggestions to create / update an
+   identity or household record that originated in the app.
+2. **Child enrichment context** (§7.3) - a read-only mirror of what
+   the app knows about each child: current grade, classroom, the
    activities and interests they're engaged in. FG never overrides
    these locally; it just stores them so that when another consumer of
-   the FG identity (e.g. the parish app) needs to render "Annie, 3rd
+   the FG identity (e.g. a sibling app) needs to render "Annie, 3rd
    grade, plays basketball and is in drama camp" they can.
 
 Generic write semantics (idempotency, ETags, request IDs) in §7.2 apply
@@ -319,11 +326,11 @@ to both. Conflict resolution rules in §7.4 also apply to both.
 | `POST /v1/persons/{personId}/photoConsent` | Update DNP / photo consent | `/admin/do-not-photo` writes |
 | `POST /v1/persons/{personId}/eimCertifications` | Add/extend an EIM cert | EIM admin page write |
 
-### 7.3 Child enrichment context (PP → FG mirror)
+### 7.3 Child enrichment context (app → FG mirror)
 
 Because FamilyGraph spans communities on the same campus, a sibling app
-(e.g. the parish's faith-formation app) benefits from a richer picture
-of each child than just "name + DOB". ParentPoint pushes a denormalized
+(e.g. a faith-formation app) benefits from a richer picture
+of each child than just "name + DOB". Your app pushes a denormalized
 **enrichment snapshot** keyed by `personId` so FG can show it
 elsewhere.
 
@@ -331,7 +338,7 @@ elsewhere.
 POST /v1/persons/{personId}/schoolContext
 Headers:
   Authorization: Bearer <service-jwt>
-  X-Source-App: parentpoint
+  X-Source-App: integration
   X-Source-Tenant: st-theresa
 Body: {
   "schoolId": "st-theresa",
@@ -368,20 +375,20 @@ The Cloud Function debounces fanouts per `personId` to one POST every
 
 **Important:** the `activities` array is the **current state**, not a
 log. FG is expected to overwrite the previous snapshot on every POST.
-ParentPoint keeps the activity history in its own collections; FG only
+The app keeps the activity history in its own collections; FG only
 needs the now-picture.
 
 ### 7.2 Write semantics
 
-- Every PATCH carries an `If-Match: {etag}` header so a stale ParentPoint
+- Every PATCH carries an `If-Match: {etag}` header so a stale app
   cache can't blindly overwrite FamilyGraph. On 412 Precondition Failed,
-  ParentPoint re-pulls and surfaces a "merge with their newer record?"
+  the app re-pulls and surfaces a "merge with their newer record?"
   prompt to the admin.
-- Writes are **idempotent by client request id**: ParentPoint sends
-  `X-Request-Id: pp_{uuid}` and FamilyGraph dedupes within 24h so retries
-  on flaky networks don't double-create.
+- Writes are **idempotent by client request id**: the app sends
+  `X-Request-Id: integration_{uuid}` and FamilyGraph dedupes within 24h so
+  retries on flaky networks don't double-create.
 - A successful create returns the new `personId` / `householdId`, which
-  ParentPoint immediately stores against its local record so all
+  the app immediately stores against its local record so all
   subsequent writes use the FG id.
 
 ### 7.4 Conflict resolution
@@ -389,19 +396,19 @@ needs the now-picture.
 The product rule is **last-writer-wins per-field, with manual edits
 beating sync writes inside their freshness window.** Concretely:
 
-- Local ParentPoint repos store `lastManualEditAt` alongside
+- Local app repos store `lastManualEditAt` alongside
   `source: 'manual' | 'familygraph'` per field-set (one timestamp per
   doc, granular per-doc is enough).
 - When the FamilyGraph webhook fires, the sync handler compares the
   incoming `updatedAt` against `lastManualEditAt`:
   - If `updatedAt > lastManualEditAt + 60s` → accept FG's version.
-  - Otherwise → keep ParentPoint's manual edit, flag a row in
+  - Otherwise → keep the app's manual edit, flag a row in
     `schools/{sid}/familygraph_conflicts` for admin review.
 - Admins resolve conflicts at `/admin/familygraph-conflicts` (planned UI;
   not yet built).
 
 The 60s buffer covers the case where an admin clicks Save and a
-FamilyGraph webhook fires for the same field within seconds — without
+FamilyGraph webhook fires for the same field within seconds - without
 the buffer the admin's local edit gets clobbered.
 
 ---
@@ -411,7 +418,7 @@ the buffer the admin's local edit gets clobbered.
 | Concern | Choice |
 |---|---|
 | Primary direction | Bidirectional, FG-leaning for identity |
-| Transport | Webhooks (FG → PP) + REST (PP → FG) |
+| Transport | Webhooks (FG → app) + REST (app → FG) |
 | Reconciliation | Hourly cron pulls `/v1/persons/changed?since=` and `/v1/households/changed?since=`; webhook failures are caught up. |
 | Cache | Firestore `schools/{sid}/familygraph_mirror/{personId}` + `.../household_mirror/{householdId}` with TTL refreshed on webhook. |
 | Auth between repos | mTLS or signed webhook + service-account JWT for REST. Final choice tracked in §11. |
@@ -440,7 +447,7 @@ useAuth.resolveRole(firebaseUser):
     6. Fall back to parent in default tenant
 ```
 
-A note: even in FamilyGraph mode, ParentPoint never asks the user to
+A note: even in FamilyGraph mode, the integrating app never asks the user to
 *log in to FamilyGraph*. Identity is whatever Firebase verified plus
 whatever FamilyGraph data hangs off the verified email.
 
@@ -450,7 +457,7 @@ whatever FamilyGraph data hangs off the verified email.
 
 ### 10.1 Admin adds a new family in standalone mode
 1. `/admin/parents → New parent` with name + email + phone + address.
-2. ParentPoint writes `parent_contacts/{lowercaseEmail}` with
+2. The app writes `parent_contacts/{lowercaseEmail}` with
    `source: 'manual'`. No external call.
 3. Admin opens `/admin/students` and adds the child. Writes a new doc
    to `students` (new collection in this branch) with `source: 'manual'`.
@@ -462,34 +469,34 @@ whatever FamilyGraph data hangs off the verified email.
 1. Admin types the parent's email. Autocomplete hits
    `GET /v1/persons?email=...` and resolves to an existing personId. The
    contact fields autofill, read-only, with an "Edit in FamilyGraph" link.
-2. Admin proceeds to add the child. They click "Add new student" — the
-   form requires a `personId`. ParentPoint either:
+2. Admin proceeds to add the child. They click "Add new student" - the
+   form requires a `personId`. The app either:
    - Searches FamilyGraph by name and the admin picks an existing child, or
    - Sends `POST /v1/persons` to suggest a new identity (kind=child). FG
      responds with a personId; admin attaches it to the household.
-3. Admin opens `/admin/class-rosters` and assigns to 3A — *this is the
-   only step ParentPoint writes locally*.
+3. Admin opens `/admin/class-rosters` and assigns to 3A - *this is the
+   only step the app writes locally*.
 
 ### 10.3 Parent changes their phone in FamilyGraph
-1. The parent updates their phone in the FamilyGraph parish app.
-2. FG POSTs `person.updated` to the ParentPoint webhook.
-3. ParentPoint:
+1. The parent updates their phone in a sibling app on the same campus.
+2. FG POSTs `person.updated` to the integrating app's webhook.
+3. The app:
    - Updates `familygraph_mirror/{personId}` with the new payload.
    - Re-derives phone on every `class_rosters` doc that references this
      personId (so messaging recipient pickers and SMS queues are correct).
    - Notifies subscribed Cloud Function consumers (e.g. the outbound SMS
      queue rebuilder).
 
-### 10.4 Child gets added to the basketball team (PP → FG enrichment push)
+### 10.4 Child gets added to the basketball team (app → FG enrichment push)
 1. Athletic Director adds Annie Lee to the Girls 4A basketball roster
    on `/admin/sports/teams`.
 2. The `sport_teams.rosterStudentIds` write triggers the Cloud Function
    `emitSchoolContextSnapshot(personId)` for Annie's `personId`.
 3. The Cloud Function debounces by personId (5-min window) and then
    POSTs `/v1/persons/{personId}/schoolContext` to FamilyGraph with the
-   full current snapshot — grade, classroom, *and* the updated
+   full current snapshot - grade, classroom, *and* the updated
    `activities` array now including basketball.
-4. FG stores the snapshot; the parish app querying
+4. FG stores the snapshot; a sibling app querying
    `GET /v1/persons/{annie}/schoolContext` now sees the basketball
    activity alongside any drama-camp / after-care entries already there.
 
@@ -498,11 +505,11 @@ whatever FamilyGraph data hangs off the verified email.
    to `/admin/class-rosters/3B`.
 2. The Cloud Function fires `emitSchoolContextSnapshot(annie.personId)`
    once the debounce window settles.
-3. ParentPoint pushes the new snapshot to FG with `classroomId: '3B'`,
+3. The app pushes the new snapshot to FG with `classroomId: '3B'`,
    `classroomName: 'Room 207 — Mr. Patel'`, `homeroomTeacherPersonId:
    <Mr. Patel's personId if known>`.
 4. FG overwrites the previous snapshot for Annie. Activity history in
-   PP is unaffected (PP keeps its own audit log).
+   the app is unaffected (it keeps its own audit log).
 
 ---
 
@@ -513,23 +520,23 @@ whatever FamilyGraph data hangs off the verified email.
 | Q1 | REST vs GraphQL for the FG-side API? | FG repo | open |
 | Q2 | Single shared Firebase project, or separate FG project with cross-project IAM? | both | open |
 | Q3 | Auth between repos — mTLS, signed webhooks + service-account JWT, or both? | both | open |
-| Q4 | Should ParentPoint admins be able to *create* FamilyGraph identities, or only suggest? (Hard-block vs soft-create-stub.) | product | open |
-| Q5 | Are `do_not_photo` records identity-level (FG) or school-level (PP)? Today they're per-student in PP. Proposal: identity-level in FG, PP keeps a per-school override for "no photos at this school's events" specifically. | product | open |
+| Q4 | Should an integrating app's admins be able to *create* FamilyGraph identities, or only suggest? (Hard-block vs soft-create-stub.) | product | open |
+| Q5 | Are `do_not_photo` records identity-level (FG) or school-level (the app)? Today they're per-student in the app. Proposal: identity-level in FG, the app keeps a per-school override for "no photos at this school's events" specifically. | product | open |
 | Q6 | EIM cert: who is the system of record — the diocese? Does FG just cache it? | product | open |
-| Q7 | When an admin in PP archives a parent, does that propagate as a delete to FG, or just unlink from this school's tenant? Strongly recommend the latter. | product | open |
+| Q7 | When an admin in the integrating app archives a parent, does that propagate as a delete to FG, or just unlink from this school's tenant? Strongly recommend the latter. | product | open |
 
 ---
 
 ## 12. Versioning
 
-This contract is **v0.1**. Every FG API call ParentPoint makes will
-include `X-PP-Contract-Version: v0.1` and FG should refuse calls whose
+This contract is **v0.1**. Every FG API call the integrating app makes will
+include `X-FG-Contract-Version: v0.1` and FG should refuse calls whose
 declared version isn't on its compatibility list. Bump the minor when
 adding fields, the major when changing semantics.
 
 ---
 
-## 13. Implementation checklist (ParentPoint side)
+## 13. Implementation checklist (integrating-app side)
 
 When FamilyGraph is ready to wire up:
 
@@ -554,8 +561,8 @@ When FamilyGraph is ready to wire up:
 
 ## 14. Why two modes?
 
-Some schools that adopt ParentPoint won't have a sibling parish app on
-the same campus — for them, FamilyGraph is overkill. Forcing them to
+Some schools that adopt a consuming app won't have a sibling app on
+the same campus - for them, FamilyGraph is overkill. Forcing them to
 stand up an identity service before they can roster their families
 would kill adoption.
 
@@ -563,8 +570,8 @@ Other schools share a campus and staff with a parish, so a single
 mother-of-three doesn't want to maintain her phone number in two
 places. For them, FamilyGraph is the single front door.
 
-Both customers should get the same ParentPoint UX. The connector is the
-only thing that changes. That's why every ParentPoint repo write
+Both customers should get the same app UX. The connector is the
+only thing that changes. That's why every app repo write
 tags `source` and every identity-editing UI gates on
 `useFamilyGraphMode()`.
 
@@ -613,20 +620,20 @@ New tables:
   The existing `persons.eim_*` columns continue to hold the "current"
   cert pointer for the expiring-soon dashboard view; the new table
   preserves the audit trail of every renewal.
-- `school_contexts` — PP-pushed enrichment snapshots, unique per
+- `school_contexts` — app-pushed enrichment snapshots, unique per
   `(person_code, school_id)`. POSTs overwrite (the doc treats activities
   as current state, not a log).
-- `pp_webhook_subscriptions` / `pp_webhook_deliveries` — registered PP
+- `webhook_subscriptions` / `webhook_deliveries` — registered consumer
   endpoints + per-attempt delivery rows with exponential backoff. Same
   retry shape as the existing notifications queue.
-- `pp_idempotency_keys` — `X-Request-Id` dedupe cache. 24-hour TTL per
+- `idempotency_keys` — `X-Request-Id` dedupe cache. 24-hour TTL per
   the contract; lazy expiry on lookup, sweep every 6h.
 
 ### HTTP surface
 
 Mounted at `/v1/...`. All routes require Bearer auth with the new
-`parentpoint` scope (master token also works). The router lives in
-`server/api/parentpoint.js`; helper modules under `server/parentpoint/`:
+`integration` scope (master token also works). The router lives in
+`server/api/integration.js`; helper modules under `server/integration/`:
 `objects`, `consents`, `certifications`, `schoolContext`, `webhooks`,
 `changes`, `etag`, `idempotency`.
 
@@ -637,7 +644,7 @@ Mounted at `/v1/...`. All routes require Bearer auth with the new
 | `GET /v1/persons/:personId` | Hydrate one person | ETag + `Cache-Control: max-age=30` |
 | `GET /v1/persons/:personId/schoolContext` | Read snapshot(s) | `?schoolId=` for one |
 | `GET /v1/persons/:personId/consent` | Read consent | Defaults applied |
-| `POST /v1/persons` | Suggest a new identity | Body accepts both PP shape and FG shape |
+| `POST /v1/persons` | Suggest a new identity | Body accepts both app shape and FG shape |
 | `PATCH /v1/persons/:personId` | Update contact fields | Honors `If-Match` (412 on mismatch) |
 | `POST /v1/persons/:personId/photoConsent` | Update consent | Emits `consent.updated` webhook |
 | `POST /v1/persons/:personId/eimCertifications` | Add/extend EIM cert | Promotes to current when later than existing |
@@ -647,16 +654,16 @@ Mounted at `/v1/...`. All routes require Bearer auth with the new
 | `GET /v1/households/:householdId` | Render the household | ETag + Cache-Control |
 | `POST /v1/households` | Suggest a new household | Optional members[] at create time |
 | `POST /v1/households/:id/members` | Add a member | Bumps family.updated_at |
-| `POST /v1/webhooks` | Subscribe a PP webhook URL | Body: `{ url, secret, events?, schoolHint? }` |
+| `POST /v1/webhooks` | Subscribe a consumer webhook URL | Body: `{ url, secret, events?, schoolHint? }` |
 | `GET /v1/webhooks` | List subscriptions | |
 | `DELETE /v1/webhooks/:code` | Unsubscribe | Cascades pending deliveries |
 | `GET /v1/webhooks/:code/deliveries` | Recent attempt rows | Filter `?status=` |
 
 Per-request middleware:
 
-- `X-PP-Contract-Version` is recorded on every call. Unknown values
+- `X-FG-Contract-Version` is recorded on every call. Unknown values
   return `426 Upgrade Required`; missing values are accepted and logged
-  (some early PP clients won't set the header).
+  (some early clients won't set the header).
 - `X-Source-App` / `X-Source-Tenant` are recorded on writes. Tenant doubles
   as the school-hint when fanning out webhook deliveries — only
   subscriptions that match the hint or have no hint receive the event.
@@ -690,12 +697,12 @@ Triggered by:
 
 Delivery semantics mirror the existing notifications queue: 5 attempts,
 exponential backoff (30s / 2m / 10m / 1h / 6h). Dispatcher runs once per
-60s in the background; disable with `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1`.
+60s in the background; disable with `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS=1`.
 
 ### Authentication
 
-A new `parentpoint` scope on the existing per-app key surface
-(`server/auth/api-keys.js`). Provision a key with that scope and PP
+A new `integration` scope on the existing per-app key surface
+(`server/auth/api-keys.js`). Provision a key with that scope and the app's
 calls go through; the master token continues to work. mTLS (Q3) is not
 implemented in v0.1; the signed-webhook + scoped-bearer combination is
 the v0.1 answer.
@@ -703,14 +710,14 @@ the v0.1 answer.
 ### What's deliberately NOT in scope yet
 
 - The conflict-resolution UI for §7.4 (`schools/{sid}/familygraph_conflicts`
-  in PP, `/admin/familygraph-conflicts` UI). FamilyGraph already has a
-  conflict queue at `/api/conflicts` — wiring "PP detected a divergence"
-  rows into it is a follow-up.
+  in the integrating app, `/admin/familygraph-conflicts` UI). FamilyGraph
+  already has a conflict queue at `/api/conflicts` - wiring "the app
+  detected a divergence" rows into it is a follow-up.
 - `do_not_photo` per-school override (§11 Q5). The current consent table
   is single-tenant; the per-school override needs a join table that the
   product team hasn't decided on.
 - Diocese-as-source-of-truth for EIM (§11 Q6). FamilyGraph caches the
-  certification payload as PP sends it; the diocesan integration is a
+  certification payload as the app sends it; the diocesan integration is a
   separate workstream.
 - `person.deleted` / `household.deleted` webhook emission. Both are
   defined in the contract but FamilyGraph never deletes today (status
@@ -729,7 +736,7 @@ The full suite went from 310 → 390 passing (1 skipped on root, as before).
 The follow-up to Appendix A picked up the three §11 open questions the
 operator wanted resolved beyond v0.1:
 
-- **Q5 (per-school photo consent)** — implemented in FG, not just PP.
+- **Q5 (per-school photo consent)** — implemented in FG, not just the app.
   Identity-level base remains the source of truth; a school can
   override either field (photo or directory) and the effective value
   for `(person, school)` is `override-or-base`.
@@ -813,8 +820,8 @@ was school-scoped:
 }
 ```
 
-A consent change at the identity level omits `schoolId`. PP clients that
-already ignored unrecognised keys continue to work; clients that want
+A consent change at the identity level omits `schoolId`. Consumer clients
+that already ignored unrecognised keys continue to work; clients that want
 the fanout precision can switch on the presence of `schoolId`.
 
 `person.deleted` and `household.deleted` events now actually fire — the
@@ -972,8 +979,8 @@ passing (+32 cases).
 
 ### Test count
 
-The audit + fix pass added 32 cases (parentpoint-bugfixes.test.js,
-parentpoint-merge-migration.test.js, plus updates to existing tests).
+The audit + fix pass added 32 cases (integration-bugfixes.test.js,
+integration-merge-migration.test.js, plus updates to existing tests).
 The full suite went from 431 → 463 passing (1 skipped on root, as
 before).
 
@@ -1083,7 +1090,7 @@ no endpoint was blocked.
 - **Email-lookup miss audit.** `GET /v1/persons?email=` previously
   audited only successful lookups, so an enumeration campaign was
   invisible at the audit layer. Misses now record
-  `pp_person_lookup_email_miss` with a salted hash of the queried
+  `integration_person_lookup_email_miss` with a salted hash of the queried
   email (not the email itself), so distinct-miss counts per actor
   are observable without leaking the queried address.
 

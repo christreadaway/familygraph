@@ -14,7 +14,7 @@ const { buildApp } = require('../server');
 const { newDb, newSecrets, defaultThresholds, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
 const families = require('../server/identity/families');
-const webhooks = require('../server/parentpoint/webhooks');
+const webhooks = require('../server/integration/webhooks');
 
 function listen(app) {
   return new Promise(resolve => {
@@ -58,9 +58,9 @@ async function makeServer(t) {
 
 const auth = (secrets, extra = {}) => ({
   authorization: `Bearer ${secrets.master}`,
-  'x-family-graph-actor': 'pp-v0_2-test',
-  'x-pp-contract-version': 'v0.1',
-  'x-source-app': 'parentpoint',
+  'x-family-graph-actor': 'integration-v0_2-test',
+  'x-fg-contract-version': 'v0.1',
+  'x-source-app': 'integration',
   ...extra,
 });
 
@@ -68,7 +68,7 @@ const auth = (secrets, extra = {}) => ({
 // PER-SCHOOL CONSENT OVERRIDE
 // -----------------------------------------------------------------------------
 
-test('PP API v0.2 > POST /v1/persons/:id/photoConsent with schoolId writes a per-school override', async t => {
+test('Integration API v0.2 > POST /v1/persons/:id/photoConsent with schoolId writes a per-school override', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   // Set the base first.
@@ -88,7 +88,7 @@ test('PP API v0.2 > POST /v1/persons/:id/photoConsent with schoolId writes a per
   assert.equal(r.body.consent.basePhotoConsent, 'allow');
 });
 
-test('PP API v0.2 > GET /v1/persons/:id/consent?schoolId=... returns the effective view', async t => {
+test('Integration API v0.2 > GET /v1/persons/:id/consent?schoolId=... returns the effective view', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   await request(port, {
@@ -112,7 +112,7 @@ test('PP API v0.2 > GET /v1/persons/:id/consent?schoolId=... returns the effecti
   assert.equal(baseGet.body.consent.overrideApplied, false);
 });
 
-test('PP API v0.2 > DELETE /v1/persons/:id/photoConsent?schoolId=... clears the override', async t => {
+test('Integration API v0.2 > DELETE /v1/persons/:id/photoConsent?schoolId=... clears the override', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   await request(port, {
@@ -130,7 +130,7 @@ test('PP API v0.2 > DELETE /v1/persons/:id/photoConsent?schoolId=... clears the 
   assert.equal(g.body.consent.overrideApplied, false);
 });
 
-test('PP API v0.2 > consent overrides are visible at /v1/persons/:id/consent/overrides', async t => {
+test('Integration API v0.2 > consent overrides are visible at /v1/persons/:id/consent/overrides', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   await request(port, {
@@ -150,7 +150,7 @@ test('PP API v0.2 > consent overrides are visible at /v1/persons/:id/consent/ove
   assert.deepEqual(schools, ['st-johns', 'st-theresa']);
 });
 
-test('PP API v0.2 > consent override write fires a consent.updated webhook with schoolId payload', async t => {
+test('Integration API v0.2 > consent override write fires a consent.updated webhook with schoolId payload', async t => {
   const { port, db, secrets } = await makeServer(t);
   webhooks.subscribe(db, secrets, { url: 'https://x.example/cb', events: ['consent.updated'] });
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
@@ -170,7 +170,7 @@ test('PP API v0.2 > consent override write fires a consent.updated webhook with 
 // DIOCESE CRUD
 // -----------------------------------------------------------------------------
 
-test('PP API v0.2 > POST + GET + PATCH a diocese', async t => {
+test('Integration API v0.2 > POST + GET + PATCH a diocese', async t => {
   const { port, secrets } = await makeServer(t);
   const c = await request(port, {
     method: 'POST', path: '/v1/dioceses', headers: auth(secrets),
@@ -188,7 +188,7 @@ test('PP API v0.2 > POST + GET + PATCH a diocese', async t => {
   assert.equal(p.body.diocese.eim_renewal_years, 5);
 });
 
-test('PP API v0.2 > POST /v1/persons/:id/eimCertifications with dioceseCode', async t => {
+test('Integration API v0.2 > POST /v1/persons/:id/eimCertifications with dioceseCode', async t => {
   const { port, secrets } = await makeServer(t);
   const d = await request(port, {
     method: 'POST', path: '/v1/dioceses', headers: auth(secrets),
@@ -213,7 +213,7 @@ test('PP API v0.2 > POST /v1/persons/:id/eimCertifications with dioceseCode', as
   assert.equal(cert.body.certifications[0].diocese_record_id, 'EIM-TX-12345');
 });
 
-test('PP API v0.2 > archive + reinstate a diocese keeps it findable under status=archived', async t => {
+test('Integration API v0.2 > archive + reinstate a diocese keeps it findable under status=archived', async t => {
   const { port, secrets } = await makeServer(t);
   const d = await request(port, {
     method: 'POST', path: '/v1/dioceses', headers: auth(secrets),
@@ -243,7 +243,7 @@ test('PP API v0.2 > archive + reinstate a diocese keeps it findable under status
 // ARCHIVE / REINSTATE / HISTORY for persons and households
 // -----------------------------------------------------------------------------
 
-test('PP API v0.2 > person archive emits person.deleted webhook + writes a history row', async t => {
+test('Integration API v0.2 > person archive emits person.deleted webhook + writes a history row', async t => {
   const { port, db, secrets } = await makeServer(t);
   webhooks.subscribe(db, secrets, { url: 'https://x.example/cb', events: ['person.deleted'] });
   const p = people.create(db, secrets, { given_name: 'Demo', family_name: 'User' });
@@ -262,7 +262,7 @@ test('PP API v0.2 > person archive emits person.deleted webhook + writes a histo
   assert.equal(hist.body.items[0].reason, 'graduated');
 });
 
-test('PP API v0.2 > person reinstate flips status back and emits person.updated', async t => {
+test('Integration API v0.2 > person reinstate flips status back and emits person.updated', async t => {
   const { port, db, secrets } = await makeServer(t);
   webhooks.subscribe(db, secrets, { url: 'https://x.example/cb', events: ['person.updated'] });
   const p = people.create(db, secrets, { given_name: 'Demo', family_name: 'User' });
@@ -279,7 +279,7 @@ test('PP API v0.2 > person reinstate flips status back and emits person.updated'
   assert.equal(pending[0].event, 'person.updated');
 });
 
-test('PP API v0.2 > household archive/reinstate parallels person endpoints', async t => {
+test('Integration API v0.2 > household archive/reinstate parallels person endpoints', async t => {
   const { port, db, secrets } = await makeServer(t);
   const f = families.create(db, secrets, { display_name: 'Demo' });
   const arc = await request(port, {
@@ -296,7 +296,7 @@ test('PP API v0.2 > household archive/reinstate parallels person endpoints', asy
   assert.equal(rein.status, 200);
 });
 
-test('PP API v0.2 > person archive is idempotent on a second call', async t => {
+test('Integration API v0.2 > person archive is idempotent on a second call', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Demo', family_name: 'User' });
   await request(port, { method: 'POST', path: `/v1/persons/${p}/archive`, headers: auth(secrets) });
@@ -305,7 +305,7 @@ test('PP API v0.2 > person archive is idempotent on a second call', async t => {
   assert.equal(second.body.noop, true);
 });
 
-test('PP API v0.2 > archive refuses to touch a merged person', async t => {
+test('Integration API v0.2 > archive refuses to touch a merged person', async t => {
   const { port, db, secrets } = await makeServer(t);
   const winner = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
   const loser = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
@@ -315,7 +315,7 @@ test('PP API v0.2 > archive refuses to touch a merged person', async t => {
   assert.match(r.body.error, /merged/);
 });
 
-test('PP API v0.2 > history endpoint surfaces creates, updates, and archives in order', async t => {
+test('Integration API v0.2 > history endpoint surfaces creates, updates, and archives in order', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Demo', family_name: 'User' });
   // Generate a few events via the API.

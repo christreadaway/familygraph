@@ -5,7 +5,7 @@ const path = require('path');
 const { parse } = require('csv-parse/sync');
 const { applyMapping } = require('./normalize');
 
-// CSV ingest. Heuristic mapping is vendored from missionIQ's ingestion module
+// CSV ingest. Heuristic mapping is vendored from the upstream identity engine's ingestion module
 // (server/services/ingestion.js): an extensive alias dictionary scored against
 // each header with a word-boundary regex, then assigned globally so that
 // "Child First Name" wins over generic "first_name" for the child slot.
@@ -14,7 +14,7 @@ const { applyMapping } = require('./normalize');
 // {family, address, persons[]} mapping the rest of Family Graph already uses.
 
 // Aliases per "flat" canonical field. The shape is a near-direct port of
-// missionIQ's STANDARD_FIELDS dictionary, with the missionIQ field names
+// the upstream identity engine's STANDARD_FIELDS dictionary, with the upstream identity engine field names
 // mapped to our internal naming:
 //
 //   first_name           → primary_given_name
@@ -182,7 +182,7 @@ const STANDARD_FIELDS = {
   notes: ['notes', 'comments', 'remarks', 'note'],
 };
 
-// Platform signatures — vendored from missionIQ. The score is whether any
+// Platform signatures — vendored from the upstream identity engine. The score is whether any
 // signature substring appears in any header (case-insensitive). Highest match
 // wins; we surface the platform name in the audit/log so operators know which
 // shape was detected.
@@ -207,7 +207,7 @@ function normalizeHeader(h) {
   return String(h || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-// Score how well a header matches an alias. Vendored from missionIQ.
+// Score how well a header matches an alias. Vendored from the upstream identity engine.
 //   100 — exact match
 //    80 — alias appears as a whole word inside the header
 //    70 — header appears as a whole word inside the alias
@@ -373,7 +373,7 @@ function inferMapping(headers) {
   return flatToStructured(flat);
 }
 
-// Identify and drop summary/totals rows — vendored from missionIQ.
+// Identify and drop summary/totals rows — vendored from the upstream identity engine.
 const SUMMARY_KEYWORDS = /^(total|grand total|subtotal|sum|totals|report total|net total|balance)$/i;
 function isSummaryRow(row, headers) {
   for (const h of headers) {
@@ -400,7 +400,7 @@ function _filterSummaryRows(rows, headers) {
   return { kept, dropped: rows.length - kept.length };
 }
 
-// Build the audit-friendly "mapping warning" string. Vendored from missionIQ.
+// Build the audit-friendly "mapping warning" string. Vendored from the upstream identity engine.
 function buildMappingWarning(flat) {
   if (!flat) return null;
   const hasIdentity =

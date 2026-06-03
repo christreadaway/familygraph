@@ -140,7 +140,7 @@ test('api > import preview + run', async t => {
 
 test('api > external-export consent records tier-2 audit event', async t => {
   const { port, secrets } = await makeServer(t);
-  const auth = { authorization: `Bearer ${secrets.master}`, 'x-family-graph-actor': 'missioniq' };
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-family-graph-actor': 'demo-app' };
   const r = await request(port, {
     method: 'POST',
     path: '/api/audit/external-export',

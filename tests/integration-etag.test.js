@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const etag = require('../server/parentpoint/etag');
+const etag = require('../server/integration/etag');
 
 test('etag > stableStringify produces deterministic output regardless of key order', () => {
   const a = { foo: 1, bar: [1, 2, { z: true, a: false }] };

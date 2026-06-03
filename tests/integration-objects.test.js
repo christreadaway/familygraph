@@ -1,7 +1,7 @@
 'use strict';
 
-// Tests for server/parentpoint/objects.js — the shape converters that turn
-// FG rows into the ParentPoint contract objects (§6.1, §6.2, §6.3).
+// Tests for server/integration/objects.js — the shape converters that turn
+// FG rows into the Integration contract objects (§6.1, §6.2, §6.3).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,8 +10,8 @@ const { newDb, newSecrets, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
 const families = require('../server/identity/families');
 const contacts = require('../server/identity/contacts');
-const consents = require('../server/parentpoint/consents');
-const objects = require('../server/parentpoint/objects');
+const consents = require('../server/integration/consents');
+const objects = require('../server/integration/objects');
 
 function setup(t) {
   const { db, dir } = newDb();
@@ -143,15 +143,15 @@ test('objects > householdForPerson returns the active membership', async t => {
   assert.equal(objects.householdForPerson(db, p), f);
 });
 
-test('objects > ppRoleToInternal maps PP labels to internal roles', () => {
-  assert.equal(objects.ppRoleToInternal('mother'), 'parent');
-  assert.equal(objects.ppRoleToInternal('father'), 'parent');
-  assert.equal(objects.ppRoleToInternal('step_parent'), 'parent');
-  assert.equal(objects.ppRoleToInternal('guardian'), 'guardian');
-  assert.equal(objects.ppRoleToInternal('grandparent'), 'grandparent');
-  assert.equal(objects.ppRoleToInternal('child'), 'child');
-  assert.equal(objects.ppRoleToInternal('other'), 'other_adult');
-  assert.equal(objects.ppRoleToInternal('alien'), null);
+test('objects > roleToInternal maps app labels to internal roles', () => {
+  assert.equal(objects.roleToInternal('mother'), 'parent');
+  assert.equal(objects.roleToInternal('father'), 'parent');
+  assert.equal(objects.roleToInternal('step_parent'), 'parent');
+  assert.equal(objects.roleToInternal('guardian'), 'guardian');
+  assert.equal(objects.roleToInternal('grandparent'), 'grandparent');
+  assert.equal(objects.roleToInternal('child'), 'child');
+  assert.equal(objects.roleToInternal('other'), 'other_adult');
+  assert.equal(objects.roleToInternal('alien'), null);
 });
 
 test('objects > relation_label falls back when memberships predate the contract', async t => {
@@ -161,7 +161,7 @@ test('objects > relation_label falls back when memberships predate the contract'
   // Add without relation_label (the pre-contract write path).
   families.addMember(db, secrets, f, p, { role: 'parent', custody: 'joint' });
   const h = objects.householdObject(db, secrets, f);
-  // 'parent' bucket has no PP-label preference; falls back to 'other'.
+  // 'parent' bucket has no app-label preference; falls back to 'other'.
   assert.equal(h.members[0].role, 'other');
   assert.equal(h.members[0].custodial, true);
 });

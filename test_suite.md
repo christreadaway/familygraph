@@ -87,7 +87,7 @@ with `matching.scoreMatch`.
 
 ### `tests/identity-api.test.js` — external matching API
 
-Covers `server/api/identity.js` — the surface missionIQ/ParentPoint will
+Covers `server/api/identity.js` — the surface sibling apps will
 call into.
 
 | Test | Asserts |

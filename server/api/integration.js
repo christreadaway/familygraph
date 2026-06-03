@@ -1,12 +1,12 @@
 'use strict';
 
-// ParentPoint × FamilyGraph contract router.
+// FamilyGraph Integration API router.
 //
 // Implements the read / write surface defined in FAMILYGRAPH_INTEGRATION.md
 // v0.1. All routes live under /v1/... and require a bearer token with the
-// `parentpoint` scope (master token also works). Per-request middleware:
+// `integration` scope (master token also works). Per-request middleware:
 //
-//   - X-PP-Contract-Version is recorded and logged; mismatches respond
+//   - X-FG-Contract-Version is recorded and logged; mismatches respond
 //     with a 426 Upgrade Required (only for actively incompatible majors).
 //   - X-Request-Id idempotency dedupe on POST/PATCH (24h cache).
 //   - X-Source-App / X-Source-Tenant are recorded on writes for audit
@@ -15,14 +15,14 @@
 //   - PATCH responses honour If-Match (412 Precondition Failed on mismatch).
 //
 // Internally the router delegates to:
-//   server/parentpoint/objects.js       — FG row → PP shape converters
-//   server/parentpoint/consents.js      — photo/directory consent CRUD
-//   server/parentpoint/certifications.js — EIM cert history
-//   server/parentpoint/schoolContext.js — enrichment snapshot upsert
-//   server/parentpoint/webhooks.js      — subscription mgmt + dispatcher
-//   server/parentpoint/changes.js       — incremental changed-since feeds
-//   server/parentpoint/etag.js          — ETag compute + If-Match match
-//   server/parentpoint/idempotency.js   — X-Request-Id cache
+//   server/integration/objects.js       — FG row → API shape converters
+//   server/integration/consents.js      — photo/directory consent CRUD
+//   server/integration/certifications.js — EIM cert history
+//   server/integration/schoolContext.js — enrichment snapshot upsert
+//   server/integration/webhooks.js      — subscription mgmt + dispatcher
+//   server/integration/changes.js       — incremental changed-since feeds
+//   server/integration/etag.js          — ETag compute + If-Match match
+//   server/integration/idempotency.js   — X-Request-Id cache
 
 const express = require('express');
 const log = require('../log');
@@ -34,16 +34,16 @@ const aliases = require('../identity/aliases');
 const { isValidCode } = require('../crypto/identifiers');
 
 const { userFacingMessage } = require('./_errors');
-const pp = require('../parentpoint');
-const objects = pp.objects;
-const etag = pp.etag;
-const idempotency = pp.idempotency;
-const consents = pp.consents;
-const certifications = pp.certifications;
-const schoolContext = pp.schoolContext;
-const webhooks = pp.webhooks;
-const changes = pp.changes;
-const dioceses = pp.dioceses;
+const integration = require('../integration');
+const objects = integration.objects;
+const etag = integration.etag;
+const idempotency = integration.idempotency;
+const consents = integration.consents;
+const certifications = integration.certifications;
+const schoolContext = integration.schoolContext;
+const webhooks = integration.webhooks;
+const changes = integration.changes;
+const dioceses = integration.dioceses;
 const history = require('../identity/history');
 
 const CONTRACT_VERSION = 'v0.1';
@@ -66,7 +66,7 @@ function emitWebhook(db, secrets, { event, personCode = null, familyCode = null,
   try {
     webhooks.enqueue(db, secrets, { event, personCode, familyCode, schoolHints, extra });
   } catch (e) {
-    log.warn('pp_webhook.enqueue_failed', { event, error: String(e && e.message || e) });
+    log.warn('integration_webhook.enqueue_failed', { event, error: String(e && e.message || e) });
   }
 }
 
@@ -90,7 +90,7 @@ function captureResponse(req, res, db) {
         body: body === undefined ? null : body,
       });
     } catch (e) {
-      log.warn('pp_idempotency.record_failed', { request_id: requestId, error: String(e && e.message || e) });
+      log.warn('integration_idempotency.record_failed', { request_id: requestId, error: String(e && e.message || e) });
     }
   };
   const origJson = res.json.bind(res);
@@ -114,21 +114,21 @@ function build({ db, secrets }) {
   // ---- Per-request middleware ----
   r.use((req, res, next) => {
     // Record incoming contract version. We don't reject on missing version
-    // (some early ParentPoint clients may not set it); we log it.
-    const v = req.get('x-pp-contract-version') || null;
-    req.ppContract = {
+    // (some early Integration clients may not set it); we log it.
+    const v = req.get('x-fg-contract-version') || null;
+    req.fgContract = {
       version: v,
-      sourceApp: req.get('x-source-app') || 'parentpoint',
+      sourceApp: req.get('x-source-app') || 'integration',
       sourceTenant: req.get('x-source-tenant') || null,
       requestId: req.get('x-request-id') || null,
     };
     if (v && !ACCEPTED_VERSIONS.has(v)) {
       // Major-version mismatch: reject. Minor compatibility is on the
       // honor system until the contract document codifies it.
-      log.warn('pp_contract_version.mismatch', { version: v, path: req.path, method: req.method });
+      log.warn('integration_contract_version.mismatch', { version: v, path: req.path, method: req.method });
       return res.status(426).json({
         error: 'upgrade_required',
-        detail: `unsupported X-PP-Contract-Version: ${v}`,
+        detail: `unsupported X-FG-Contract-Version: ${v}`,
         supported: [...ACCEPTED_VERSIONS],
       });
     }
@@ -148,11 +148,11 @@ function build({ db, secrets }) {
     if (!requestId) return next();
     const cached = idempotency.lookup(db, { requestId, method: req.method, path: req.path });
     if (cached) {
-      log.debug('pp_idempotency.replay', { request_id: requestId, path: req.path, status: cached.status });
+      log.debug('integration_idempotency.replay', { request_id: requestId, path: req.path, status: cached.status });
       res.set('X-FG-Idempotent-Replay', 'true');
       // A cached null body indicates the original response was an empty
       // 204 (or other no-body status). Replay with `.end()` rather than
-      // `.json(null)` so PP receives the same wire shape as the first call.
+      // `.json(null)` so the app receives the same wire shape as the first call.
       if (cached.body == null) return res.status(cached.status).end();
       return res.status(cached.status).json(cached.body);
     }
@@ -177,8 +177,8 @@ function build({ db, secrets }) {
       const enc = require('../crypto/encryption');
       const queryHash = enc.hmac(secrets, enc.normalizeEmail(email));
       audit.record(db, {
-        action: code ? 'pp_person_lookup_email' : 'pp_person_lookup_email_miss',
-        actor: req.auth?.actor || 'parentpoint',
+        action: code ? 'integration_person_lookup_email' : 'integration_person_lookup_email_miss',
+        actor: req.auth?.actor || 'integration',
         entityCode: code || null,
         entityKind: 'person',
         metadata: code
@@ -211,8 +211,8 @@ function build({ db, secrets }) {
     const obj = objects.personObject(db, secrets, req.params.personId);
     if (!obj) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
-      action: 'pp_person_read',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_person_read',
+      actor: req.auth?.actor || 'integration',
       entityCode: obj.personId,
       entityKind: 'person',
     });
@@ -260,7 +260,7 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: userFacingMessage(e) });
     }
     // Attach contact rows. We accept either primaryEmail (string) or
-    // emails (array) plus phones (array) so the PP client can hydrate as
+    // emails (array) plus phones (array) so the app client can hydrate as
     // much or as little as it has.
     const emailsIn = []
       .concat(body.primaryEmail ? [{ value: body.primaryEmail, is_primary: true }] : [])
@@ -293,11 +293,11 @@ function build({ db, secrets }) {
       if (ac) contactsLib.attachAddressToPerson(db, code, ac, { label: 'home', isPrimary: true });
     }
     audit.record(db, {
-      action: 'pp_person_create',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_person_create',
+      actor: req.auth?.actor || 'integration',
       entityCode: code,
       entityKind: 'person',
-      metadata: { source_app: req.ppContract.sourceApp, source_tenant: req.ppContract.sourceTenant },
+      metadata: { source_app: req.fgContract.sourceApp, source_tenant: req.fgContract.sourceTenant },
     });
     const obj = objects.personObject(db, secrets, code);
     const tag = etag.compute({ person: obj });
@@ -306,7 +306,7 @@ function build({ db, secrets }) {
     emitWebhook(db, secrets, {
       event: 'person.updated',
       personCode: code,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     return res.status(201).json({ person: obj });
   });
@@ -322,7 +322,7 @@ function build({ db, secrets }) {
     if (ifMatch) {
       const currentTag = etag.compute({ person: current });
       if (!etag.matches(ifMatch, currentTag)) {
-        log.warn('pp_etag.mismatch', { person: current.personId, provided: ifMatch });
+        log.warn('integration_etag.mismatch', { person: current.personId, provided: ifMatch });
         return res.status(412).json({ error: 'precondition_failed', detail: 'ETag mismatch — re-fetch and retry' });
       }
     }
@@ -372,17 +372,17 @@ function build({ db, secrets }) {
       if (ac) contactsLib.attachAddressToPerson(db, current.personId, ac, { label: 'home', isPrimary: true });
     }
     audit.record(db, {
-      action: 'pp_person_update',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_person_update',
+      actor: req.auth?.actor || 'integration',
       entityCode: current.personId,
       entityKind: 'person',
-      metadata: { fields: Object.keys(body || {}), source_app: req.ppContract.sourceApp },
+      metadata: { fields: Object.keys(body || {}), source_app: req.fgContract.sourceApp },
     });
     const obj = objects.personObject(db, secrets, current.personId);
     emitWebhook(db, secrets, {
       event: 'person.updated',
       personCode: obj.personId,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     return sendWithEtag(res, { person: obj });
   });
@@ -402,9 +402,9 @@ function build({ db, secrets }) {
       directory_listing: body.directoryListing || null,
     };
     const audCtx = {
-      actor: req.auth?.actor || 'parentpoint',
+      actor: req.auth?.actor || 'integration',
       actorKind: req.auth?.kind || null,
-      requestId: req.ppContract.requestId || null,
+      requestId: req.fgContract.requestId || null,
     };
     try {
       if (schoolId) {
@@ -427,8 +427,8 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: m });
     }
     audit.record(db, {
-      action: 'pp_consent_update',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_consent_update',
+      actor: req.auth?.actor || 'integration',
       entityCode: req.params.personId,
       entityKind: 'person',
       metadata: auditMeta,
@@ -437,7 +437,7 @@ function build({ db, secrets }) {
       event: 'consent.updated',
       personCode: req.params.personId,
       schoolHints: schoolId ? [schoolId]
-        : (req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : []),
+        : (req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : []),
       extra: schoolId ? { schoolId } : null,
     });
     const responseConsent = objects.consentObject(db, req.params.personId, schoolId || null);
@@ -453,9 +453,9 @@ function build({ db, secrets }) {
     if (!schoolId) return res.status(400).json({ error: 'schoolId required to clear an override' });
     try {
       consents.clearOverride(db, req.params.personId, schoolId, {
-        actor: req.auth?.actor || 'parentpoint',
+        actor: req.auth?.actor || 'integration',
         actorKind: req.auth?.kind || null,
-        requestId: req.ppContract.requestId || null,
+        requestId: req.fgContract.requestId || null,
       });
     } catch (e) {
       const m = userFacingMessage(e);
@@ -463,8 +463,8 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: m });
     }
     audit.record(db, {
-      action: 'pp_consent_override_clear',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_consent_override_clear',
+      actor: req.auth?.actor || 'integration',
       entityCode: req.params.personId, entityKind: 'person',
       metadata: { school_id: schoolId },
     });
@@ -500,16 +500,16 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: m });
     }
     audit.record(db, {
-      action: 'pp_eim_cert_add',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_eim_cert_add',
+      actor: req.auth?.actor || 'integration',
       entityCode: req.params.personId,
       entityKind: 'person',
-      metadata: { cert: code, source_app: req.ppContract.sourceApp },
+      metadata: { cert: code, source_app: req.fgContract.sourceApp },
     });
     emitWebhook(db, secrets, {
       event: 'person.updated',
       personCode: req.params.personId,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     return res.status(201).json({
       code,
@@ -523,7 +523,7 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: 'invalid_person_id' });
     }
     const body = req.body || {};
-    body.source_app = req.ppContract.sourceApp;
+    body.source_app = req.fgContract.sourceApp;
     try {
       schoolContext.upsert(db, req.params.personId, body);
     } catch (e) {
@@ -532,8 +532,8 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: m });
     }
     audit.record(db, {
-      action: 'pp_school_context_upsert',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_school_context_upsert',
+      actor: req.auth?.actor || 'integration',
       entityCode: req.params.personId,
       entityKind: 'person',
       metadata: {
@@ -556,31 +556,31 @@ function build({ db, secrets }) {
     let result;
     try {
       result = people.archive(db, req.params.personId, {
-        actor: req.auth?.actor || 'parentpoint',
+        actor: req.auth?.actor || 'integration',
         actorKind: req.auth?.kind || null,
         reason: req.body?.reason || null,
-        requestId: req.ppContract.requestId || null,
+        requestId: req.fgContract.requestId || null,
       });
     } catch (e) {
       return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
-      action: 'pp_person_archive',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_person_archive',
+      actor: req.auth?.actor || 'integration',
       entityCode: result.code, entityKind: 'person',
       metadata: { noop: !!result.noop, reason: req.body?.reason || null },
     });
     emitWebhook(db, secrets, {
       event: 'person.deleted',
       personCode: result.code,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     return res.json({ person: objects.personObject(db, secrets, result.code), noop: !!result.noop });
   });
 
   // POST /v1/persons/:id/reinstate — reverse an archive. Fires a
-  // `person.updated` webhook so PP caches reload the (now active) record.
+  // `person.updated` webhook so app caches reload the (now active) record.
   r.post('/persons/:personId/reinstate', (req, res) => {
     if (!isValidCode(req.params.personId, 'person')) {
       return res.status(400).json({ error: 'invalid_person_id' });
@@ -588,25 +588,25 @@ function build({ db, secrets }) {
     let result;
     try {
       result = people.reinstate(db, req.params.personId, {
-        actor: req.auth?.actor || 'parentpoint',
+        actor: req.auth?.actor || 'integration',
         actorKind: req.auth?.kind || null,
         reason: req.body?.reason || null,
-        requestId: req.ppContract.requestId || null,
+        requestId: req.fgContract.requestId || null,
       });
     } catch (e) {
       return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
-      action: 'pp_person_reinstate',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_person_reinstate',
+      actor: req.auth?.actor || 'integration',
       entityCode: result.code, entityKind: 'person',
       metadata: { noop: !!result.noop, reason: req.body?.reason || null },
     });
     emitWebhook(db, secrets, {
       event: 'person.updated',
       personCode: result.code,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     return res.json({ person: objects.personObject(db, secrets, result.code), noop: !!result.noop });
   });
@@ -656,8 +656,8 @@ function build({ db, secrets }) {
     const obj = objects.householdObject(db, secrets, req.params.householdId);
     if (!obj) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
-      action: 'pp_household_read',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_household_read',
+      actor: req.auth?.actor || 'integration',
       entityCode: obj.householdId,
       entityKind: 'family',
     });
@@ -678,7 +678,7 @@ function build({ db, secrets }) {
     // Optional members[] supplied at create time.
     if (Array.isArray(body.members)) {
       for (const m of body.members) {
-        const role = objects.ppRoleToInternal(m.role) || 'member';
+        const role = objects.roleToInternal(m.role) || 'member';
         const personId = m.personId || m.person_id;
         if (!personId || !isValidCode(personId, 'person')) continue;
         families.addMember(db, secrets, code, personId, {
@@ -689,17 +689,17 @@ function build({ db, secrets }) {
       }
     }
     audit.record(db, {
-      action: 'pp_household_create',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_household_create',
+      actor: req.auth?.actor || 'integration',
       entityCode: code,
       entityKind: 'family',
-      metadata: { source_app: req.ppContract.sourceApp, source_tenant: req.ppContract.sourceTenant },
+      metadata: { source_app: req.fgContract.sourceApp, source_tenant: req.fgContract.sourceTenant },
     });
     const obj = objects.householdObject(db, secrets, code);
     emitWebhook(db, secrets, {
       event: 'household.updated',
       familyCode: code,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     res.status(201).json({ household: obj });
   });
@@ -713,7 +713,7 @@ function build({ db, secrets }) {
     if (!isValidCode(personId, 'person')) {
       return res.status(400).json({ error: 'invalid_person_id' });
     }
-    const internalRole = objects.ppRoleToInternal(body.role) || 'member';
+    const internalRole = objects.roleToInternal(body.role) || 'member';
     const custody = body.custodial ? 'joint' : 'other_guardian';
     let mc;
     try {
@@ -729,8 +729,8 @@ function build({ db, secrets }) {
     // new membership.
     families.touchUpdatedAt(db, req.params.householdId);
     audit.record(db, {
-      action: 'pp_household_add_member',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_household_add_member',
+      actor: req.auth?.actor || 'integration',
       entityCode: req.params.householdId,
       entityKind: 'family',
       metadata: { person: personId, role: body.role, custodial: !!body.custodial },
@@ -739,7 +739,7 @@ function build({ db, secrets }) {
       event: 'household.updated',
       familyCode: req.params.householdId,
       personCode: personId,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     const obj = objects.householdObject(db, secrets, req.params.householdId);
     res.status(201).json({ household: obj, membership_code: mc });
@@ -753,24 +753,24 @@ function build({ db, secrets }) {
     let result;
     try {
       result = families.archive(db, req.params.householdId, {
-        actor: req.auth?.actor || 'parentpoint',
+        actor: req.auth?.actor || 'integration',
         actorKind: req.auth?.kind || null,
         reason: req.body?.reason || null,
-        requestId: req.ppContract.requestId || null,
+        requestId: req.fgContract.requestId || null,
       });
     } catch (e) {
       return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
-      action: 'pp_household_archive',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_household_archive',
+      actor: req.auth?.actor || 'integration',
       entityCode: result.code, entityKind: 'family',
       metadata: { noop: !!result.noop, reason: req.body?.reason || null },
     });
     emitWebhook(db, secrets, {
       event: 'household.deleted', familyCode: result.code,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     return res.json({ household: objects.householdObject(db, secrets, result.code), noop: !!result.noop });
   });
@@ -782,24 +782,24 @@ function build({ db, secrets }) {
     let result;
     try {
       result = families.reinstate(db, req.params.householdId, {
-        actor: req.auth?.actor || 'parentpoint',
+        actor: req.auth?.actor || 'integration',
         actorKind: req.auth?.kind || null,
         reason: req.body?.reason || null,
-        requestId: req.ppContract.requestId || null,
+        requestId: req.fgContract.requestId || null,
       });
     } catch (e) {
       return res.status(400).json({ error: userFacingMessage(e) });
     }
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
-      action: 'pp_household_reinstate',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_household_reinstate',
+      actor: req.auth?.actor || 'integration',
       entityCode: result.code, entityKind: 'family',
       metadata: { noop: !!result.noop, reason: req.body?.reason || null },
     });
     emitWebhook(db, secrets, {
       event: 'household.updated', familyCode: result.code,
-      schoolHints: req.ppContract.sourceTenant ? [req.ppContract.sourceTenant] : [],
+      schoolHints: req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : [],
     });
     return res.json({ household: objects.householdObject(db, secrets, result.code), noop: !!result.noop });
   });
@@ -831,16 +831,16 @@ function build({ db, secrets }) {
     let code;
     try {
       code = dioceses.create(db, secrets, req.body || {}, {
-        actor: req.auth?.actor || 'parentpoint',
+        actor: req.auth?.actor || 'integration',
         actorKind: req.auth?.kind || null,
-        requestId: req.ppContract.requestId || null,
+        requestId: req.fgContract.requestId || null,
       });
     } catch (e) {
       return res.status(400).json({ error: userFacingMessage(e) });
     }
     audit.record(db, {
-      action: 'pp_diocese_create',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_diocese_create',
+      actor: req.auth?.actor || 'integration',
       entityCode: code, entityKind: 'diocese',
     });
     res.status(201).json({ diocese: dioceses.get(db, secrets, code, { includeNotes: true }) });
@@ -862,9 +862,9 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: 'invalid_diocese_code' });
     }
     const result = dioceses.update(db, secrets, req.params.code, req.body || {}, {
-      actor: req.auth?.actor || 'parentpoint',
+      actor: req.auth?.actor || 'integration',
       actorKind: req.auth?.kind || null,
-      requestId: req.ppContract.requestId || null,
+      requestId: req.fgContract.requestId || null,
       ifMatch: req.get('if-match') || null,
     });
     if (result === null) return res.status(404).json({ error: 'not_found' });
@@ -872,8 +872,8 @@ function build({ db, secrets }) {
       return res.status(412).json({ error: 'precondition_failed', detail: 'ETag mismatch — re-fetch and retry' });
     }
     audit.record(db, {
-      action: 'pp_diocese_update',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_diocese_update',
+      actor: req.auth?.actor || 'integration',
       entityCode: req.params.code, entityKind: 'diocese',
     });
     return res.json({ diocese: dioceses.get(db, secrets, req.params.code, { includeNotes: true }) });
@@ -884,15 +884,15 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: 'invalid_diocese_code' });
     }
     const result = dioceses.archive(db, req.params.code, {
-      actor: req.auth?.actor || 'parentpoint',
+      actor: req.auth?.actor || 'integration',
       actorKind: req.auth?.kind || null,
       reason: req.body?.reason || null,
-      requestId: req.ppContract.requestId || null,
+      requestId: req.fgContract.requestId || null,
     });
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
-      action: 'pp_diocese_archive',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_diocese_archive',
+      actor: req.auth?.actor || 'integration',
       entityCode: req.params.code, entityKind: 'diocese',
     });
     return res.json({ diocese: dioceses.get(db, secrets, req.params.code, { includeNotes: true }), noop: !!result.noop });
@@ -903,15 +903,15 @@ function build({ db, secrets }) {
       return res.status(400).json({ error: 'invalid_diocese_code' });
     }
     const result = dioceses.reinstate(db, req.params.code, {
-      actor: req.auth?.actor || 'parentpoint',
+      actor: req.auth?.actor || 'integration',
       actorKind: req.auth?.kind || null,
       reason: req.body?.reason || null,
-      requestId: req.ppContract.requestId || null,
+      requestId: req.fgContract.requestId || null,
     });
     if (!result) return res.status(404).json({ error: 'not_found' });
     audit.record(db, {
-      action: 'pp_diocese_reinstate',
-      actor: req.auth?.actor || 'parentpoint',
+      action: 'integration_diocese_reinstate',
+      actor: req.auth?.actor || 'integration',
       entityCode: req.params.code, entityKind: 'diocese',
     });
     return res.json({ diocese: dioceses.get(db, secrets, req.params.code, { includeNotes: true }), noop: !!result.noop });

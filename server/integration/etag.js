@@ -1,6 +1,6 @@
 'use strict';
 
-// Weak ETag computation for the ParentPoint contract. PP's PATCH requests
+// Weak ETag computation for the Integration contract. the app's PATCH requests
 // MUST carry `If-Match: <etag>` (§7.2) so a stale cache cannot blindly
 // overwrite FamilyGraph. We compute a deterministic hash over the JSON
 // representation of the response body — different fields → different

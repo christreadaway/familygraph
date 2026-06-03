@@ -30,7 +30,7 @@ function newSecrets() {
 }
 
 function defaultThresholds() {
-  // Recalibrated for the missionIQ-style additive scoring vendored into
+  // Recalibrated for the upstream additive scoring vendored into
   // server/identity/matching.js. autoMerge holds the "definitive signal"
   // bar (exact email/phone, exact name+DOB, very-close address). review
   // is calibrated so even surname-only or phonetic-variant first-name
