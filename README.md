@@ -770,6 +770,15 @@ and that the design tokens resolve. CI should run both.
 
 ---
 
+## Contributing & security
+
+Contributions are welcome - see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the
+dev setup (including the required Socket Firewall install), how to run the
+tests, and the code conventions. To report a vulnerability, please disclose it
+privately per [`SECURITY.md`](./SECURITY.md) rather than opening a public issue.
+
+---
+
 ## Author & license
 
 Family Graph was created by **Chris Treadaway**
