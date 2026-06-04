@@ -2707,6 +2707,51 @@ that appear in-place on first click. The Export PII consent gate got a
 prominent danger-styled confirmation panel explaining exactly what will happen.
 Client builds clean (302 KB JS / 22 KB CSS). 489 pass, 0 fail, 1 skip.
 
+**Follow-up: pre-public review fixes (2026-06-04).** Five issues flagged by an
+external review of the repo before flipping it public.
+
+1. **Replaced SheetJS (xlsx) with ExcelJS.** The `xlsx` npm package had two
+   high-severity advisories (prototype pollution, ReDoS) with no fix on the
+   npm registry. Replaced with `exceljs ^4.4.0`, which is actively maintained.
+   `server/sources/excel.js` rewritten: `loadFile` and `loadBuffer` are now
+   async; all callers (`server/sources/index.js`, `server/folder-watch/index.js`,
+   tests) updated to await. The output shape is unchanged. The remaining audit
+   finding is a moderate `uuid` advisory in exceljs's transitive deps; the
+   vulnerable code path is not exercised (we don't pass a `buf` argument).
+   Documented in `SECURITY.md`.
+
+2. **Scrubbed real family names from test fixtures.** The operator's surname
+   "Treadaway" appeared in `connectors-facts.test.js`,
+   `connectors-ministry-platform.test.js`, and `connectors-sync.test.js` with
+   real-sounding DOBs. Replaced with the fictional "Castillo" family (Marco,
+   Elena, Sofia, Lucas) and shifted DOBs. Also changed "Archdiocese of Austin"
+   to "Diocese of Northbridge" in `integration-dioceses.test.js` (Austin is a
+   diocese, not an archdiocese; and per CLAUDE.md, test fixtures shouldn't use
+   real institution names). Fixed the comment in `server/integration/dioceses.js`
+   to say "Diocese of Austin" rather than "Archdiocese."
+
+3. **Softened anonymization language to best-effort with residual-risk
+   disclosure.** The three-layer NER is good but not perfect. Added a clear
+   note in `README.md`, `product_spec.md`, and `business_spec.md` that no
+   automated system detects every possible identifier and operators should
+   review sanitized output before sharing with untrusted parties. Left the
+   API-surface posture claims intact (the `/api/safe/` surface genuinely never
+   returns PII; that's architecture, not NER accuracy).
+
+4. **Fixed the clone command.** `README.md` Windows section had
+   `git clone ... family-graph` / `cd family-graph` where the target directory
+   had a hyphen the repo name doesn't. Dropped the target directory so git uses
+   the default `familygraph`.
+
+5. **npm audit clean for high/critical.** After the SheetJS swap, `npm audit`
+   shows 0 high, 0 critical. Two moderate (uuid transitive via exceljs) remain
+   with no practical exposure; documented in `SECURITY.md`. SFW_BYPASS=1 was
+   used for the install because the sfw binary host is unreachable in this
+   container; exact pinned lockfile, ephemeral environment.
+
+Verification: 490 tests, 489 pass, 0 fail, 1 skip (EACCES on root). Client
+builds clean (302 KB JS / 22 KB CSS).
+
 ---
 
 *End of session notes*

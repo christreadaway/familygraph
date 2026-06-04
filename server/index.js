@@ -242,7 +242,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   return app;
 }
 
-function start() {
+async function start() {
   // Restrict the umask so any file we create — SQLite WAL/SHM files,
   // log files, backup blobs — is owner-read/write only (mode 0600 for
   // files, 0700 for directories). Without this, a default-umask system
@@ -389,7 +389,7 @@ function start() {
   let watcher = null;
   if (process.env.FAMILY_GRAPH_DISABLE_WATCH !== '1') {
     try {
-      const wd = folderWatch.start(db, secrets, thresholds, {
+      const wd = await folderWatch.start(db, secrets, thresholds, {
         watchDir: config.watchDir,
         outDir: config.outDir,
         processExisting: process.env.FAMILY_GRAPH_WATCH_PROCESS_EXISTING === '1',

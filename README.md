@@ -126,8 +126,8 @@ shipped with Windows) also works.
 ### Clone and start
 
 ```powershell
-git clone https://github.com/christreadaway/familygraph.git family-graph
-cd family-graph
+git clone https://github.com/christreadaway/familygraph.git
+cd familygraph
 $env:SFW = "1"
 sfw npm install
 sfw npm run client:install
@@ -241,6 +241,8 @@ Drop a file in `~/.family-graph/watch`:
 | `.xlsx`, `.xls`, `.xlsm` | Excel import (first sheet) | same |
 | `.txt`, `.md`, `.eml`, `.json` | Text sanitization | `<stem>.sanitized.<ext>` + `<stem>.token-set.json` |
 | anything else | Error | moved to `errors/` with a `.error.txt` sidecar |
+
+The sanitizer uses three detection layers (regex patterns, registry HMAC lookup, and NER heuristics) and catches the large majority of PII, but no automated system detects every possible identifier. Operators should review sanitized output before sharing it with untrusted parties.
 
 Set `FAMILY_GRAPH_WATCH_PROCESS_EXISTING=1` to process whatever is already in the
 watch dir at startup (default: only new files are picked up).

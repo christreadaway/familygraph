@@ -8,7 +8,7 @@ const path = require('path');
 const folderWatch = require('../server/folder-watch');
 const { newDb, newSecrets, defaultThresholds, tmpDir, cleanup } = require('./_helpers');
 
-test('folder-watch > processes a CSV import file', t => {
+test('folder-watch > processes a CSV import file', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -18,7 +18,7 @@ test('folder-watch > processes a CSV import file', t => {
 
   const csvPath = path.join(watch, 'roster.csv');
   fs.writeFileSync(csvPath, 'first_name,last_name,email\nMary,Smith,mary@example.org\n');
-  const r = folderWatch.processFile(db, s, defaultThresholds(), csvPath, { outDir: out });
+  const r = await folderWatch.processFile(db, s, defaultThresholds(), csvPath, { outDir: out });
   assert.equal(r.ok, true);
   assert.equal(r.kind, 'import');
   assert.equal(r.summary.rows, 1);
@@ -28,7 +28,7 @@ test('folder-watch > processes a CSV import file', t => {
   assert.ok(fs.existsSync(path.join(out, 'roster.csv.import-summary.json')));
 });
 
-test('folder-watch > sanitizes a text file', t => {
+test('folder-watch > sanitizes a text file', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -38,7 +38,7 @@ test('folder-watch > sanitizes a text file', t => {
 
   const txt = path.join(watch, 'note.txt');
   fs.writeFileSync(txt, 'Mary lives at 12 Maple Street. mary@example.org');
-  const r = folderWatch.processFile(db, s, defaultThresholds(), txt, { outDir: out });
+  const r = await folderWatch.processFile(db, s, defaultThresholds(), txt, { outDir: out });
   assert.equal(r.ok, true);
   assert.equal(r.kind, 'sanitize');
   const sanitized = fs.readFileSync(r.sanitized, 'utf8');
@@ -46,7 +46,7 @@ test('folder-watch > sanitizes a text file', t => {
   assert.ok(fs.existsSync(path.join(out, 'note.token-set.json')));
 });
 
-test('folder-watch > unknown kinds go to errors', t => {
+test('folder-watch > unknown kinds go to errors', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -56,13 +56,13 @@ test('folder-watch > unknown kinds go to errors', t => {
 
   const f = path.join(watch, 'binary.bin');
   fs.writeFileSync(f, Buffer.from([0, 1, 2]));
-  const r = folderWatch.processFile(db, s, defaultThresholds(), f, { outDir: out });
+  const r = await folderWatch.processFile(db, s, defaultThresholds(), f, { outDir: out });
   assert.equal(r.ok, false);
   assert.equal(r.kind, 'unknown');
   assert.ok(fs.existsSync(path.join(out, 'errors', 'binary.bin')));
 });
 
-test('folder-watch > malformed CSV is categorized and moved to errors', t => {
+test('folder-watch > malformed CSV is categorized and moved to errors', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -73,7 +73,7 @@ test('folder-watch > malformed CSV is categorized and moved to errors', t => {
   // Inconsistent column counts trip csv-parse with the default strict settings.
   const csvPath = path.join(watch, 'broken.csv');
   fs.writeFileSync(csvPath, 'first_name,last_name,email\n"unterminated quote,Smith\n');
-  const r = folderWatch.processFile(db, s, defaultThresholds(), csvPath, { outDir: out });
+  const r = await folderWatch.processFile(db, s, defaultThresholds(), csvPath, { outDir: out });
   assert.equal(r.ok, false);
   assert.equal(r.kind, 'error');
   // The file is moved out of watch/ regardless of error type.
@@ -89,7 +89,7 @@ test('folder-watch > malformed CSV is categorized and moved to errors', t => {
   assert.ok(['malformed_input', 'other'].includes(meta.category));
 });
 
-test('folder-watch > permission error is categorized as permission_denied', t => {
+test('folder-watch > permission error is categorized as permission_denied', async t => {
   // Skip on root: a CAP_DAC_OVERRIDE process can read any file, so the
   // chmod(0o000) trick below doesn't surface EACCES.
   if (process.getuid && process.getuid() === 0) {
@@ -110,13 +110,13 @@ test('folder-watch > permission error is categorized as permission_denied', t =>
   const csvPath = path.join(watch, 'locked.csv');
   fs.writeFileSync(csvPath, 'first_name,last_name\nMary,Smith\n');
   fs.chmodSync(csvPath, 0o000);
-  const r = folderWatch.processFile(db, s, defaultThresholds(), csvPath, { outDir: out });
+  const r = await folderWatch.processFile(db, s, defaultThresholds(), csvPath, { outDir: out });
   assert.equal(r.ok, false);
   assert.equal(r.kind, 'error');
   assert.equal(r.category, 'permission_denied');
 });
 
-test('folder-watch > re-running the same filename produces a numbered sidecar (no clobber)', t => {
+test('folder-watch > re-running the same filename produces a numbered sidecar (no clobber)', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -124,35 +124,35 @@ test('folder-watch > re-running the same filename produces a numbered sidecar (n
   const out = tmpDir();
   t.after(() => { cleanup(watch); cleanup(out); });
 
-  function dropAndProcess(content) {
+  async function dropAndProcess(content) {
     const p = path.join(watch, 'roster.csv');
     fs.writeFileSync(p, content);
     return folderWatch.processFile(db, s, defaultThresholds(), p, { outDir: out });
   }
 
-  const r1 = dropAndProcess('first_name,last_name\nMary,Smith\n');
+  const r1 = await dropAndProcess('first_name,last_name\nMary,Smith\n');
   assert.equal(r1.ok, true);
-  const r2 = dropAndProcess('first_name,last_name\nLuke,Smith\n');
+  const r2 = await dropAndProcess('first_name,last_name\nLuke,Smith\n');
   assert.equal(r2.ok, true);
   // First sidecar at original name, second sidecar gets ".1." inserted.
   assert.ok(fs.existsSync(path.join(out, 'roster.csv.import-summary.json')));
   assert.ok(fs.existsSync(path.join(out, 'roster.csv.import-summary.1.json')));
 });
 
-test('folder-watch > start() refuses when outDir equals watchDir', t => {
+test('folder-watch > start() refuses when outDir equals watchDir', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
   const shared = tmpDir();
   t.after(() => { cleanup(shared); });
 
-  assert.throws(
+  await assert.rejects(
     () => folderWatch.start(db, s, defaultThresholds(), { watchDir: shared, outDir: shared }),
     /outDir must not equal watchDir/,
   );
 });
 
-test('folder-watch > start() refuses when outDir is inside watchDir', t => {
+test('folder-watch > start() refuses when outDir is inside watchDir', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -160,13 +160,13 @@ test('folder-watch > start() refuses when outDir is inside watchDir', t => {
   const out = path.join(watch, 'out');
   t.after(() => { cleanup(watch); });
 
-  assert.throws(
+  await assert.rejects(
     () => folderWatch.start(db, s, defaultThresholds(), { watchDir: watch, outDir: out }),
     /outDir must not be inside watchDir/,
   );
 });
 
-test('folder-watch > rapid drops of multiple distinct files all process', t => {
+test('folder-watch > rapid drops of multiple distinct files all process', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -174,9 +174,9 @@ test('folder-watch > rapid drops of multiple distinct files all process', t => {
   const out = tmpDir();
   t.after(() => { cleanup(watch); cleanup(out); });
 
-  // Drop five files back-to-back; processFile is sync, so the operator
-  // would queue these via the watcher's 'add' handler. Verify each one
-  // completes independently and lands in processed/.
+  // Drop five files back-to-back; processFile is async but these CSV files
+  // go through the sync CSV path. Verify each one completes independently
+  // and lands in processed/.
   const files = [];
   for (let i = 0; i < 5; i++) {
     const p = path.join(watch, `roster-${i}.csv`);
@@ -184,7 +184,7 @@ test('folder-watch > rapid drops of multiple distinct files all process', t => {
     files.push(p);
   }
   for (const p of files) {
-    const r = folderWatch.processFile(db, s, defaultThresholds(), p, { outDir: out });
+    const r = await folderWatch.processFile(db, s, defaultThresholds(), p, { outDir: out });
     assert.equal(r.ok, true, `${path.basename(p)} should process`);
   }
   for (let i = 0; i < 5; i++) {

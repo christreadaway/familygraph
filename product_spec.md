@@ -314,6 +314,8 @@ when paired with a name overlap; otherwise it's a family signal.
 2. Registry: HMAC-matched lookups against every active person's `given_name_hash` and `family_name_hash`. Any token whose hash matches an active person becomes that person's code.
 3. Heuristic: capitalized-token sequences not corroborated by 1 or 2 are tokenized with fresh, non-registry person codes.
 
+Together these layers catch the large majority of PII in free-form text, but no automated system detects every possible identifier. Novel names, unusual formats, and context-dependent PII (e.g. a maiden name used only in narrative) can slip through. Operators should review sanitized output before sharing it with untrusted parties or public AI services.
+
 The output stores its mapping as an encrypted `mappings_ct` blob in
 `token_sets`. `desanitize(text, token_set)` restores the original strings.
 Token-set ciphertext is unreadable without `dataKey`.

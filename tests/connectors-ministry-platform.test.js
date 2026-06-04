@@ -17,7 +17,7 @@ function mockResponse({ status = 200, json = null }) {
 }
 
 const HOUSEHOLDS = [
-  { Household_ID: 1, Household_Name: 'Treadaway Family', Address_ID: 11 },
+  { Household_ID: 1, Household_Name: 'Castillo Family', Address_ID: 11 },
   { Household_ID: 2, Household_Name: 'Smith Family', Address_ID: 12 },
 ];
 
@@ -27,10 +27,10 @@ const ADDRESSES = [
 ];
 
 const CONTACTS = [
-  { Contact_ID: 100, Household_ID: 1, First_Name: 'Chris', Last_Name: 'Treadaway',
-    Email_Address: 'chris@example.com', Mobile_Phone: '314-555-0001', Date_of_Birth: '1980-01-15T00:00:00' },
-  { Contact_ID: 101, Household_ID: 1, First_Name: 'Sarah', Last_Name: 'Treadaway',
-    Email_Address: 'sarah@example.com', Mobile_Phone: '3145550002' },
+  { Contact_ID: 100, Household_ID: 1, First_Name: 'Marco', Last_Name: 'Castillo',
+    Email_Address: 'marco@example.com', Mobile_Phone: '314-555-0001', Date_of_Birth: '1982-07-25T00:00:00' },
+  { Contact_ID: 101, Household_ID: 1, First_Name: 'Elena', Last_Name: 'Castillo',
+    Email_Address: 'elena@example.com', Mobile_Phone: '3145550002' },
   { Contact_ID: 102, Household_ID: 2, First_Name: 'John', Last_Name: 'Smith',
     Email_Address: 'john@smith.test' },
   { Contact_ID: 999, Household_ID: null, First_Name: 'Orphan', Last_Name: 'Solo',
@@ -41,13 +41,13 @@ test('mp.buildCanonical joins households, contacts, addresses', () => {
   const out = mp.buildCanonical({ households: HOUSEHOLDS, contacts: CONTACTS, addresses: ADDRESSES });
   // 2 households + 1 orphan = 3 rows
   assert.equal(out.length, 3);
-  const tread = out.find(h => h.family.display_name === 'Treadaway Family');
-  assert.ok(tread, 'expected Treadaway household');
-  assert.equal(tread.address.line1, '123 Main St');
-  assert.equal(tread.persons.length, 2);
-  assert.equal(tread.persons[0].given_name, 'Chris');
-  assert.equal(tread.persons[0].emails[0], 'chris@example.com');
-  assert.equal(tread.persons[0].date_of_birth, '1980-01-15');
+  const castillo = out.find(h => h.family.display_name === 'Castillo Family');
+  assert.ok(castillo, 'expected Castillo household');
+  assert.equal(castillo.address.line1, '123 Main St');
+  assert.equal(castillo.persons.length, 2);
+  assert.equal(castillo.persons[0].given_name, 'Marco');
+  assert.equal(castillo.persons[0].emails[0], 'marco@example.com');
+  assert.equal(castillo.persons[0].date_of_birth, '1982-07-25');
 
   const orphan = out.find(h => h.persons[0].given_name === 'Orphan');
   assert.ok(orphan, 'expected orphan-contact row');

@@ -19,7 +19,7 @@ function setup(t) {
 test('dioceses > create stores a row and writes a history entry', async t => {
   const { db, secrets } = setup(t);
   const code = dioceses.create(db, secrets, {
-    name: 'Archdiocese of Austin',
+    name: 'Diocese of Northbridge',
     region: 'Texas',
     contact_url: 'https://example.org',
     eim_program_name: 'EIM Texas',
@@ -27,7 +27,7 @@ test('dioceses > create stores a row and writes a history entry', async t => {
     notes: 'primary diocese for the school portfolio',
   }, { actor: 'unit' });
   const got = dioceses.get(db, secrets, code, { includeNotes: true });
-  assert.equal(got.name, 'Archdiocese of Austin');
+  assert.equal(got.name, 'Diocese of Northbridge');
   assert.equal(got.region, 'Texas');
   assert.equal(got.eim_renewal_years, 3);
   assert.equal(got.notes, 'primary diocese for the school portfolio');
