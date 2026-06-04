@@ -9,12 +9,14 @@ export default function People() {
   const pseudo = view === 'pseudonym';
   const [items, setItems] = useState([]);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ given_name: '', family_name: '', date_of_birth: '' });
 
   function load() {
     api.listPeople({ safe: pseudo })
       .then(d => setItems(d.items || []))
-      .catch(e => setError(e.message));
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
   }
   useEffect(load, [pseudo]);
 
@@ -41,7 +43,7 @@ export default function People() {
       </div>
       <div className="panel">
         <h3>{items.length} active{pseudo ? ' · pseudonym surface' : ''}</h3>
-        <table>
+        {loading ? <div className="muted">Loading…</div> : <table>
           <thead>
             <tr><th>Code</th><th>Name</th><th>Created</th><th></th></tr>
           </thead>
@@ -60,7 +62,7 @@ export default function People() {
             ))}
             {items.length === 0 && <tr><td colSpan={4} className="muted">No people yet.</td></tr>}
           </tbody>
-        </table>
+        </table>}
       </div>
     </>
   );

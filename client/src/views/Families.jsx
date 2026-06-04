@@ -14,6 +14,9 @@ export default function Families() {
   const [name, setName] = useState('');
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [flagging, setFlagging] = useState(null);   // famCode being flagged
+  const [flagReason, setFlagReason] = useState('');
 
   function load() {
     // Always pull the PII surface here so the do-not-call quick-flag can
@@ -25,7 +28,8 @@ export default function Families() {
     const q = filter.trim();
     api.listFamilies({ safe: false, q: q || undefined })
       .then(d => setItems(d.items || []))
-      .catch(e => setError(e.message));
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
   }
 
   // Re-fetch on pseudonym toggle AND when the operator finishes typing a
@@ -49,13 +53,32 @@ export default function Families() {
     }
   }
 
-  async function quickFlag(famCode, value) {
+  function startFlag(famCode) {
+    setFlagging(famCode);
+    setFlagReason('');
+  }
+  function cancelFlag() {
+    setFlagging(null);
+    setFlagReason('');
+  }
+  async function confirmFlag(famCode) {
     setBusy(b => ({ ...b, [famCode]: true }));
     try {
-      const reason = value
-        ? prompt('Optional reason — e.g., "requested no phone solicitation"', '') || null
-        : null;
-      await api.setFamilyDoNotContact(famCode, value, reason);
+      const reason = flagReason.trim() || null;
+      await api.setFamilyDoNotContact(famCode, true, reason);
+      setFlagging(null);
+      setFlagReason('');
+      load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(b => { const n = { ...b }; delete n[famCode]; return n; });
+    }
+  }
+  async function quickClear(famCode) {
+    setBusy(b => ({ ...b, [famCode]: true }));
+    try {
+      await api.setFamilyDoNotContact(famCode, false, null);
       load();
     } catch (e) {
       setError(e.message);
@@ -88,7 +111,9 @@ export default function Families() {
           {filter && <button onClick={() => setFilter('')}>Clear</button>}
         </div>
 
-        {items.length === 0 ? (
+        {loading ? (
+          <div className="muted">Loading…</div>
+        ) : items.length === 0 ? (
           filter ? (
             <p className="muted" style={{ margin: 0 }}>
               No families match &quot;{filter}&quot;. Try a shorter prefix or clear the search.
@@ -132,15 +157,33 @@ export default function Families() {
                     <td>
                       {onDnc ? (
                         <button
-                          onClick={() => quickFlag(f.code, false)}
+                          onClick={() => quickClear(f.code)}
                           disabled={busy[f.code]}
                           title="Clear do-not-call from every member"
                         >
                           Clear
                         </button>
+                      ) : flagging === f.code ? (
+                        <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                          <input
+                            placeholder='Reason (optional)'
+                            value={flagReason}
+                            onChange={e => setFlagReason(e.target.value)}
+                            style={{ flex: 1, minWidth: 140 }}
+                            autoFocus
+                          />
+                          <button
+                            className="primary"
+                            onClick={() => confirmFlag(f.code)}
+                            disabled={busy[f.code]}
+                          >
+                            Confirm
+                          </button>
+                          <button onClick={cancelFlag}>Cancel</button>
+                        </div>
                       ) : (
                         <button
-                          onClick={() => quickFlag(f.code, true)}
+                          onClick={() => startFlag(f.code)}
                           disabled={busy[f.code]}
                           title="Add household to do-not-call list (flags every member)"
                         >

@@ -13,14 +13,17 @@ export default function Search() {
   const [phone, setPhone] = useState('');
   const [out, setOut] = useState(null);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   async function go(e) {
     e.preventDefault();
     setError(null);
+    setLoading(true);
     try {
       const r = await api.search({ q, email, phone });
       setOut(r);
     } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
   }
 
   return (
@@ -40,7 +43,8 @@ export default function Search() {
           <button className="primary">Search</button>
         </form>
       </div>
-      {out && (
+      {loading && <div className="muted">Loading…</div>}
+      {out && !loading && (
         <>
           <div className="panel">
             <h3>{out.persons?.length || 0} persons</h3>

@@ -21,6 +21,7 @@ function formatExpires(iso) {
 export default function Conflicts() {
   const [items, setItems] = useState([]);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState({ status: 'open', assigned: '', assigned_to: '' });
   const [picked, setPicked] = useState({});
   const [assignee, setAssignee] = useState('');
@@ -38,7 +39,8 @@ export default function Conflicts() {
     if (filter.assigned_to) params.assigned_to = filter.assigned_to;
     api.listConflicts(params)
       .then(d => { setItems(d.items || []); setPicked({}); })
-      .catch(e => setError(e.message));
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
   }
   useEffect(load, [filter.status, filter.assigned, filter.assigned_to]);
 
@@ -170,7 +172,7 @@ export default function Conflicts() {
 
       <div className="panel">
         <h3>{items.length} {filter.status}</h3>
-        <table>
+        {loading ? <div className="muted">Loading…</div> : <table>
           <thead>
             <tr>
               <th><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
@@ -300,7 +302,7 @@ export default function Conflicts() {
             })}
             {items.length === 0 && <tr><td colSpan={9} className="muted">No conflicts.</td></tr>}
           </tbody>
-        </table>
+        </table>}
       </div>
     </>
   );

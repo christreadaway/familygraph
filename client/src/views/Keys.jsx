@@ -6,12 +6,13 @@ const SCOPES = ['pii.read', 'pii.write', 'sanitize', 'audit.read', 'audit.write'
 export default function Keys() {
   const [items, setItems] = useState([]);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [picked, setPicked] = useState({ 'pii.read': true });
   const [issued, setIssued] = useState(null);
 
   function load() {
-    api.listKeys().then(d => setItems(d.items || [])).catch(e => setError(e.message));
+    api.listKeys().then(d => setItems(d.items || [])).catch(e => setError(e.message)).finally(() => setLoading(false));
   }
   useEffect(load, []);
 
@@ -62,7 +63,7 @@ export default function Keys() {
       </div>
       <div className="panel">
         <h3>{items.length} keys</h3>
-        <table>
+        {loading ? <div className="muted">Loading…</div> : <table>
           <thead><tr><th>Code</th><th>Name</th><th>Scopes</th><th>Last used</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {items.map(k => (
@@ -77,7 +78,7 @@ export default function Keys() {
             ))}
             {items.length === 0 && <tr><td colSpan={6} className="muted">No keys yet.</td></tr>}
           </tbody>
-        </table>
+        </table>}
       </div>
     </>
   );

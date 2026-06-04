@@ -5,11 +5,10 @@
 */
 
 /* ─── Inter / Inter Tight / JetBrains Mono ───────────────────────────
-   Bundling note: Per CLAUDE_CODE_HANDOFF.md §5.5 the production build
-   should ship WOFF2 files locally. In dev we fall back to Google Fonts
-   so the type system reads correctly without bundled assets. If the
-   network is offline, the system stack below covers parity. */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+   Self-hosted WOFF2 files — no external CDN requests. Latin + latin-ext
+   subsets with unicode-range so the browser only fetches what it needs.
+   Source files downloaded from Google Fonts 2026-06-04. */
+@import url("../fonts/fonts.css");
 
 html, body, #root { height: 100%; }
 html {

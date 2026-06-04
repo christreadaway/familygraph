@@ -6,13 +6,14 @@ const ACTIONS = ['auto_merge', 'never_merge', 'boost', 'penalize'];
 export default function Rules() {
   const [items, setItems] = useState([]);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState({
     kind: 'person', action: 'never_merge', weight: 0.2,
     given_name: '', family_name: '', email_domain: '', postal: '',
   });
 
   function load() {
-    api.listRules().then(d => setItems(d.items || [])).catch(e => setError(e.message));
+    api.listRules().then(d => setItems(d.items || [])).catch(e => setError(e.message)).finally(() => setLoading(false));
   }
   useEffect(load, []);
 
@@ -73,7 +74,7 @@ export default function Rules() {
 
       <div className="panel">
         <h3>{items.length} rules</h3>
-        <table>
+        {loading ? <div className="muted">Loading…</div> : <table>
           <thead><tr><th>Code</th><th>Kind</th><th>Action</th><th>Match</th><th>Enabled</th><th></th></tr></thead>
           <tbody>
             {items.map(r => (
@@ -91,7 +92,7 @@ export default function Rules() {
             ))}
             {items.length === 0 && <tr><td colSpan={6} className="muted">No rules yet.</td></tr>}
           </tbody>
-        </table>
+        </table>}
       </div>
     </>
   );
