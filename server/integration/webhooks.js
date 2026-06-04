@@ -12,7 +12,7 @@
 //     personId: 'p_...',
 //     householdId: 'f_...',
 //     updatedAt: '<iso>',
-//     schoolHints: ['st-theresa']   // optional
+//     schoolHints: ['st-marys']   // optional
 //   }
 //
 // Signature header:

@@ -286,7 +286,7 @@ Body: {
   "personId": "fg_p_...",
   "householdId": "fg_h_...",       // when applicable
   "updatedAt": "2026-05-15T10:31:22Z",
-  "schoolHints": ["st-theresa"]    // optional, FG knows which app tenants reference this person
+  "schoolHints": ["st-marys"]    // optional, FG knows which app tenants reference this person
 }
 ```
 
@@ -339,9 +339,9 @@ POST /v1/persons/{personId}/schoolContext
 Headers:
   Authorization: Bearer <service-jwt>
   X-Source-App: integration
-  X-Source-Tenant: st-theresa
+  X-Source-Tenant: st-marys
 Body: {
-  "schoolId": "st-theresa",
+  "schoolId": "st-marys",
   "schoolYear": "2026-2027",
   "grade": "3",                          // current school year
   "classroomId": "3A",
@@ -815,8 +815,8 @@ was school-scoped:
   "event": "consent.updated",
   "personId": "p_a7b3c91d",
   "updatedAt": "2026-05-15T14:35:11.012Z",
-  "schoolHints": ["st-theresa"],
-  "schoolId": "st-theresa"
+  "schoolHints": ["st-marys"],
+  "schoolId": "st-marys"
 }
 ```
 

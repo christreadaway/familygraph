@@ -106,11 +106,11 @@ test('scenario §10.3 → parent updates phone in FG, webhook queues for the app
     url: 'https://us-central1-demo.cloudfunctions.net/familyGraphWebhook',
     secret: 'shhhh',
     events: '*',
-    schoolHint: 'st-theresa',
+    schoolHint: 'st-marys',
   });
   // Create the parent + initial phone via the contract.
   const created = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
     body: { firstName: 'Amanda', lastName: 'Lee', kind: 'adult' },
   });
   const personId = created.body.person.personId;
@@ -124,7 +124,7 @@ test('scenario §10.3 → parent updates phone in FG, webhook queues for the app
   const tag = get.headers.etag;
   const patch = await request(port, {
     method: 'PATCH', path: `/v1/persons/${personId}`,
-    headers: auth(secrets, { 'if-match': tag, 'x-source-tenant': 'st-theresa' }),
+    headers: auth(secrets, { 'if-match': tag, 'x-source-tenant': 'st-marys' }),
     body: { phones: [{ value: '+15125550199', type: 'mobile', smsConsent: true, is_primary: true }] },
   });
   assert.equal(patch.status, 200);
@@ -139,7 +139,7 @@ test('scenario §10.3 → parent updates phone in FG, webhook queues for the app
   const payload = JSON.parse(pending[0].payload);
   assert.equal(payload.personId, personId);
   assert.ok(Array.isArray(payload.schoolHints));
-  assert.ok(payload.schoolHints.includes('st-theresa'));
+  assert.ok(payload.schoolHints.includes('st-marys'));
 
   // Dispatch and confirm signature.
   const calls = [];
@@ -154,9 +154,9 @@ test('scenario §10.4 → enrichment snapshot is persisted and readable', async 
   const annie = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const r = await request(port, {
     method: 'POST', path: `/v1/persons/${annie}/schoolContext`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
     body: {
-      schoolId: 'st-theresa', schoolYear: '2026-2027', grade: '3',
+      schoolId: 'st-marys', schoolYear: '2026-2027', grade: '3',
       classroomId: '3A', classroomName: 'Room 204 — Ms. Lee',
       activities: [
         { kind: 'sport', label: 'Basketball — Girls 4A', season: '2026-2027 Winter' },
@@ -172,8 +172,8 @@ test('scenario §10.4 → enrichment snapshot is persisted and readable', async 
   // A second POST with the same schoolId overwrites the previous snapshot.
   const r2 = await request(port, {
     method: 'POST', path: `/v1/persons/${annie}/schoolContext`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
-    body: { schoolId: 'st-theresa', grade: '3', activities: [{ kind: 'sport', label: 'Basketball — Girls 4A' }] },
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
+    body: { schoolId: 'st-marys', grade: '3', activities: [{ kind: 'sport', label: 'Basketball — Girls 4A' }] },
   });
   assert.equal(r2.status, 201);
   assert.equal(r2.body.schoolContext.activities.length, 1);
@@ -186,7 +186,7 @@ test('scenario §10.5 → student moves classroom; the snapshot reflects the new
     method: 'POST', path: `/v1/persons/${annie}/schoolContext`,
     headers: auth(secrets),
     body: {
-      schoolId: 'st-theresa', schoolYear: '2026-2027', grade: '3',
+      schoolId: 'st-marys', schoolYear: '2026-2027', grade: '3',
       classroomId: '3A', classroomName: 'Room 204 — Ms. Lee',
     },
   });
@@ -194,13 +194,13 @@ test('scenario §10.5 → student moves classroom; the snapshot reflects the new
     method: 'POST', path: `/v1/persons/${annie}/schoolContext`,
     headers: auth(secrets),
     body: {
-      schoolId: 'st-theresa', schoolYear: '2026-2027', grade: '3',
+      schoolId: 'st-marys', schoolYear: '2026-2027', grade: '3',
       classroomId: '3B', classroomName: 'Room 207 — Mr. Patel',
     },
   });
   assert.equal(r.status, 201);
   const g = await request(port, {
-    path: `/v1/persons/${annie}/schoolContext?schoolId=st-theresa`, headers: auth(secrets),
+    path: `/v1/persons/${annie}/schoolContext?schoolId=st-marys`, headers: auth(secrets),
   });
   assert.equal(g.body.schoolContext.classroomId, '3B');
   assert.equal(g.body.schoolContext.classroomName, 'Room 207 — Mr. Patel');

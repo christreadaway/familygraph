@@ -79,8 +79,8 @@ test('Integration API v0.2 > POST /v1/persons/:id/photoConsent with schoolId wri
   // Now set a per-school override.
   const r = await request(port, {
     method: 'POST', path: `/v1/persons/${p}/photoConsent`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
-    body: { schoolId: 'st-theresa', photoConsent: 'deny' },
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
+    body: { schoolId: 'st-marys', photoConsent: 'deny' },
   });
   assert.equal(r.status, 200);
   assert.equal(r.body.consent.photoConsent, 'deny');
@@ -98,10 +98,10 @@ test('Integration API v0.2 > GET /v1/persons/:id/consent?schoolId=... returns th
   await request(port, {
     method: 'POST', path: `/v1/persons/${p}/photoConsent`,
     headers: auth(secrets),
-    body: { schoolId: 'st-theresa', photoConsent: 'group_only' },
+    body: { schoolId: 'st-marys', photoConsent: 'group_only' },
   });
   const g = await request(port, {
-    path: `/v1/persons/${p}/consent?schoolId=st-theresa`, headers: auth(secrets),
+    path: `/v1/persons/${p}/consent?schoolId=st-marys`, headers: auth(secrets),
   });
   assert.equal(g.status, 200);
   assert.equal(g.body.consent.photoConsent, 'group_only');
@@ -118,14 +118,14 @@ test('Integration API v0.2 > DELETE /v1/persons/:id/photoConsent?schoolId=... cl
   await request(port, {
     method: 'POST', path: `/v1/persons/${p}/photoConsent`,
     headers: auth(secrets),
-    body: { schoolId: 'st-theresa', photoConsent: 'deny' },
+    body: { schoolId: 'st-marys', photoConsent: 'deny' },
   });
   const del = await request(port, {
-    method: 'DELETE', path: `/v1/persons/${p}/photoConsent?schoolId=st-theresa`, headers: auth(secrets),
+    method: 'DELETE', path: `/v1/persons/${p}/photoConsent?schoolId=st-marys`, headers: auth(secrets),
   });
   assert.equal(del.status, 204);
   const g = await request(port, {
-    path: `/v1/persons/${p}/consent?schoolId=st-theresa`, headers: auth(secrets),
+    path: `/v1/persons/${p}/consent?schoolId=st-marys`, headers: auth(secrets),
   });
   assert.equal(g.body.consent.overrideApplied, false);
 });
@@ -135,7 +135,7 @@ test('Integration API v0.2 > consent overrides are visible at /v1/persons/:id/co
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   await request(port, {
     method: 'POST', path: `/v1/persons/${p}/photoConsent`, headers: auth(secrets),
-    body: { schoolId: 'st-theresa', photoConsent: 'deny' },
+    body: { schoolId: 'st-marys', photoConsent: 'deny' },
   });
   await request(port, {
     method: 'POST', path: `/v1/persons/${p}/photoConsent`, headers: auth(secrets),
@@ -147,7 +147,7 @@ test('Integration API v0.2 > consent overrides are visible at /v1/persons/:id/co
   assert.equal(r.status, 200);
   assert.equal(r.body.items.length, 2);
   const schools = r.body.items.map(o => o.school_id).sort();
-  assert.deepEqual(schools, ['st-johns', 'st-theresa']);
+  assert.deepEqual(schools, ['st-johns', 'st-marys']);
 });
 
 test('Integration API v0.2 > consent override write fires a consent.updated webhook with schoolId payload', async t => {
@@ -156,14 +156,14 @@ test('Integration API v0.2 > consent override write fires a consent.updated webh
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   await request(port, {
     method: 'POST', path: `/v1/persons/${p}/photoConsent`, headers: auth(secrets),
-    body: { schoolId: 'st-theresa', photoConsent: 'deny' },
+    body: { schoolId: 'st-marys', photoConsent: 'deny' },
   });
   const pending = webhooks.listPendingDeliveries(db, {});
   assert.equal(pending.length, 1);
   assert.equal(pending[0].event, 'consent.updated');
   const payload = JSON.parse(pending[0].payload);
   assert.equal(payload.personId, p);
-  assert.equal(payload.schoolId, 'st-theresa');
+  assert.equal(payload.schoolId, 'st-marys');
 });
 
 // -----------------------------------------------------------------------------

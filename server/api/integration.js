@@ -477,7 +477,7 @@ function build({ db, secrets }) {
 
   // GET /v1/persons/:id/consent/overrides — list every per-school override
   // that's active for this person. Useful for the operator UI that wants
-  // to render "Annie has 2 overrides — at St Theresa and St John's".
+  // to render "Annie has 2 overrides — at St Mary's and St John's".
   r.get('/persons/:personId/consent/overrides', (req, res) => {
     if (!isValidCode(req.params.personId, 'person')) {
       return res.status(400).json({ error: 'invalid_person_id' });

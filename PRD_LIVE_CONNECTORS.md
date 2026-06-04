@@ -24,7 +24,7 @@ A pair of **live API connectors** for Family Graph that pull family/person/conta
 
 | Role | What they get |
 |---|---|
-| **St. Theresa operator (initial)** | One-time credential entry per system. Daily automatic sync. No more uploading CSVs from FACTS or Ministry Platform. |
+| **Pilot operator (initial)** | One-time credential entry per system. Daily automatic sync. No more uploading CSVs from FACTS or Ministry Platform. |
 | **Future Catholic school + parish operators** | Same connector framework, configured for their own FACTS / Ministry Platform tenants. |
 | **Sibling apps in the portfolio** | No change. They still call `/api/identity/match` and `/api/identity/resolve`. They benefit because Family Graph's ledger is now fresh. |
 
@@ -502,11 +502,11 @@ tests/
 - Pass all unit + integration tests.
 - Build runs on Mac and Windows per existing cross-platform support.
 
-### Phase 2 — St. Theresa pilot (FACTS first, then MP)
+### Phase 2 — pilot deployment (FACTS first, then MP)
 - Operator pays $500 for FACTS API access.
-- Configure FACTS connector against the live St. Theresa FACTS tenant.
+- Configure FACTS connector against the pilot's live FACTS tenant.
 - Run for 7 days; verify daily syncs, surface any field-mapping gaps.
-- Then configure MP connector against St. Theresa parish's MP tenant.
+- Then configure MP connector against the pilot parish's MP tenant.
 - Run for another 7 days; verify cross-system identity resolution.
 
 ### Phase 3 — Stabilization

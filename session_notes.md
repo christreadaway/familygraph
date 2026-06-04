@@ -80,7 +80,7 @@ That single sentence flipped the architecture. The identity store became the spi
 
 1. "Family codes should be assigned once and that's it. and they shouldn't start with FAM-001-A... just use a unique hexadecimal for them that does not identify them (for example, it should not use their first initials for example as that would give a clue to a bad actor)."
 2. Source handlers should support FACTS, RenWeb, Ministry Platform (not ParishSOFT — different segment), Google Sheets, Excel, plus generic CSV.
-3. Closed source for v1. Ship to St. Theresa first. Decide later.
+3. Closed source for v1. Ship to the pilot institution first. Decide later.
 
 **What changed.** Codes became fully non-semantic 8-character hex with type prefixes (`f_a7b3c91d`, `p_e4d2f8a1`). Ordering and family-size leaks eliminated. Source-specific handlers became their own subsystem in `server/sources/`. Bulk seed import wizard added as a v1 feature. Closed-source posture reflected throughout (no CONTRIBUTING, no CODE_OF_CONDUCT, README marked internal).
 
@@ -165,7 +165,7 @@ A few principles were present from the first conversation and never wavered:
 
 ## What v6 is
 
-A local-first family registry. Source of truth for who lives in what household, who is related to whom, and where they live. Serves PII to authenticated local apps. Serves pseudonyms to AI workflows and external recipients. Built on Node.js + Express + SQLite (encrypted via SQLCipher) + React. Vendors the upstream identity engine's identity module. Reuses the upstream identity engine's resolution rules. Closed source for v1, shipping to St. Theresa first.
+A local-first family registry. Source of truth for who lives in what household, who is related to whom, and where they live. Serves PII to authenticated local apps. Serves pseudonyms to AI workflows and external recipients. Built on Node.js + Express + SQLite (encrypted via SQLCipher) + React. Vendors the upstream identity engine's identity module. Reuses the upstream identity engine's resolution rules. Closed source for v1, shipping to the pilot institution first.
 
 The product is small enough to build well and ambitious enough to be foundational infrastructure for Chris's broader portfolio of Catholic institutional software.
 
@@ -175,7 +175,7 @@ The product is small enough to build well and ambitious enough to be foundationa
 
 1. **Build v6.** Use Claude Code. Build order is documented in v6 PRD (logging first, then store schema, then folder watch, then de-tokenization round-trip, then identity module, then conflict queue, then edits, then source handlers, then NER, then backup/restore, then bulk import wizard, then profiles).
 
-2. **Deploy to St. Theresa.** One operator, real data, real workflow. Run for at least 30 days without data-integrity issues.
+2. **Deploy to the pilot institution.** One operator, real data, real workflow. Run for at least 30 days without data-integrity issues.
 
 3. **Open-source decision.** Based on field experience. Default deferred until experience justifies a decision either way.
 

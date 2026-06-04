@@ -20,14 +20,14 @@ test('overrides > setOverride creates a per-school row and effective merges it o
   const { db, secrets } = setup(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   consents.set(db, p, { photoConsent: 'allow', directoryListing: 'allow' });
-  consents.setOverride(db, p, 'st-theresa', { photoConsent: 'deny' });
+  consents.setOverride(db, p, 'st-marys', { photoConsent: 'deny' });
 
   // Base unchanged.
   const base = consents.get(db, p);
   assert.equal(base.photo_consent, 'allow');
 
-  // Effective at st-theresa: deny photos, but directory still allow (base).
-  const eff = consents.effective(db, p, 'st-theresa');
+  // Effective at st-marys: deny photos, but directory still allow (base).
+  const eff = consents.effective(db, p, 'st-marys');
   assert.equal(eff.photo_consent, 'deny');
   assert.equal(eff.directory_listing, 'allow');
   assert.equal(eff.override_applied, true);
@@ -43,11 +43,11 @@ test('overrides > a school can override only one of the two fields', async t => 
   const { db, secrets } = setup(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   consents.set(db, p, { photoConsent: 'allow', directoryListing: 'allow' });
-  consents.setOverride(db, p, 'st-theresa', { directoryListing: 'deny' });
-  const eff = consents.effective(db, p, 'st-theresa');
+  consents.setOverride(db, p, 'st-marys', { directoryListing: 'deny' });
+  const eff = consents.effective(db, p, 'st-marys');
   assert.equal(eff.photo_consent, 'allow');     // from base
   assert.equal(eff.directory_listing, 'deny');  // from override
-  const over = consents.getOverride(db, p, 'st-theresa');
+  const over = consents.getOverride(db, p, 'st-marys');
   assert.equal(over.photo_consent, null);
   assert.equal(over.directory_listing, 'deny');
 });
@@ -55,11 +55,11 @@ test('overrides > a school can override only one of the two fields', async t => 
 test('overrides > clearOverride removes the row when both fields end up null', async t => {
   const { db, secrets } = setup(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
-  consents.setOverride(db, p, 'st-theresa', { photoConsent: 'deny' });
-  consents.clearOverride(db, p, 'st-theresa');
-  assert.equal(consents.getOverride(db, p, 'st-theresa'), null);
+  consents.setOverride(db, p, 'st-marys', { photoConsent: 'deny' });
+  consents.clearOverride(db, p, 'st-marys');
+  assert.equal(consents.getOverride(db, p, 'st-marys'), null);
   // Effective falls back to the base default.
-  const eff = consents.effective(db, p, 'st-theresa');
+  const eff = consents.effective(db, p, 'st-marys');
   assert.equal(eff.photo_consent, 'allow');
   assert.equal(eff.override_applied, false);
 });
@@ -67,19 +67,19 @@ test('overrides > clearOverride removes the row when both fields end up null', a
 test('overrides > listOverridesForPerson returns one row per school', async t => {
   const { db, secrets } = setup(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
-  consents.setOverride(db, p, 'st-theresa', { photoConsent: 'deny' });
+  consents.setOverride(db, p, 'st-marys', { photoConsent: 'deny' });
   consents.setOverride(db, p, 'st-johns', { photoConsent: 'group_only' });
   const list = consents.listOverridesForPerson(db, p);
   assert.equal(list.length, 2);
   const schools = list.map(o => o.school_id).sort();
-  assert.deepEqual(schools, ['st-johns', 'st-theresa']);
+  assert.deepEqual(schools, ['st-johns', 'st-marys']);
 });
 
 test('overrides > setOverride writes an entity_changes row', async t => {
   const { db, secrets } = setup(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
-  consents.setOverride(db, p, 'st-theresa', { photoConsent: 'deny' }, { actor: 'unit' });
-  const hist = history.listFor(db, 'consent_override', `${p}/st-theresa`);
+  consents.setOverride(db, p, 'st-marys', { photoConsent: 'deny' }, { actor: 'unit' });
+  const hist = history.listFor(db, 'consent_override', `${p}/st-marys`);
   assert.equal(hist[0].operation, 'create');
   assert.equal(hist[0].actor, 'unit');
 });
@@ -88,9 +88,9 @@ test('overrides > consentObject(schoolId) returns the effective shape', async t 
   const { db, secrets } = setup(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   consents.set(db, p, { photoConsent: 'allow', directoryListing: 'allow' });
-  consents.setOverride(db, p, 'st-theresa', { photoConsent: 'group_only' });
-  const obj = objects.consentObject(db, p, 'st-theresa');
-  assert.equal(obj.schoolId, 'st-theresa');
+  consents.setOverride(db, p, 'st-marys', { photoConsent: 'group_only' });
+  const obj = objects.consentObject(db, p, 'st-marys');
+  assert.equal(obj.schoolId, 'st-marys');
   assert.equal(obj.photoConsent, 'group_only');
   assert.equal(obj.directoryListing, 'allow');
   assert.equal(obj.overrideApplied, true);
@@ -113,7 +113,7 @@ test('overrides > listChangedPersonCodes picks up override updates', async t => 
   const cursor = new Date().toISOString();
   // Make sure the next write strictly exceeds the cursor.
   await new Promise(r => setTimeout(r, 2));
-  consents.setOverride(db, p, 'st-theresa', { photoConsent: 'deny' });
+  consents.setOverride(db, p, 'st-marys', { photoConsent: 'deny' });
   const codes = consents.listChangedPersonCodes(db, cursor);
   assert.ok(codes.includes(p));
 });

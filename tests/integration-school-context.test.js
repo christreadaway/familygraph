@@ -18,7 +18,7 @@ test('schoolContext > upsert stores the §7.3 snapshot and returns it', async t 
   const { db, secrets } = setup(t);
   const annie = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const code = sc.upsert(db, annie, {
-    schoolId: 'st-theresa',
+    schoolId: 'st-marys',
     schoolYear: '2026-2027',
     grade: '3',
     classroomId: '3A',
@@ -30,7 +30,7 @@ test('schoolContext > upsert stores the §7.3 snapshot and returns it', async t 
     allergies: ['peanuts'],
   });
   assert.match(code, /^sc_/);
-  const got = sc.getOne(db, annie, 'st-theresa');
+  const got = sc.getOne(db, annie, 'st-marys');
   assert.equal(got.schoolYear, '2026-2027');
   assert.equal(got.grade, '3');
   assert.equal(got.classroomId, '3A');
@@ -43,8 +43,8 @@ test('schoolContext > upsert stores the §7.3 snapshot and returns it', async t 
 test('schoolContext > upsert overwrites the previous snapshot for (person, school)', async t => {
   const { db, secrets } = setup(t);
   const annie = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
-  sc.upsert(db, annie, { schoolId: 'st-theresa', grade: '3', activities: ['a'] });
-  sc.upsert(db, annie, { schoolId: 'st-theresa', grade: '4', activities: ['b'] });
+  sc.upsert(db, annie, { schoolId: 'st-marys', grade: '3', activities: ['a'] });
+  sc.upsert(db, annie, { schoolId: 'st-marys', grade: '4', activities: ['b'] });
   const list = sc.listForPerson(db, annie);
   assert.equal(list.length, 1);
   assert.equal(list[0].grade, '4');
@@ -54,7 +54,7 @@ test('schoolContext > upsert overwrites the previous snapshot for (person, schoo
 test('schoolContext > a person can have one snapshot per school', async t => {
   const { db, secrets } = setup(t);
   const annie = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
-  sc.upsert(db, annie, { schoolId: 'st-theresa', grade: '3' });
+  sc.upsert(db, annie, { schoolId: 'st-marys', grade: '3' });
   sc.upsert(db, annie, { schoolId: 'st-johns', grade: '4' });
   const list = sc.listForPerson(db, annie);
   assert.equal(list.length, 2);

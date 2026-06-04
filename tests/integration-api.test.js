@@ -231,9 +231,9 @@ test('Integration API > POST /v1/persons/:id/schoolContext stores the §7.3 snap
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const r = await request(port, {
     method: 'POST', path: `/v1/persons/${p}/schoolContext`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
     body: {
-      schoolId: 'st-theresa', schoolYear: '2026-2027', grade: '3',
+      schoolId: 'st-marys', schoolYear: '2026-2027', grade: '3',
       classroomId: '3A', classroomName: 'Room 204 — Ms. Lee',
       activities: [{ kind: 'sport', label: 'Basketball — Girls 4A', season: '2026-2027 Winter' }],
       allergies: ['peanuts'],
@@ -244,7 +244,7 @@ test('Integration API > POST /v1/persons/:id/schoolContext stores the §7.3 snap
   assert.equal(r.body.schoolContext.classroomId, '3A');
   // GET /schoolContext returns the same snapshot.
   const g = await request(port, {
-    path: `/v1/persons/${p}/schoolContext?schoolId=st-theresa`, headers: auth(secrets),
+    path: `/v1/persons/${p}/schoolContext?schoolId=st-marys`, headers: auth(secrets),
   });
   assert.equal(g.status, 200);
   assert.equal(g.body.schoolContext.grade, '3');
@@ -254,7 +254,7 @@ test('Integration API > GET /v1/persons/:id/schoolContext without schoolId lists
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const sc = require('../server/integration/schoolContext');
-  sc.upsert(db, p, { schoolId: 'st-theresa', grade: '3' });
+  sc.upsert(db, p, { schoolId: 'st-marys', grade: '3' });
   sc.upsert(db, p, { schoolId: 'st-johns', grade: '4' });
   const r = await request(port, { path: `/v1/persons/${p}/schoolContext`, headers: auth(secrets) });
   assert.equal(r.status, 200);
@@ -310,7 +310,7 @@ test('Integration API > POST /v1/households/:id/members adds a member and trigge
   webhooks.subscribe(db, secrets, { url: 'https://x.example/cb', events: '*' });
   const r = await request(port, {
     method: 'POST', path: `/v1/households/${f}/members`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
     body: { personId: kid, role: 'child' },
   });
   assert.equal(r.status, 201);

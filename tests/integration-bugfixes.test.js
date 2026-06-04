@@ -71,26 +71,26 @@ const auth = (secrets, extra = {}) => ({
 test('bugfix > DELETE /v1/persons/:id/photoConsent with X-Request-Id replays the 204 on retry', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
-  consents.setOverride(db, p, 'st-theresa', { photoConsent: 'deny' });
+  consents.setOverride(db, p, 'st-marys', { photoConsent: 'deny' });
 
   const headers = auth(secrets, { 'x-request-id': 'integration_delete_idem_1' });
   const first = await request(port, {
-    method: 'DELETE', path: `/v1/persons/${p}/photoConsent?schoolId=st-theresa`, headers,
+    method: 'DELETE', path: `/v1/persons/${p}/photoConsent?schoolId=st-marys`, headers,
   });
   assert.equal(first.status, 204);
 
   // Re-set the override so a second non-idempotent call would do real work.
-  consents.setOverride(db, p, 'st-theresa', { photoConsent: 'group_only' });
+  consents.setOverride(db, p, 'st-marys', { photoConsent: 'group_only' });
 
   // Same request_id: the idempotency layer must replay the cached 204
   // instead of clearing the freshly-set override.
   const replay = await request(port, {
-    method: 'DELETE', path: `/v1/persons/${p}/photoConsent?schoolId=st-theresa`, headers,
+    method: 'DELETE', path: `/v1/persons/${p}/photoConsent?schoolId=st-marys`, headers,
   });
   assert.equal(replay.status, 204);
   assert.equal(replay.headers['x-fg-idempotent-replay'], 'true');
   // Override should still be there because the second DELETE was a replay.
-  const remaining = consents.getOverride(db, p, 'st-theresa');
+  const remaining = consents.getOverride(db, p, 'st-marys');
   assert.ok(remaining, 'override survives because the second DELETE was a replay, not a re-execute');
 });
 
@@ -142,7 +142,7 @@ test('bugfix > setOverride rejects schoolId containing / so composite history ke
   const { db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   assert.throws(
-    () => consents.setOverride(db, p, 'st-theresa/extra', { photoConsent: 'deny' }),
+    () => consents.setOverride(db, p, 'st-marys/extra', { photoConsent: 'deny' }),
     /invalid schoolId/
   );
 });
@@ -152,7 +152,7 @@ test('bugfix > setOverride rejects empty / non-string schoolId', async t => {
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   assert.throws(() => consents.setOverride(db, p, '', { photoConsent: 'deny' }), /schoolId/);
   assert.throws(() => consents.setOverride(db, p, 123, { photoConsent: 'deny' }), /invalid schoolId/);
-  assert.throws(() => consents.setOverride(db, p, '  st theresa  ', { photoConsent: 'deny' }), /invalid schoolId/);
+  assert.throws(() => consents.setOverride(db, p, '  st marys  ', { photoConsent: 'deny' }), /invalid schoolId/);
 });
 
 test('bugfix > school_context.upsert validates schoolId the same way', async t => {

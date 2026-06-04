@@ -7,7 +7,7 @@
 | | |
 |---|---|
 | **Author** | Chris Treadaway |
-| **Status** | v1 shipped to St. Theresa; v0.2 of the integration contract live; a connector in flight as the first demonstrator |
+| **Status** | v1 shipped to the pilot institution; v0.2 of the integration contract live; a connector in flight as the first demonstrator |
 | **Last updated** | 2026-05-15 (was: initial draft April 2026) |
 | **Document type** | Business spec (the "why," not the "how") |
 | **Companion docs** | `product_spec.md` (the "how"), `FAMILYGRAPH_INTEGRATION.md` (the wire contract), `INTEGRATION_GUIDE.md` (how any app integrates), `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md` (the original integration plan), `session_notes.md` (decision log) |
@@ -149,9 +149,9 @@ The platform thesis made this the obvious call. The more independent developers 
 
 ### v1 has shipped when
 
-- St. Theresa is running Family Graph in production for at least one weekly workflow. **Done — April 2026.**
+- The pilot institution is running Family Graph in production for at least one weekly workflow. **Done — April 2026.**
 - The operator has migrated their donor-intelligence app's identity data into Family Graph and is using Family Graph as the master record.
-- AI workflows at St. Theresa receive pseudonyms only; no PII has reached a public LLM.
+- AI workflows at the pilot institution receive pseudonyms only; no PII has reached a public LLM.
 - The audit log shows every PII access and every export consent event.
 
 ### v0.2 of the integration contract has shipped when
@@ -163,7 +163,7 @@ The platform thesis made this the obvious call. The more independent developers 
 
 ### The demonstration is working when
 
-- The first connected app runs against Family Graph at St. Theresa for at least 30 days without a data-integrity incident.
+- The first connected app runs against Family Graph at the pilot institution for at least 30 days without a data-integrity incident.
 - The operator can demonstrate "I changed Annie's phone in Family Graph; the SMS reminder Annie's class teacher sent two minutes later went to the right number" to a peer at another Catholic institution.
 - The webhook delivery success rate is above 99% measured over a rolling week.
 - Zero confirmed PII leakage incidents from the first connected app's integration with Family Graph in the first 90 days.
@@ -173,7 +173,7 @@ The platform thesis made this the obvious call. The more independent developers 
 - A second sibling app gets wired to Family Graph in under a developer-day using only the published contract, with no person-to-person handoff.
 - A bug in identity resolution is fixed once, in Family Graph, and propagates to every consumer on the next deploy.
 - At least one application built by someone outside the portfolio connects to Family Graph through the documented contract.
-- The donor-intelligence app migration begins (per the architectural memo) within 90 days of v1 stability at St. Theresa.
+- The donor-intelligence app migration begins (per the architectural memo) within 90 days of v1 stability at the pilot institution.
 
 ---
 
@@ -199,9 +199,9 @@ The platform thesis made this the obvious call. The more independent developers 
 
 Family Graph is part of a larger thesis: **church and school institutions deserve software built specifically for them, not generic SaaS shoehorned into their contexts.** A portfolio of Catholic software - a donor-intelligence app, a parent-engagement app, and sibling tools - is the practical expression of that thesis. Family Graph is the foundational layer that makes the portfolio coherent, and - increasingly - the foundational layer that makes any *other* mission-aligned application coherent with the portfolio.
 
-The order matters. Ship to St. Theresa. Demonstrate with the first connected app. Document the contract well enough that the second consumer doesn't need a phone call. Decide what's next based on what's true, not what's hoped.
+The order matters. Ship to the pilot institution. Demonstrate with the first connected app. Document the contract well enough that the second consumer doesn't need a phone call. Decide what's next based on what's true, not what's hoped.
 
-If Family Graph works at St. Theresa, the portfolio becomes more powerful at St. Theresa. If Family Graph plus the first connected app hold together for ninety days, the demonstration is real and the contract is honest. If a second consumer wires in successfully, the platform is real. And because Family Graph is now open source under the Apache License 2.0, it is already infrastructure any Catholic-aligned developer can build on, multiplying the impact beyond what one builder could achieve alone.
+If Family Graph works at the pilot institution, the portfolio becomes more powerful at the pilot institution. If Family Graph plus the first connected app hold together for ninety days, the demonstration is real and the contract is honest. If a second consumer wires in successfully, the platform is real. And because Family Graph is now open source under the Apache License 2.0, it is already infrastructure any Catholic-aligned developer can build on, multiplying the impact beyond what one builder could achieve alone.
 
 That's the staircase. Each step depends on the one below. Don't skip steps.
 

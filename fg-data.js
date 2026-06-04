@@ -4,8 +4,8 @@
 
 const FG_DATA = {
   institution: {
-    name: "St. Theresa Catholic School & Parish",
-    operator: "operator@st-theresa.org",
+    name: "St. Mary's Catholic School & Parish",
+    operator: "operator@example.org",
     profile: "catholic_school",
     boot_at: "2026-04-12T08:14:22-05:00",
     schema: 17,
@@ -31,9 +31,9 @@ const FG_DATA = {
   },
   conflicts_open: [
     { code: "conf_b1c2d3e4", left: "p_e4d2f8a1", right: "p_9a3b1c7d", reason: "name + dob within 0.86", file: "facts_q1_2026.csv", age: "2h",  assignee: null },
-    { code: "conf_4a8d2f91", left: "p_71f8a2c3", right: "p_a4d3e2f1", reason: "name match, addr differs", file: "donor-list-mar.xlsx", age: "5h",  assignee: "fr.mike@…" },
+    { code: "conf_4a8d2f91", left: "p_71f8a2c3", right: "p_a4d3e2f1", reason: "name match, addr differs", file: "donor-list-mar.xlsx", age: "5h",  assignee: "staff@…" },
     { code: "conf_d92e1c4a", left: "p_38c91da7", right: "p_5b2f73e8", reason: "phone match, name 0.74", file: "ministryplatform.csv", age: "1d",  assignee: null },
-    { code: "conf_77abf3e2", left: "p_c8a1d29f", right: "p_3e4f1a8c", reason: "addr + family-name 0.91", file: "renweb_apr.xlsx", age: "1d",  assignee: "principal@…" },
+    { code: "conf_77abf3e2", left: "p_c8a1d29f", right: "p_3e4f1a8c", reason: "addr + family-name 0.91", file: "renweb_apr.xlsx", age: "1d",  assignee: "admin@…" },
     { code: "conf_2f3a91dc", left: "p_b71fa2c3", right: "p_91c4ad28", reason: "household co-residence", file: "facts_q1_2026.csv", age: "2d",  assignee: null },
   ],
   imports_recent: [
@@ -53,8 +53,8 @@ const FG_DATA = {
     { t: "09:14:33", actor: "system",     action: "boot",            target: "schema=17",  note: "audit count carries forward" },
   ],
   notify: [
-    { kind: "conflict_assigned", to: "fr.mike@…",   subject: "1 conflict awaiting review", state: "delivered", t: "08:11" },
-    { kind: "import_summary",    to: "principal@…", subject: "RenWeb import — 1 conflict", state: "delivered", t: "yest." },
+    { kind: "conflict_assigned", to: "staff@…",   subject: "1 conflict awaiting review", state: "delivered", t: "08:11" },
+    { kind: "import_summary",    to: "admin@…", subject: "RenWeb import — 1 conflict", state: "delivered", t: "yest." },
   ],
 };
 

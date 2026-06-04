@@ -20,12 +20,12 @@ test('webhooks > subscribe stores a row and returns metadata', async t => {
     url: 'https://us-central1-integration.cloudfunctions.net/familyGraphWebhook',
     secret: 'shhhh',
     events: '*',
-    schoolHint: 'st-theresa',
+    schoolHint: 'st-marys',
   });
   assert.match(sub.code, /^wh_/);
   assert.equal(sub.url, 'https://us-central1-integration.cloudfunctions.net/familyGraphWebhook');
   assert.equal(sub.events, '*');
-  assert.equal(sub.school_hint, 'st-theresa');
+  assert.equal(sub.school_hint, 'st-marys');
   assert.equal(sub.has_secret, true);
 });
 
@@ -57,7 +57,7 @@ test('webhooks > enqueue creates a delivery for matching subscriptions only', as
   webhooks.subscribe(db, secrets, { url: 'https://x.example/cb3', events: ['household.updated'] });
 
   const codes = webhooks.enqueue(db, secrets, {
-    event: 'person.updated', personCode: 'p_a', schoolHints: ['st-theresa'],
+    event: 'person.updated', personCode: 'p_a', schoolHints: ['st-marys'],
   });
   assert.equal(codes.length, 2);
   // Verify both deliveries are pending.
@@ -69,11 +69,11 @@ test('webhooks > enqueue creates a delivery for matching subscriptions only', as
 
 test('webhooks > enqueue respects the school_hint filter', async t => {
   const { db, secrets } = setup(t);
-  webhooks.subscribe(db, secrets, { url: 'https://t.example/cb', schoolHint: 'st-theresa' });
+  webhooks.subscribe(db, secrets, { url: 'https://t.example/cb', schoolHint: 'st-marys' });
   webhooks.subscribe(db, secrets, { url: 'https://j.example/cb', schoolHint: 'st-johns' });
-  // Hint doesn't include st-theresa → only the no-hint and matching subs fire.
+  // Hint doesn't include st-marys → only the no-hint and matching subs fire.
   const codes = webhooks.enqueue(db, secrets, {
-    event: 'household.updated', familyCode: 'f_x', schoolHints: ['st-theresa'],
+    event: 'household.updated', familyCode: 'f_x', schoolHints: ['st-marys'],
   });
   assert.equal(codes.length, 1);
   // No hint at all → fan out to every sub regardless of school_hint

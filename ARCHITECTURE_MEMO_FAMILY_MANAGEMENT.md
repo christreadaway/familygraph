@@ -8,7 +8,7 @@ For: any current or future Catholic Digital Commons app that handles family data
 |---|---|
 | **Author** | Chris Treadaway |
 | **Status** | Architectural direction. Migration timing TBD. |
-| **Trigger** | Family Graph v1 (family registry) shipping to St. Theresa. |
+| **Trigger** | Family Graph v1 (family registry) shipping to the pilot institution. |
 | **Action expected** | Each consuming project will write its own migration PRD against this memo when ready to migrate. |
 | **Migration timing** | Not yet. Wait until Family Graph is running properly in production. |
 
@@ -18,7 +18,7 @@ For: any current or future Catholic Digital Commons app that handles family data
 
 Family management — knowing which families exist, who lives in them, where they live, who's related to whom — is being extracted out of the individual apps in the portfolio and into a standalone local registry called Family Graph. Each app will eventually stop maintaining its own family records and instead query Family Graph for identity. Each app retains its own domain data (donations for a donor-intelligence app, engagement for a parent-engagement app) but stores that data against Family Graph identifiers.
 
-This memo describes the architectural target. It does not specify the migration plan for any individual app. Each project will write its own migration PRD against this memo, on its own timeline, after Family Graph is stable in production at St. Theresa.
+This memo describes the architectural target. It does not specify the migration plan for any individual app. Each project will write its own migration PRD against this memo, on its own timeline, after Family Graph is stable in production at the pilot institution.
 
 ---
 
@@ -269,7 +269,7 @@ Each app will write its own migration PRD when ready. Below is the recommended s
 
 ### Recommended phases
 
-1. **Phase 0: Family Graph stability.** Do not start migrating any consuming app until Family Graph has been running in production at St. Theresa for at least 30 days without data-integrity issues.
+1. **Phase 0: Family Graph stability.** Do not start migrating any consuming app until Family Graph has been running in production at the pilot institution for at least 30 days without data-integrity issues.
 2. **Phase 1: Read-through cache.** App continues to own its identity tables. On every read of a family or person, the app also fetches from Family Graph and compares. Discrepancies are logged but not acted on. This validates the API integration without putting production at risk.
 3. **Phase 2: Family Graph is authoritative for new data.** New imports go to Family Graph first. The app stores Family Graph identifiers on new records. Existing records continue to use the app's internal IDs. App maintains a mapping table during transition.
 4. **Phase 3: Backfill.** One-time migration translates the app's existing internal IDs into Family Graph identifiers. The mapping table is consulted; for unmatched records, Family Graph's import API resolves them. Conflicts surface in Family Graph's dashboard for the operator.
@@ -316,7 +316,7 @@ Any future Catholic Digital Commons app that handles families starts on Family G
 Each consuming project should:
 
 1. Read this memo end to end.
-2. Wait for the trigger: Family Graph running in production at St. Theresa for 30+ days without data-integrity issues.
+2. Wait for the trigger: Family Graph running in production at the pilot institution for 30+ days without data-integrity issues.
 3. Write a project-specific migration PRD that follows the phased approach above and accommodates that project's particular constraints (existing schema, deployment timeline, user-visible changes).
 4. Plan the migration as a multi-phase rollout, not a single big-bang refactor.
 5. Treat the PII vs pseudonym posture as a non-negotiable architectural commitment, not an optional feature.
