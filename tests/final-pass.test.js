@@ -92,7 +92,7 @@ test('health > reports counts + active profile + folder watch', async t => {
   assert.ok(r.body.folder_watch);
 });
 
-test('folder-watch > processExisting picks up files dropped while down', t => {
+test('folder-watch > processExisting picks up files dropped while down', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -104,7 +104,7 @@ test('folder-watch > processExisting picks up files dropped while down', t => {
   fs.writeFileSync(path.join(watch, 'note.txt'), 'Mary Smith called.');
 
   let processed = 0;
-  const wd = folderWatch.start(db, s, defaultThresholds(), {
+  const wd = await folderWatch.start(db, s, defaultThresholds(), {
     watchDir: watch,
     outDir: out,
     processExisting: true,
@@ -117,7 +117,7 @@ test('folder-watch > processExisting picks up files dropped while down', t => {
   assert.equal(fs.existsSync(path.join(watch, 'note.txt')), false);
 });
 
-test('folder-watch > default does not reprocess existing files', t => {
+test('folder-watch > default does not reprocess existing files', async t => {
   const { db, dir } = newDb();
   const s = newSecrets();
   t.after(() => { db.close(); cleanup(dir); });
@@ -127,7 +127,7 @@ test('folder-watch > default does not reprocess existing files', t => {
 
   fs.writeFileSync(path.join(watch, 'roster.csv'), 'first_name,last_name\nMary,Smith\n');
   let processed = 0;
-  const wd = folderWatch.start(db, s, defaultThresholds(), {
+  const wd = await folderWatch.start(db, s, defaultThresholds(), {
     watchDir: watch, outDir: out,
     onProcessed: () => { processed += 1; },
   });

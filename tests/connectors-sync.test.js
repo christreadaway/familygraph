@@ -57,13 +57,13 @@ test('runSync > full FACTS flow creates families/persons + import_run + connecto
       enabled: true, schedule: 'daily_2am',
     });
     const students = [{
-      sourcedId: 'stu-1', givenName: 'Anna', familyName: 'Treadaway',
+      sourcedId: 'stu-1', givenName: 'Sofia', familyName: 'Castillo',
       metadata: { address: '123 Main St', city: 'St Louis', state: 'MO', zip: '63101' },
       agents: [{ sourcedId: 'par-1' }],
     }];
     const parents = [{
-      sourcedId: 'par-1', givenName: 'Chris', familyName: 'Treadaway',
-      email: 'chris@example.com',
+      sourcedId: 'par-1', givenName: 'Marco', familyName: 'Castillo',
+      email: 'marco@example.com',
     }];
     const out = await connectors.runSync(db, secrets, defaultThresholds(), 'facts', {
       trigger: 'manual', actor: 'tester',
@@ -167,18 +167,18 @@ test('cross-source resolution > matching email auto-merges across FACTS and MP',
       client_id: 'c', client_secret: 's', enabled: true, schedule: 'daily_2am',
     });
 
-    // FACTS sync first: parent Chris with email chris@example.com.
+    // FACTS sync first: parent Marco with email marco@example.com.
     await connectors.runSync(db, secrets, defaultThresholds(), 'facts', {
       trigger: 'manual',
       fetchImpl: factsFetch({
         students: [{
-          sourcedId: 'stu-1', givenName: 'Anna', familyName: 'Treadaway',
+          sourcedId: 'stu-1', givenName: 'Sofia', familyName: 'Castillo',
           metadata: { address: '123 Main St', city: 'St Louis', state: 'MO', zip: '63101' },
           agents: [{ sourcedId: 'par-1' }],
         }],
         parents: [{
-          sourcedId: 'par-1', givenName: 'Chris', familyName: 'Treadaway',
-          email: 'chris@example.com',
+          sourcedId: 'par-1', givenName: 'Marco', familyName: 'Castillo',
+          email: 'marco@example.com',
         }],
       }),
     });
@@ -186,30 +186,30 @@ test('cross-source resolution > matching email auto-merges across FACTS and MP',
     const personsAfterFacts = db.prepare(`SELECT COUNT(*) AS n FROM persons WHERE status='active'`).get().n;
     assert.equal(personsAfterFacts, 2);
 
-    // MP sync: same Chris with same email. Should auto-merge (definitive email match).
+    // MP sync: same Marco with same email. Should auto-merge (definitive email match).
     httpMod.clearTokenCache();
     await connectors.runSync(db, secrets, defaultThresholds(), 'ministry_platform', {
       trigger: 'manual',
       fetchImpl: mpFetch({
-        households: [{ Household_ID: 1, Household_Name: 'Treadaway Family', Address_ID: 11 }],
+        households: [{ Household_ID: 1, Household_Name: 'Castillo Family', Address_ID: 11 }],
         contacts: [{
-          Contact_ID: 100, Household_ID: 1, First_Name: 'Chris', Last_Name: 'Treadaway',
-          Email_Address: 'chris@example.com',
+          Contact_ID: 100, Household_ID: 1, First_Name: 'Marco', Last_Name: 'Castillo',
+          Email_Address: 'marco@example.com',
         }],
         addresses: [{ Address_ID: 11, Address_Line_1: '123 Main St', City: 'St Louis', State_Region: 'MO', Postal_Code: '63101' }],
       }),
     });
 
-    // Chris should be one person, not two.
+    // Marco should be one person, not two.
     const chris = db.prepare(`
       SELECT COUNT(*) AS n FROM persons p
       JOIN person_emails pe ON pe.person_code = p.code
       JOIN emails e ON e.code = pe.email_code
       WHERE p.status = 'active'
     `).get().n;
-    // 2 person<->email link rows but pointing at one canonical Chris. Let me count distinct persons.
+    // 2 person<->email link rows but pointing at one canonical Marco. Let me count distinct persons.
     const distinctPersons = db.prepare(`SELECT COUNT(*) AS n FROM persons WHERE status='active'`).get().n;
-    assert.equal(distinctPersons, 2, 'expected Anna + Chris (merged), not three persons');
+    assert.equal(distinctPersons, 2, 'expected Sofia + Marco (merged), not three persons');
   } finally {
     db.close();
     cleanup(dir);
@@ -230,26 +230,26 @@ test('cross-source resolution > non-matching identifiers open a cross_source con
       client_id: 'c', client_secret: 's', enabled: true, schedule: 'daily_2am',
     });
 
-    // FACTS: Chris with dad's email.
+    // FACTS: Marco with dad's email.
     await connectors.runSync(db, secrets, defaultThresholds(), 'facts', {
       trigger: 'manual',
       fetchImpl: factsFetch({
-        students: [{ sourcedId: 'stu-1', givenName: 'Anna', familyName: 'Treadaway',
+        students: [{ sourcedId: 'stu-1', givenName: 'Sofia', familyName: 'Castillo',
           metadata: { address: '123 Main St', city: 'St Louis', state: 'MO', zip: '63101' },
           agents: [{ sourcedId: 'par-1' }] }],
-        parents: [{ sourcedId: 'par-1', givenName: 'Chris', familyName: 'Treadaway',
+        parents: [{ sourcedId: 'par-1', givenName: 'Marco', familyName: 'Castillo',
           email: 'dad@example.com' }],
       }),
     });
 
-    // MP: SAME Chris last name + SAME address but different email.
+    // MP: SAME Marco last name + SAME address but different email.
     httpMod.clearTokenCache();
     await connectors.runSync(db, secrets, defaultThresholds(), 'ministry_platform', {
       trigger: 'manual',
       fetchImpl: mpFetch({
-        households: [{ Household_ID: 1, Household_Name: 'Treadaway Family', Address_ID: 11 }],
+        households: [{ Household_ID: 1, Household_Name: 'Castillo Family', Address_ID: 11 }],
         contacts: [{
-          Contact_ID: 100, Household_ID: 1, First_Name: 'Chris', Last_Name: 'Treadaway',
+          Contact_ID: 100, Household_ID: 1, First_Name: 'Marco', Last_Name: 'Castillo',
           Email_Address: 'mom-uses-this@example.com',
         }],
         addresses: [{ Address_ID: 11, Address_Line_1: '123 Main St', City: 'St Louis', State_Region: 'MO', Postal_Code: '63101' }],

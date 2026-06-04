@@ -44,12 +44,9 @@ checkout.
 
 ## Known issues
 
-- **`xlsx` (SheetJS) advisories** GHSA-4r6h-8v6p-xvw6 (prototype pollution) and
-  GHSA-5pgg-2g8v-p4x9 (ReDoS). There is **no fixed version on the npm
-  registry** - SheetJS publishes maintained builds only from their own CDN.
-  Family Graph uses `xlsx` solely to parse spreadsheets the operator
-  deliberately imports from their own machine (FACTS / RenWeb / donor exports),
-  not untrusted network input, which bounds the exposure to files the operator
-  already chose to trust. Treat imported spreadsheets as you would any file you
-  run through a parser. Migrating to the SheetJS CDN build (or a maintained
-  alternative) is tracked as a follow-up.
+- **`uuid` (transitive via `exceljs`)** GHSA-w5hq-g745-h8pq (moderate -
+  missing buffer bounds check in v3/v5/v6 when the caller passes an explicit
+  `buf` argument). Family Graph does not call uuid directly and exceljs does not
+  pass a buffer argument, so the vulnerable code path is not exercised. The fix
+  (`uuid >=11.1.1`) would require downgrading exceljs to a breaking-change
+  release. Tracked as a follow-up; no practical exposure in current usage.

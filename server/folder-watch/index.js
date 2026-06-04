@@ -113,7 +113,7 @@ function _errorCategory(e) {
   return 'other';
 }
 
-function processFile(db, secrets, thresholds, filePath, opts = {}) {
+async function processFile(db, secrets, thresholds, filePath, opts = {}) {
   const kind = classify(filePath);
   const outDir = opts.outDir;
   const processedDir = path.join(outDir, 'processed');
@@ -125,7 +125,7 @@ function processFile(db, secrets, thresholds, filePath, opts = {}) {
 
   try {
     if (kind === 'csv' || kind === 'excel') {
-      const parsed = sources.load(filePath, opts.sourceOpts || {});
+      const parsed = await sources.load(filePath, opts.sourceOpts || {});
       const batch = importPipeline.importBatch(db, secrets, thresholds, parsed.canonical, {
         actor: 'folder_watch',
         source: parsed.source || kind,
@@ -203,7 +203,7 @@ function processFile(db, secrets, thresholds, filePath, opts = {}) {
   }
 }
 
-function start(db, secrets, thresholds, opts) {
+async function start(db, secrets, thresholds, opts) {
   const watchDir = path.resolve(opts.watchDir);
   const outDir = path.resolve(opts.outDir);
   const onProcessed = typeof opts.onProcessed === 'function' ? opts.onProcessed : null;
@@ -262,7 +262,7 @@ function start(db, secrets, thresholds, opts) {
         try { return fs.statSync(p).isFile(); } catch { return false; }
       });
     for (const fp of existing) {
-      const r = processFile(db, secrets, thresholds, fp, { outDir, ...opts });
+      const r = await processFile(db, secrets, thresholds, fp, { outDir, ...opts });
       if (onProcessed && r && r.ok !== false) onProcessed(r);
     }
   }
@@ -273,10 +273,10 @@ function start(db, secrets, thresholds, opts) {
     depth: 0,
     awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
   });
-  watcher.on('add', filePath => {
+  watcher.on('add', async filePath => {
     if (path.dirname(filePath) !== watchDir) return;
     if (path.basename(filePath).startsWith('.')) return;
-    const r = processFile(db, secrets, thresholds, filePath, { outDir, ...opts });
+    const r = await processFile(db, secrets, thresholds, filePath, { outDir, ...opts });
     if (onProcessed && r && r.ok !== false) onProcessed(r);
   });
   watcher.on('error', e => {

@@ -22,12 +22,12 @@ function mockResponse({ status = 200, json = null, text = null }) {
 // FACTS sample: two students sharing two parents, plus a stand-alone parent.
 const STUDENTS = [
   {
-    sourcedId: 'stu-1', givenName: 'Anna', familyName: 'Treadaway', dateOfBirth: '2014-04-15',
+    sourcedId: 'stu-1', givenName: 'Sofia', familyName: 'Castillo', dateOfBirth: '2015-03-10',
     grade: '5', metadata: { address: '123 Main St', city: 'St Louis', state: 'MO', zip: '63101' },
     agents: [{ sourcedId: 'par-1' }, { sourcedId: 'par-2' }],
   },
   {
-    sourcedId: 'stu-2', givenName: 'Ben', familyName: 'Treadaway', dateOfBirth: '2016-09-22',
+    sourcedId: 'stu-2', givenName: 'Lucas', familyName: 'Castillo', dateOfBirth: '2017-06-18',
     grade: '3', metadata: { address: '123 Main St', city: 'St Louis', state: 'MO', zip: '63101' },
     agents: [{ sourcedId: 'par-1' }, { sourcedId: 'par-2' }],
   },
@@ -35,12 +35,12 @@ const STUDENTS = [
 
 const PARENTS = [
   {
-    sourcedId: 'par-1', givenName: 'Chris', familyName: 'Treadaway',
-    email: 'chris@example.com', phone: '+1-314-555-0001',
+    sourcedId: 'par-1', givenName: 'Marco', familyName: 'Castillo',
+    email: 'marco@example.com', phone: '+1-314-555-0001',
   },
   {
-    sourcedId: 'par-2', givenName: 'Sarah', familyName: 'Treadaway',
-    email: 'sarah@example.com', phone: '3145550002',
+    sourcedId: 'par-2', givenName: 'Elena', familyName: 'Castillo',
+    email: 'elena@example.com', phone: '3145550002',
   },
   {
     sourcedId: 'par-99', givenName: 'Solo', familyName: 'Singleton',
@@ -50,16 +50,16 @@ const PARENTS = [
 
 test('facts.buildCanonical groups siblings + parents into one household', () => {
   const out = facts.buildCanonical({ students: STUDENTS, parents: PARENTS });
-  // Expect: 1 Treadaway household + 1 Singleton parent-only row.
+  // Expect: 1 Castillo household + 1 Singleton parent-only row.
   assert.equal(out.length, 2);
-  const tread = out.find(h => h.persons.some(p => p.family_name === 'Treadaway'));
+  const castillo = out.find(h => h.persons.some(p => p.family_name === 'Castillo'));
   const singleton = out.find(h => h.persons.some(p => p.family_name === 'Singleton'));
-  assert.ok(tread, 'expected Treadaway household');
+  assert.ok(castillo, 'expected Castillo household');
   assert.ok(singleton, 'expected Singleton parent-only row');
-  assert.equal(tread.persons.length, 4, 'two students + two parents');
-  assert.ok(tread.address);
-  assert.equal(tread.address.line1, '123 Main St');
-  assert.equal(tread.persons.find(p => p.given_name === 'Chris').emails[0], 'chris@example.com');
+  assert.equal(castillo.persons.length, 4, 'two students + two parents');
+  assert.ok(castillo.address);
+  assert.equal(castillo.address.line1, '123 Main St');
+  assert.equal(castillo.persons.find(p => p.given_name === 'Marco').emails[0], 'marco@example.com');
 });
 
 test('facts.testConnection succeeds against a mock', async () => {

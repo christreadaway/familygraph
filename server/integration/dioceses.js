@@ -8,7 +8,7 @@
 // cert).
 //
 // Per-diocese renewal interval supersedes the global `eim.renewal_years`
-// setting when set: a parish that's part of the Archdiocese of Austin
+// setting when set: a parish that's part of the Diocese of Austin
 // (3 years) and one that's part of the Diocese of Sacramento (5 years)
 // can co-exist in the same FG without the operator having to flip the
 // global setting for every cert insertion.

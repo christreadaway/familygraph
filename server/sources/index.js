@@ -18,13 +18,13 @@ const HANDLERS = {
   sheets,
 };
 
-function load(filePath, opts = {}) {
+async function load(filePath, opts = {}) {
   const ext = path.extname(filePath).toLowerCase();
   if (opts.source && HANDLERS[opts.source]) {
-    return HANDLERS[opts.source].loadFile(filePath, opts);
+    return await HANDLERS[opts.source].loadFile(filePath, opts);
   }
   if (ext === '.xlsx' || ext === '.xls' || ext === '.xlsm') {
-    return excel.loadFile(filePath, opts);
+    return await excel.loadFile(filePath, opts);
   }
   // CSV path: try to auto-detect FACTS / RenWeb / Ministry Platform.
   const out = csv.loadFile(filePath, opts);
