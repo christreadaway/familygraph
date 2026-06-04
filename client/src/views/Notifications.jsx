@@ -7,6 +7,13 @@ export default function Notifications() {
   const [filter, setFilter] = useState({ status: '', kind: '' });
   const [testTo, setTestTo] = useState('');
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    if (!status) return;
+    const t = setTimeout(() => setStatus(null), 4000);
+    return () => clearTimeout(t);
+  }, [status]);
 
   function load() {
     const params = {};
@@ -21,7 +28,7 @@ export default function Notifications() {
   async function cancel(code) { await api.cancelNotification(code); load(); }
   async function sendTest() {
     if (!testTo) return;
-    try { const r = await api.testNotification(testTo); alert(`Test queued (${r.code}). Click "Run dispatch now" to send.`); load(); }
+    try { const r = await api.testNotification(testTo); setStatus(`Test queued (${r.code}). Click "Run dispatch now" to send.`); load(); }
     catch (e) { setError(e.message); }
   }
 
@@ -31,6 +38,7 @@ export default function Notifications() {
   return (
     <>
       <h2>Notifications</h2>
+      {status && <div className="panel" style={{background: 'var(--c-surface-alt)', marginBottom: 12}}>{status} <button onClick={() => setStatus(null)} style={{marginLeft: 8}}>✕</button></div>}
       {error && <div className="panel error">{error}</div>}
       <div className="panel">
         <h3>Configuration</h3>

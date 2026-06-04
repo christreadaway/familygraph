@@ -7,6 +7,7 @@ export default function Rules() {
   const [items, setItems] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [confirmingDelete, setConfirmingDelete] = useState(null);
   const [draft, setDraft] = useState({
     kind: 'person', action: 'never_merge', weight: 0.2,
     given_name: '', family_name: '', email_domain: '', postal: '',
@@ -33,7 +34,7 @@ export default function Rules() {
   }
 
   async function toggle(c, enabled) { await api.updateRule(c, { enabled }); load(); }
-  async function del(c) { if (confirm('Delete rule?')) { await api.deleteRule(c); load(); } }
+  async function del(c) { await api.deleteRule(c); setConfirmingDelete(null); load(); }
 
   return (
     <>
@@ -87,7 +88,15 @@ export default function Rules() {
                 </td>
                 <td><pre className="mono" style={{ margin: 0, fontSize: 11 }}>{JSON.stringify(r.rule.match)}</pre></td>
                 <td><input type="checkbox" checked={r.enabled} onChange={e => toggle(r.code, e.target.checked)} /></td>
-                <td><button className="danger" onClick={() => del(r.code)}>delete</button></td>
+                <td>{confirmingDelete === r.code ? (
+                  <>
+                    <span className="muted" style={{ fontSize: 'var(--t-small)' }}>Are you sure?</span>{' '}
+                    <button className="danger" onClick={() => del(r.code)}>Confirm</button>
+                    <button onClick={() => setConfirmingDelete(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <button className="danger" onClick={() => setConfirmingDelete(r.code)}>delete</button>
+                )}</td>
               </tr>
             ))}
             {items.length === 0 && <tr><td colSpan={6} className="muted">No rules yet.</td></tr>}
