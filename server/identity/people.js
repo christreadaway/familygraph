@@ -257,7 +257,7 @@ function update(db, secrets, code, patch, audit = {}) {
   return target;
 }
 
-// Helper used by the ParentPoint contract layer (and other write paths) to
+// Helper used by the Integration contract layer (and other write paths) to
 // bump `updated_at` without changing any other column. Surfaced as a public
 // API so callers don't have to embed strftime in their own SQL.
 function touchUpdatedAt(db, code) {
@@ -385,7 +385,7 @@ function merge(db, secrets, loserCode, winnerCode, opts = {}) {
     db.prepare('DELETE FROM person_addresses WHERE person_code = ?').run(loser);
     db.prepare('UPDATE provenance SET entity_code = ? WHERE entity_code = ?').run(winner, loser);
 
-    // ParentPoint contract additions: consents, per-school consent overrides,
+    // Integration contract additions: consents, per-school consent overrides,
     // EIM cert history, school_contexts. Each table is keyed on person_code,
     // so a merge needs to re-point them onto the winner. Conflict rules:
     //   - person_consents (PK on person_code): if winner already has one,
@@ -396,7 +396,7 @@ function merge(db, secrets, loserCode, winnerCode, opts = {}) {
     //   - eim_certifications: append-only history; just re-point.
     //   - school_contexts (unique on person_code+school_id): if the winner
     //     already has a snapshot for the same school, the newer snapshot
-    //     survives (the doc says PP overwrites on each POST).
+    //     survives (the doc says the app overwrites on each POST).
     _mergeConsent(db, loser, winner);
     _mergeConsentOverrides(db, loser, winner);
     db.prepare('UPDATE eim_certifications SET person_code = ? WHERE person_code = ?').run(winner, loser);

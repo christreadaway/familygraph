@@ -1,6 +1,6 @@
 'use strict';
 
-// Verify that a person merge moves all the ParentPoint-contract tables
+// Verify that a person merge moves all the Integration-contract tables
 // (person_consents, person_consent_overrides, eim_certifications,
 // school_contexts) onto the winner. Pre-fix these rows were orphaned
 // on the loser code — the alias chain made the loser unreadable but
@@ -11,9 +11,9 @@ const assert = require('node:assert/strict');
 
 const { newDb, newSecrets, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
-const consents = require('../server/parentpoint/consents');
-const certifications = require('../server/parentpoint/certifications');
-const schoolContext = require('../server/parentpoint/schoolContext');
+const consents = require('../server/integration/consents');
+const certifications = require('../server/integration/certifications');
+const schoolContext = require('../server/integration/schoolContext');
 const history = require('../server/identity/history');
 
 function setup(t) {
@@ -43,11 +43,11 @@ test('merge > person_consent_overrides on loser are re-pointed onto winner', asy
   const { db, secrets } = setup(t);
   const a = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
   const b = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
-  consents.setOverride(db, a, 'st-theresa', { photoConsent: 'deny' });
+  consents.setOverride(db, a, 'st-marys', { photoConsent: 'deny' });
   people.merge(db, secrets, a, b);
   const list = consents.listOverridesForPerson(db, b);
   assert.equal(list.length, 1);
-  assert.equal(list[0].school_id, 'st-theresa');
+  assert.equal(list[0].school_id, 'st-marys');
   assert.equal(list[0].photo_consent, 'deny');
 });
 
@@ -55,8 +55,8 @@ test('merge > overlapping consent_overrides for the same school resolve to the s
   const { db, secrets } = setup(t);
   const a = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
   const b = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
-  consents.setOverride(db, a, 'st-theresa', { photoConsent: 'deny', directoryListing: 'allow' });
-  consents.setOverride(db, b, 'st-theresa', { photoConsent: 'group_only', directoryListing: 'deny' });
+  consents.setOverride(db, a, 'st-marys', { photoConsent: 'deny', directoryListing: 'allow' });
+  consents.setOverride(db, b, 'st-marys', { photoConsent: 'group_only', directoryListing: 'deny' });
   people.merge(db, secrets, a, b);
   const list = consents.listOverridesForPerson(db, b);
   assert.equal(list.length, 1);
@@ -79,18 +79,18 @@ test('merge > school_contexts move to winner; conflicts keep the newer snapshot'
   const { db, secrets } = setup(t);
   const a = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
   const b = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
-  schoolContext.upsert(db, a, { schoolId: 'st-theresa', grade: '3', activities: ['a'] });
+  schoolContext.upsert(db, a, { schoolId: 'st-marys', grade: '3', activities: ['a'] });
   // Touch B with the same school slightly later. The "newer wins" rule
   // should keep B's grade ('4') because A's snapshot is older.
   await new Promise(r => setTimeout(r, 5));
-  schoolContext.upsert(db, b, { schoolId: 'st-theresa', grade: '4', activities: ['b'] });
+  schoolContext.upsert(db, b, { schoolId: 'st-marys', grade: '4', activities: ['b'] });
   // Also give A a unique-school snapshot so the re-point path is covered.
   schoolContext.upsert(db, a, { schoolId: 'st-johns', grade: '3' });
   people.merge(db, secrets, a, b);
   const list = schoolContext.listForPerson(db, b);
   assert.equal(list.length, 2);
   const byId = Object.fromEntries(list.map(r => [r.schoolId, r]));
-  assert.equal(byId['st-theresa'].grade, '4', 'newer snapshot survives');
+  assert.equal(byId['st-marys'].grade, '4', 'newer snapshot survives');
   assert.equal(byId['st-johns'].grade, '3', 'unique snapshot re-points');
 });
 
@@ -111,10 +111,10 @@ test('merge > listOverridesForPerson on the winner returns the merged set', asyn
   const { db, secrets } = setup(t);
   const a = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
   const b = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
-  consents.setOverride(db, a, 'st-theresa', { photoConsent: 'deny' });
+  consents.setOverride(db, a, 'st-marys', { photoConsent: 'deny' });
   consents.setOverride(db, b, 'st-johns', { photoConsent: 'group_only' });
   people.merge(db, secrets, a, b);
   const list = consents.listOverridesForPerson(db, b);
   const schools = list.map(o => o.school_id).sort();
-  assert.deepEqual(schools, ['st-johns', 'st-theresa']);
+  assert.deepEqual(schools, ['st-johns', 'st-marys']);
 });

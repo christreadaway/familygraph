@@ -39,9 +39,9 @@ const buildMinistries = require('./api/ministries');
 const connectorScheduler = require('./connectors/scheduler');
 const eim = require('./identity/eim');
 const entityHistory = require('./identity/history');
-const buildParentPointApi = require('./api/parentpoint');
-const ppWebhooks = require('./parentpoint/webhooks');
-const ppIdempotency = require('./parentpoint/idempotency');
+const buildIntegrationApi = require('./api/integration');
+const integrationWebhooks = require('./integration/webhooks');
+const integrationIdempotency = require('./integration/idempotency');
 const rateLimit = require('./auth/rate-limit');
 
 // method2scope: chooses one of two scoped middlewares depending on the HTTP
@@ -152,7 +152,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   const bearerImport = auth.bearerAuth(secrets, { db, scope: 'import' });
   const bearerRulesWrite = auth.bearerAuth(secrets, { db, scope: 'rules.write' });
   const bearerMaster = auth.bearerAuth(secrets, { db, scope: '*' });
-  const bearerParentPoint = auth.bearerAuth(secrets, { db, scope: 'parentpoint' });
+  const bearerIntegration = auth.bearerAuth(secrets, { db, scope: 'integration' });
   const loopback = auth.loopbackOnly();
 
   // Health (open).
@@ -184,8 +184,8 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/export', bearerRead, piiRateLimit, buildExport({ db, secrets }));
   app.use('/api/notifications', bearerMaster, piiRateLimit, buildNotifications({ db }));
   app.use('/api/scan', bearerWrite, piiRateLimit, buildScan({ db, secrets, thresholds }));
-  // External-app identity API. Sibling apps (missionIQ, ParentPoint) call
-  // these endpoints to delegate match/resolve to Family Graph.
+  // External-app identity API. Consuming apps call these endpoints to
+  // delegate match/resolve to Family Graph.
   app.use('/api/identity', method2scope(bearerRead, bearerWrite), piiRateLimit, buildIdentityApi({ db, secrets, thresholds }));
   app.use('/api/connectors', bearerImport, piiRateLimit, buildConnectors({ db, secrets, thresholds }));
   app.use('/api/connector-runs', bearerRead, piiRateLimit, buildConnectors.buildRunsRouter({ db }));
@@ -193,14 +193,14 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   // assignment notes can contain operator commentary; writes need pii.write.
   app.use('/api/ministries', method2scope(bearerRead, bearerWrite), piiRateLimit, buildMinistries({ db, secrets, includePii: true }));
 
-  // ParentPoint × FamilyGraph contract surface (FAMILYGRAPH_INTEGRATION.md
+  // FamilyGraph Integration API surface (FAMILYGRAPH_INTEGRATION.md
   // v0.1). All routes live under /v1/... so the URL shape matches the
-  // contract verbatim and PP integrations don't have to remember a
+  // contract verbatim and integrating apps don't have to remember a
   // distinct "FG-side" prefix. Single dedicated scope so an operator can
-  // issue a scoped key to ParentPoint without granting it the full PII
-  // surface. Rate limit is generous: sibling apps can be chatty during
-  // a reconcile sweep.
-  app.use('/v1', bearerParentPoint, v1RateLimit, buildParentPointApi({ db, secrets }));
+  // issue a scoped key to an integrating app without granting it the full
+  // PII surface. Rate limit is generous: consuming apps can be chatty
+  // during a reconcile sweep.
+  app.use('/v1', bearerIntegration, v1RateLimit, buildIntegrationApi({ db, secrets }));
 
   // Static client (built React UI).
   const clientDir = path.join(__dirname, '..', 'client', 'dist');
@@ -350,16 +350,16 @@ function start() {
     log.error('connector.scheduler.start_failed', { message: e.message, stack: e.stack });
   }
 
-  // ParentPoint webhook dispatcher. Picks up pending pp_webhook_deliveries
+  // Integration webhook dispatcher. Picks up pending webhook_deliveries
   // rows and fires HTTP POSTs with signed payloads. Disable via
-  // FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1 — useful for tests and for
+  // FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS=1 — useful for tests and for
   // operators who want to debug the queue manually.
-  let ppWebhookDispatcher = null;
-  if (process.env.FAMILY_GRAPH_DISABLE_PP_WEBHOOKS !== '1') {
+  let integrationWebhookDispatcher = null;
+  if (process.env.FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS !== '1') {
     try {
-      ppWebhookDispatcher = ppWebhooks.start(db, secrets, { intervalMs: 60_000 });
+      integrationWebhookDispatcher = integrationWebhooks.start(db, secrets, { intervalMs: 60_000 });
     } catch (e) {
-      log.error('pp_webhook.dispatcher.start_failed', { message: e.message, stack: e.stack });
+      log.error('integration_webhook.dispatcher.start_failed', { message: e.message, stack: e.stack });
     }
   }
 
@@ -368,7 +368,7 @@ function start() {
   // is the belt-and-suspenders cleanup for the long tail of rows that
   // never get queried again.
   const idemSweep = setInterval(() => {
-    try { ppIdempotency.sweep(db); } catch (_) { /* ignore */ }
+    try { integrationIdempotency.sweep(db); } catch (_) { /* ignore */ }
   }, 6 * 60 * 60 * 1000);
   idemSweep.unref();
 
@@ -408,10 +408,10 @@ function start() {
   async function shutdown() {
     if (watcher) watcher.close();
     if (connectorSched && connectorSched.stop) connectorSched.stop();
-    // Stop the PP webhook dispatcher; await any in-flight POST so we
+    // Stop the app webhook dispatcher; await any in-flight POST so we
     // don't orphan a delivery mid-fetch.
-    if (ppWebhookDispatcher && ppWebhookDispatcher.stop) {
-      try { await ppWebhookDispatcher.stop(); } catch (_) { /* swallow */ }
+    if (integrationWebhookDispatcher && integrationWebhookDispatcher.stop) {
+      try { await integrationWebhookDispatcher.stop(); } catch (_) { /* swallow */ }
     }
     clearInterval(idemSweep);
     clearInterval(tokenSetSweep);

@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS families (
   notes_ct         BLOB,                     -- ciphertext of operator notes
   status           TEXT NOT NULL DEFAULT 'active',  -- active | merged | archived
   merged_into      TEXT,                     -- when merged, the surviving family code
-  -- ParentPoint contract additions (migration 0012). The pointer is "soft":
+  -- Integration contract additions (migration 0012). The pointer is "soft":
   -- a merge can retire the referenced person, in which case the contract
   -- layer falls back to the first active adult member.
   primary_contact_person_code TEXT,
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS persons (
   date_of_birth_ct BLOB,
   gender_ct        BLOB,
   notes_ct         BLOB,
-  -- Vendored from missionIQ contact-shape: per-person profile fields that
+  -- Vendored from the upstream identity engine contact-shape: per-person profile fields that
   -- matter for institutional workflows. employer/title for donor research,
   -- do_not_contact for compliance, not_living_together for custody-aware
   -- messaging on shared family addresses.
@@ -90,10 +90,10 @@ CREATE TABLE IF NOT EXISTS persons (
   eim_completed_on TEXT,                       -- ISO-8601 date issued
   eim_expires_on   TEXT,                       -- ISO-8601 date the cert lapses
   eim_notes_ct     BLOB,                       -- ciphertext of operator notes
-  -- ParentPoint contract additions (migration 0012). kind classifies the
+  -- Integration contract additions (migration 0012). kind classifies the
   -- person as an adult or child so the sibling apps can render
   -- appropriately; preferred_name_ct is the parent's chosen short name
-  -- ("Mandy" instead of "Amanda") and rides on every PP person object.
+  -- ("Mandy" instead of "Amanda") and rides on every app person object.
   kind             TEXT,                       -- adult | child | NULL
   preferred_name_ct BLOB,
   status           TEXT NOT NULL DEFAULT 'active',
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS memberships (
   family_code    TEXT NOT NULL REFERENCES families(code) ON DELETE CASCADE,
   person_code    TEXT NOT NULL REFERENCES persons(code)  ON DELETE CASCADE,
   role           TEXT NOT NULL,            -- parent | child | guardian | grandparent | other_adult
-  -- ParentPoint's household members[] carry a finer-grained label than the
+  -- Integration's household members[] carry a finer-grained label than the
   -- internal role bucket — mother vs. father vs. step_parent, etc. We keep
   -- the legacy role for compatibility with the resolver and the family-list
   -- views, and round-trip the finer label here.
@@ -191,8 +191,8 @@ CREATE TABLE IF NOT EXISTS phones (
   value_ct     BLOB NOT NULL,
   norm_hash    TEXT UNIQUE,
   kind         TEXT,                       -- mobile | home | work | other
-  -- ParentPoint contract additions (migration 0012). The e164 column carries
-  -- the canonical "+15125550101" representation so PP messaging can dial it
+  -- Integration contract additions (migration 0012). The e164 column carries
+  -- the canonical "+15125550101" representation so app messaging can dial it
   -- directly; sms_consent is the per-phone SMS opt-in.
   e164         TEXT,
   sms_consent  INTEGER NOT NULL DEFAULT 0,
@@ -361,7 +361,7 @@ CREATE INDEX IF NOT EXISTS conflicts_assigned_to_idx   ON conflicts (assigned_to
 CREATE INDEX IF NOT EXISTS conflicts_assignment_exp_idx ON conflicts (assignment_expires_at);
 
 -------------------------------------------------------------------------------
--- Resolution rules (operator-curated matching rules vendored from MissionIQ)
+-- Resolution rules (operator-curated matching rules vendored from the upstream identity engine)
 -------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS resolution_rules (
@@ -539,9 +539,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS ministry_assignments_active_family_uniq
   ON ministry_assignments (ministry_code, family_code) WHERE ended_at IS NULL AND family_code IS NOT NULL;
 
 -------------------------------------------------------------------------------
--- ParentPoint integration contract (migration 0012)
+-- Integration integration contract (migration 0012)
 -------------------------------------------------------------------------------
--- The ParentPoint × FamilyGraph contract (FAMILYGRAPH_INTEGRATION.md v0.1)
+-- The Integration × FamilyGraph contract (FAMILYGRAPH_INTEGRATION.md v0.1)
 -- defines a separate read / write API surface that sibling apps consume.
 -- Most of the underlying data continues to live in `persons`, `families`,
 -- and friends; the tables below cover things the existing identity model
@@ -578,10 +578,10 @@ CREATE TABLE IF NOT EXISTS eim_certifications (
 CREATE INDEX IF NOT EXISTS eim_certifications_person_idx     ON eim_certifications (person_code);
 CREATE INDEX IF NOT EXISTS eim_certifications_expires_on_idx ON eim_certifications (expires_on);
 
--- PP-pushed enrichment snapshots. One row per (person, school) pair; PP
+-- app-pushed enrichment snapshots. One row per (person, school) pair; the app
 -- overwrites on every POST (§7.3 says the activities array is "current
 -- state, not a log"). FG never edits this table itself; it just stores and
--- serves what PP sent.
+-- serves what the app sent.
 CREATE TABLE IF NOT EXISTS school_contexts (
   code                              TEXT PRIMARY KEY,
   person_code                       TEXT NOT NULL REFERENCES persons(code) ON DELETE CASCADE,
@@ -603,9 +603,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS school_contexts_person_school_uniq
 CREATE INDEX IF NOT EXISTS school_contexts_school_idx     ON school_contexts (school_id);
 CREATE INDEX IF NOT EXISTS school_contexts_updated_at_idx ON school_contexts (updated_at);
 
--- Subscribed PP webhook endpoints. The secret is encrypted at rest; we hold
+-- Subscribed app webhook endpoints. The secret is encrypted at rest; we hold
 -- it because we must compute the HMAC-SHA256 signature on outbound deliveries.
-CREATE TABLE IF NOT EXISTS pp_webhook_subscriptions (
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
   code               TEXT PRIMARY KEY,
   url                TEXT NOT NULL,
   secret_ct          BLOB,
@@ -618,14 +618,14 @@ CREATE TABLE IF NOT EXISTS pp_webhook_subscriptions (
   last_status        TEXT,
   last_error         TEXT
 );
-CREATE INDEX IF NOT EXISTS pp_webhook_subs_enabled_idx ON pp_webhook_subscriptions (enabled);
+CREATE INDEX IF NOT EXISTS webhook_subs_enabled_idx ON webhook_subscriptions (enabled);
 
 -- Per-attempt delivery rows. Same lifecycle as `notifications`: pending rows
 -- get picked up by the dispatcher, success flips to 'sent', failure backs off
 -- exponentially until MAX_ATTEMPTS, then 'failed'.
-CREATE TABLE IF NOT EXISTS pp_webhook_deliveries (
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
   code               TEXT PRIMARY KEY,
-  subscription_code  TEXT NOT NULL REFERENCES pp_webhook_subscriptions(code) ON DELETE CASCADE,
+  subscription_code  TEXT NOT NULL REFERENCES webhook_subscriptions(code) ON DELETE CASCADE,
   event              TEXT NOT NULL,
   person_code        TEXT,
   family_code        TEXT,
@@ -639,15 +639,15 @@ CREATE TABLE IF NOT EXISTS pp_webhook_deliveries (
   sent_at            TEXT,
   CHECK (status IN ('pending','sent','failed','cancelled'))
 );
-CREATE INDEX IF NOT EXISTS pp_deliveries_sub_idx           ON pp_webhook_deliveries (subscription_code);
-CREATE INDEX IF NOT EXISTS pp_deliveries_status_idx        ON pp_webhook_deliveries (status);
-CREATE INDEX IF NOT EXISTS pp_deliveries_next_attempt_idx  ON pp_webhook_deliveries (status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_sub_idx           ON webhook_deliveries (subscription_code);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_status_idx        ON webhook_deliveries (status);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_next_attempt_idx  ON webhook_deliveries (status, next_attempt_at);
 
 -- X-Request-Id idempotency cache. Per §7.2 of the contract, FG dedupes
 -- inbound writes within 24h so retries on flaky networks don't double-create.
 -- The response body is cached so a retry returns the exact same response the
 -- caller saw the first time.
-CREATE TABLE IF NOT EXISTS pp_idempotency_keys (
+CREATE TABLE IF NOT EXISTS idempotency_keys (
   request_id    TEXT NOT NULL,
   method        TEXT NOT NULL,
   path          TEXT NOT NULL,
@@ -657,7 +657,7 @@ CREATE TABLE IF NOT EXISTS pp_idempotency_keys (
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   PRIMARY KEY (request_id, method, path)
 );
-CREATE INDEX IF NOT EXISTS pp_idempotency_expires_idx ON pp_idempotency_keys (expires_at);
+CREATE INDEX IF NOT EXISTS idempotency_expires_idx ON idempotency_keys (expires_at);
 
 -------------------------------------------------------------------------------
 -- Diocesan EIM source of truth (migration 0013)
@@ -729,7 +729,7 @@ CREATE TABLE IF NOT EXISTS entity_changes (
   before_json   TEXT,
   after_json    TEXT,
   actor         TEXT NOT NULL DEFAULT 'system',
-  actor_kind    TEXT,                    -- master | scoped | system | parentpoint
+  actor_kind    TEXT,                    -- master | scoped | system | integration
   request_id    TEXT,                    -- X-Request-Id when available
   related_codes TEXT,                    -- JSON array (e.g. [winner_code] on merge)
   reason        TEXT,                    -- free-form operator note

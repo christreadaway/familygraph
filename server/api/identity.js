@@ -2,9 +2,9 @@
 
 
 const { userFacingMessage } = require('./_errors');
-// External-app identity API. Lets sibling apps in the portfolio (missionIQ,
-// ParentPoint, future tools) bring in their own data while delegating the
-// match-or-create-or-conflict decision to Family Graph. This is the
+// External-app identity API. Lets consuming apps bring in their own data
+// while delegating the match-or-create-or-conflict decision to Family
+// Graph. This is the
 // "back-and-forth" the architectural memo describes:
 //
 //   1. POST /api/identity/match   — peek (read-only). Given a record, return

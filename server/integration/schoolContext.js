@@ -1,6 +1,6 @@
 'use strict';
 
-// PP-pushed enrichment snapshot. §7.3 of the integration doc: ParentPoint
+// app-pushed enrichment snapshot. §7.3 of the integration doc: Integration
 // debounces fanouts per personId to one POST every 5 minutes (server-side
 // Cloud Function) and then sends FG the current school context: grade,
 // classroom, teacher, activities, allergies.
@@ -8,7 +8,7 @@
 // The contract says the snapshot is *current state, not a log* — FG
 // overwrites the previous snapshot on every POST. We model that as an
 // upsert keyed by (school_id, person_code). The history of activities
-// lives in ParentPoint's own collections.
+// lives in Integration's own collections.
 
 const { newCode } = require('../crypto/identifiers');
 const aliases = require('../identity/aliases');
@@ -54,7 +54,7 @@ function upsert(db, personCode, snapshot) {
   const activities = _safeJson(snapshot.activities ?? []);
   const allergies = _safeJson(snapshot.allergies ?? []);
   const snapshotAt = snapshot.snapshotAt || snapshot.snapshot_at || new Date().toISOString();
-  const sourceApp = snapshot.source_app || snapshot.sourceApp || 'parentpoint';
+  const sourceApp = snapshot.source_app || snapshot.sourceApp || 'integration';
 
   const existing = db.prepare(
     `SELECT code FROM school_contexts WHERE person_code = ? AND school_id = ?`

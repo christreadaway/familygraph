@@ -1,8 +1,8 @@
 'use strict';
 
-// PP webhook subscriptions + outbound dispatcher. §6.5: when an identity /
+// app webhook subscriptions + outbound dispatcher. §6.5: when an identity /
 // household / consent record changes, FamilyGraph POSTs to a registered
-// ParentPoint Cloud Function URL with an HMAC-SHA256 signature.
+// Integration Cloud Function URL with an HMAC-SHA256 signature.
 //
 // Body shape (from the contract):
 //   {
@@ -12,15 +12,15 @@
 //     personId: 'p_...',
 //     householdId: 'f_...',
 //     updatedAt: '<iso>',
-//     schoolHints: ['st-theresa']   // optional
+//     schoolHints: ['st-marys']   // optional
 //   }
 //
 // Signature header:
 //   X-FG-Signature: sha256=<hex of HMAC-SHA256(secret, body)>
 //
 // Storage:
-//   pp_webhook_subscriptions — registered endpoints (one per consumer).
-//   pp_webhook_deliveries    — one row per attempted delivery, with
+//   webhook_subscriptions — registered endpoints (one per consumer).
+//   webhook_deliveries    — one row per attempted delivery, with
 //                              exponential-backoff retry semantics that
 //                              mirror notifications.
 
@@ -97,7 +97,7 @@ function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint =
     throw new Error('webhook url cannot target loopback / link-local / private addresses');
   }
   if (parsed.protocol === 'http:') {
-    log.warn('pp_webhook.insecure_subscription', {
+    log.warn('integration_webhook.insecure_subscription', {
       host: parsed.hostname,
       detail: 'plain http; signed payload is integrity-protected but not confidential',
     });
@@ -115,7 +115,7 @@ function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint =
   }
   const code = newCode('audit').replace(/^au_/, 'wh_');
   db.prepare(
-    `INSERT INTO pp_webhook_subscriptions
+    `INSERT INTO webhook_subscriptions
         (code, url, secret_ct, events, school_hint, enabled)
         VALUES (?, ?, ?, ?, ?, 1)`
   ).run(code, url, enc.encrypt(secrets, secret), normalizedEvents, schoolHint);
@@ -126,8 +126,8 @@ function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint =
   // (encrypted-at-rest free-form text isn't here, but the audit log is
   // operator-visible).
   audit.record(db, {
-    action: 'pp_webhook_subscribe',
-    actor: 'parentpoint',
+    action: 'integration_webhook_subscribe',
+    actor: 'integration',
     metadata: { code, url: _sanitiseUrlForLog(url), events: normalizedEvents, school_hint: schoolHint || null },
   });
   return list(db, secrets).find(s => s.code === code);
@@ -151,12 +151,12 @@ function _sanitiseUrlForLog(url) {
 function list(db, secrets, { status = 'active' } = {}) {
   const where = status === 'all' ? '' : 'WHERE enabled = 1';
   return db.prepare(
-    `SELECT * FROM pp_webhook_subscriptions ${where} ORDER BY created_at DESC`
+    `SELECT * FROM webhook_subscriptions ${where} ORDER BY created_at DESC`
   ).all().map(r => _row2sub(db, secrets, r));
 }
 
 function get(db, secrets, code) {
-  const row = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  const row = db.prepare(`SELECT * FROM webhook_subscriptions WHERE code = ?`).get(code);
   return _row2sub(db, secrets, row);
 }
 
@@ -167,22 +167,22 @@ function get(db, secrets, code) {
 // keeping in-flight delivery signatures valid for the receiving end.
 function unsubscribe(db, code) {
   const history = require('../identity/history');
-  const before = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  const before = db.prepare(`SELECT * FROM webhook_subscriptions WHERE code = ?`).get(code);
   if (!before) return false;
   if (before.enabled === 0) return true;
   db.prepare(
-    `UPDATE pp_webhook_subscriptions SET enabled = 0,
+    `UPDATE webhook_subscriptions SET enabled = 0,
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE code = ?`
   ).run(code);
-  const after = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  const after = db.prepare(`SELECT * FROM webhook_subscriptions WHERE code = ?`).get(code);
   history.record(db, {
     entityKind: 'webhook_subscription', entityCode: code, operation: 'archive',
-    before, after, actor: 'parentpoint',
+    before, after, actor: 'integration',
   });
   audit.record(db, {
-    action: 'pp_webhook_unsubscribe',
-    actor: 'parentpoint',
+    action: 'integration_webhook_unsubscribe',
+    actor: 'integration',
     metadata: { code },
   });
   return true;
@@ -191,21 +191,21 @@ function unsubscribe(db, code) {
 // Reverse a soft-unsubscribe.
 function resubscribe(db, code) {
   const history = require('../identity/history');
-  const before = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  const before = db.prepare(`SELECT * FROM webhook_subscriptions WHERE code = ?`).get(code);
   if (!before) return false;
   if (before.enabled === 1) return true;
   db.prepare(
-    `UPDATE pp_webhook_subscriptions SET enabled = 1,
+    `UPDATE webhook_subscriptions SET enabled = 1,
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE code = ?`
   ).run(code);
-  const after = db.prepare(`SELECT * FROM pp_webhook_subscriptions WHERE code = ?`).get(code);
+  const after = db.prepare(`SELECT * FROM webhook_subscriptions WHERE code = ?`).get(code);
   history.record(db, {
     entityKind: 'webhook_subscription', entityCode: code, operation: 'reinstate',
-    before, after, actor: 'parentpoint',
+    before, after, actor: 'integration',
   });
   audit.record(db, {
-    action: 'pp_webhook_resubscribe', actor: 'parentpoint', metadata: { code },
+    action: 'integration_webhook_resubscribe', actor: 'integration', metadata: { code },
   });
   return true;
 }
@@ -213,7 +213,7 @@ function resubscribe(db, code) {
 function _subscriptionsForEvent(db, event, schoolHints) {
   // Filter by enabled + event-list match + (school hint or wildcard).
   const rows = db.prepare(
-    `SELECT * FROM pp_webhook_subscriptions WHERE enabled = 1`
+    `SELECT * FROM webhook_subscriptions WHERE enabled = 1`
   ).all();
   return rows.filter(r => {
     if (r.events !== '*' && !r.events.split(',').includes(event)) return false;
@@ -225,7 +225,7 @@ function _subscriptionsForEvent(db, event, schoolHints) {
 
 // Enqueue a delivery for every subscription whose filter matches.
 // `extra` is merged into the payload after the contract-defined keys —
-// PP clients that read the body get to see things like `schoolId` for a
+// app clients that read the body get to see things like `schoolId` for a
 // school-scoped consent change without having to parse extra headers.
 function enqueue(db, secrets, { event, personCode = null, familyCode = null, schoolHints = [], updatedAt = null, extra = null } = {}) {
   if (!KNOWN_EVENTS.has(event)) throw new Error(`unknown event: ${event}`);
@@ -248,7 +248,7 @@ function enqueue(db, secrets, { event, personCode = null, familyCode = null, sch
   for (const sub of subs) {
     const code = newCode('audit').replace(/^au_/, 'whd_');
     db.prepare(
-      `INSERT INTO pp_webhook_deliveries
+      `INSERT INTO webhook_deliveries
           (code, subscription_code, event, person_code, family_code, payload)
           VALUES (?, ?, ?, ?, ?, ?)`
     ).run(code, sub.code, event, personCode, familyCode, payload);
@@ -260,8 +260,8 @@ function enqueue(db, secrets, { event, personCode = null, familyCode = null, sch
 function listPendingDeliveries(db, { now = new Date(), limit = 50 } = {}) {
   return db.prepare(
     `SELECT d.*, s.url AS url, s.secret_ct AS secret_ct, s.enabled AS enabled
-       FROM pp_webhook_deliveries d
-       JOIN pp_webhook_subscriptions s ON s.code = d.subscription_code
+       FROM webhook_deliveries d
+       JOIN webhook_subscriptions s ON s.code = d.subscription_code
       WHERE d.status = 'pending'
         AND s.enabled = 1
         AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= ?)
@@ -277,13 +277,13 @@ function listDeliveries(db, { subscriptionCode = null, status = null, limit = 10
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   params.push(Math.max(1, Math.min(1000, limit)));
   return db.prepare(
-    `SELECT * FROM pp_webhook_deliveries ${where} ORDER BY created_at DESC LIMIT ?`
+    `SELECT * FROM webhook_deliveries ${where} ORDER BY created_at DESC LIMIT ?`
   ).all(...params);
 }
 
 function _markSent(db, code, providerStatus) {
   db.prepare(
-    `UPDATE pp_webhook_deliveries
+    `UPDATE webhook_deliveries
         SET status = 'sent',
             sent_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
             provider_status = ?
@@ -294,7 +294,7 @@ function _markSent(db, code, providerStatus) {
 function _markFailed(db, code, attempts, errMsg, providerStatus = null) {
   if (attempts >= MAX_ATTEMPTS) {
     db.prepare(
-      `UPDATE pp_webhook_deliveries
+      `UPDATE webhook_deliveries
           SET status = 'failed', attempts = ?, last_error = ?, provider_status = ?
         WHERE code = ?`
     ).run(attempts, errMsg, providerStatus, code);
@@ -303,7 +303,7 @@ function _markFailed(db, code, attempts, errMsg, providerStatus = null) {
   const delayMs = BACKOFF_MS[Math.min(attempts - 1, BACKOFF_MS.length - 1)];
   const nextAt = new Date(Date.now() + delayMs).toISOString();
   db.prepare(
-    `UPDATE pp_webhook_deliveries
+    `UPDATE webhook_deliveries
         SET attempts = ?, last_error = ?, provider_status = ?, next_attempt_at = ?
       WHERE code = ?`
   ).run(attempts, errMsg, providerStatus, nextAt, code);
@@ -311,7 +311,7 @@ function _markFailed(db, code, attempts, errMsg, providerStatus = null) {
 
 function _touchSubscription(db, subscriptionCode, lastStatus, lastError) {
   db.prepare(
-    `UPDATE pp_webhook_subscriptions
+    `UPDATE webhook_subscriptions
         SET last_delivered_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
             last_status = ?, last_error = ?,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -432,7 +432,7 @@ function start(db, secrets, { intervalMs = 60_000 } = {}) {
   const tick = () => {
     if (stopped) return;
     const p = dispatchPending(db, secrets).catch(e => {
-      log.error('pp_webhook.dispatch_failed', { message: String(e && e.message || e), stack: e && e.stack });
+      log.error('integration_webhook.dispatch_failed', { message: String(e && e.message || e), stack: e && e.stack });
     });
     inflight = p;
   };

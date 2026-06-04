@@ -90,7 +90,7 @@ test('identity api > /resolve commits the match and returns the code', async t =
 
   const r = await request(port, {
     method: 'POST', path: '/api/identity/resolve', headers: auth(secrets),
-    body: { record: { first_name: 'Mary', last_name: 'Smith', email: 'mary@example.org' }, source: 'missioniq' },
+    body: { record: { first_name: 'Mary', last_name: 'Smith', email: 'mary@example.org' }, source: 'demo-app' },
   });
   assert.equal(r.status, 201);
   assert.equal(r.body.action, 'attached');
@@ -101,7 +101,7 @@ test('identity api > /resolve creates a new person when no candidate hits', asyn
   const { port, secrets } = await makeServer(t);
   const r = await request(port, {
     method: 'POST', path: '/api/identity/resolve', headers: auth(secrets),
-    body: { record: { first_name: 'Karol', last_name: 'Wojtyła' }, source: 'missioniq' },
+    body: { record: { first_name: 'Karol', last_name: 'Wojtyła' }, source: 'demo-app' },
   });
   assert.equal(r.status, 201);
   assert.equal(r.body.action, 'created');
@@ -147,7 +147,7 @@ test('identity api > /resolve persists profile fields on creation', async t => {
   const { port, db, secrets } = await makeServer(t);
   const r = await request(port, {
     method: 'POST', path: '/api/identity/resolve', headers: auth(secrets),
-    body: { record: { first_name: 'Pio', last_name: 'Pietrelcina' }, source: 'missioniq' },
+    body: { record: { first_name: 'Pio', last_name: 'Pietrelcina' }, source: 'demo-app' },
   });
   assert.equal(r.status, 201);
   // Now PATCH richer profile fields and read them back via the people API

@@ -8,7 +8,7 @@
 //
 // Migration 0013 introduced the override table at the operator's
 // request: §11 Q5 of FAMILYGRAPH_INTEGRATION.md proposed identity-level
-// in FG with PP holding per-school overrides; we picked identity-level
+// in FG with the app holding per-school overrides; we picked identity-level
 // PLUS per-school in FG so a sibling app (the parish faith-formation
 // surface, for instance) can also benefit from a school-scoped
 // override without each consumer rebuilding its own override table.
@@ -20,7 +20,7 @@ const history = require('../identity/history');
 const PHOTO_VALUES = new Set(['allow', 'group_only', 'deny']);
 const DIR_VALUES = new Set(['allow', 'deny']);
 
-// schoolId is operator-supplied (PP's tenant slug). We use it as part
+// schoolId is operator-supplied (the app's tenant slug). We use it as part
 // of the entity_changes composite code `${person}/${school}` and as a
 // webhook schoolHint, so reject characters that break either: forward
 // slash is a delimiter in the composite code, whitespace is fragile in

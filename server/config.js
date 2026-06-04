@@ -23,7 +23,7 @@ const config = {
   secretPath: process.env.FAMILY_GRAPH_SECRET || path.join(FAMILY_GRAPH_HOME, 'secret.key'),
   port: Number(process.env.FAMILY_GRAPH_PORT || 3500),
   bind: process.env.FAMILY_GRAPH_BIND || '127.0.0.1',
-  // Recalibrated for the missionIQ-style additive scoring vendored in
+  // Recalibrated for the upstream additive scoring vendored in
   // server/identity/matching.js (v9). autoMerge=0.85 holds the
   // "definitive signal OR very strong soft signals" bar; review=0.30
   // surfaces even surname-only or phonetic-variant matches for operator

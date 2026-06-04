@@ -44,13 +44,13 @@ This is not a record of indecision. Every revision sharpened the product. The se
 
 ---
 
-## v3 — Discovery of MissionIQ and the Node.js pivot
+## v3 — Discovery of the upstream identity engine and the Node.js pivot
 
-**The unlock.** Reading the MissionIQ repo revealed an existing, mature, modularized identity-resolution system written in Node.js + Express + SQLite. The whole architecture pivoted: the new project should match MissionIQ's stack, vendor MissionIQ's identity module, and use compromise + winkNLP for NER (pure JavaScript, no Python).
+**The unlock.** Reading the upstream identity engine's repo revealed an existing, mature, modularized identity-resolution system written in Node.js + Express + SQLite. The whole architecture pivoted: the new project should match that stack, vendor the upstream identity module, and use compromise + winkNLP for NER (pure JavaScript, no Python).
 
-**What changed.** Stack swapped from Tauri + Rust + Python to Node.js + Express + SQLite + React. NER moved to pure JS (Presidio became optional). Family resolver vendored from MissionIQ. The desktop app shell was replaced with a folder-watch agent + small web dashboard at localhost:3500. Multi-party sharing pushed to v2.
+**What changed.** Stack swapped from Tauri + Rust + Python to Node.js + Express + SQLite + React. NER moved to pure JS (Presidio became optional). Family resolver vendored from the upstream identity engine. The desktop app shell was replaced with a folder-watch agent + small web dashboard at localhost:3500. Multi-party sharing pushed to v2.
 
-**What we got right.** Matching MissionIQ's stack. Vendoring rather than re-implementing identity. The folder-watch + dashboard model. Pushing sharing to v2.
+**What we got right.** Matching the upstream identity engine's stack. Vendoring rather than re-implementing identity. The folder-watch + dashboard model. Pushing sharing to v2.
 
 **What was wrong.** Family codes were still semantic (FAM_001-A pattern). Sessions were still treated as the primary unit, which doesn't fit a long-lived registry. The product was framed as "anonymizer with a registry" rather than "registry that anonymizes."
 
@@ -68,7 +68,7 @@ That single sentence flipped the architecture. The identity store became the spi
 
 **What we got right.** Persistence as the spine. The alias table for handling merges. Provenance tracking. Backup/restore as a v1 requirement.
 
-**What was wrong.** Codes were still semantic (FAM_001-A). Person codes weren't yet first-class. The relationship to MissionIQ was still ambiguous (peer? source of truth? consumer?).
+**What was wrong.** Codes were still semantic (FAM_001-A). Person codes weren't yet first-class. The relationship to the upstream identity engine was still ambiguous (peer? source of truth? consumer?).
 
 **What we kept.** Everything about persistence and the store.
 
@@ -80,13 +80,13 @@ That single sentence flipped the architecture. The identity store became the spi
 
 1. "Family codes should be assigned once and that's it. and they shouldn't start with FAM-001-A... just use a unique hexadecimal for them that does not identify them (for example, it should not use their first initials for example as that would give a clue to a bad actor)."
 2. Source handlers should support FACTS, RenWeb, Ministry Platform (not ParishSOFT — different segment), Google Sheets, Excel, plus generic CSV.
-3. Closed source for v1. Ship to St. Theresa first. Decide later.
+3. Closed source for v1. Ship to the pilot institution first. Decide later.
 
 **What changed.** Codes became fully non-semantic 8-character hex with type prefixes (`f_a7b3c91d`, `p_e4d2f8a1`). Ordering and family-size leaks eliminated. Source-specific handlers became their own subsystem in `server/sources/`. Bulk seed import wizard added as a v1 feature. Closed-source posture reflected throughout (no CONTRIBUTING, no CODE_OF_CONDUCT, README marked internal).
 
 **What we got right.** The hex code design is the privacy fix that survived. Source handlers as a clean module. Closed-source for v1.
 
-**What was wrong, but only in retrospect.** Person codes were still framed as "tokens generated during processing" rather than first-class registry citizens. The product was still framed as "anonymizer that happens to have a registry" rather than "registry that anonymizes." MissionIQ was still positioned as an upstream source rather than a downstream consumer.
+**What was wrong, but only in retrospect.** Person codes were still framed as "tokens generated during processing" rather than first-class registry citizens. The product was still framed as "anonymizer that happens to have a registry" rather than "registry that anonymizes." The sibling app was still positioned as an upstream source rather than a downstream consumer.
 
 **What we kept.** Hex code design. Source handlers. Closed source.
 
@@ -94,11 +94,11 @@ That single sentence flipped the architecture. The identity store became the spi
 
 ## v6 — The repositioning
 
-**The realization.** Mid-conversation, the user clarified the intended usage: "this product is simply about creating the most accurate registry of information we can on the families itself. who is related to who, family composition, where they live, etc. we will leave any donor analysis and whatnot to missioniq."
+**The realization.** Mid-conversation, the user clarified the intended usage: "this product is simply about creating the most accurate registry of information we can on the families itself. who is related to who, family composition, where they live, etc. we will leave any donor analysis and whatnot to the sibling apps."
 
-Followed by: "I want to be clear that missionIQ and parentpoint MAY expose the PII inside those apps. those should be settings in those apps specifically. this code should expose BOTH PII and fully anonymized information but the app pulls what it needs."
+Followed by: "I want to be clear that the sibling apps MAY expose the PII inside those apps. those should be settings in those apps specifically. this code should expose BOTH PII and fully anonymized information but the app pulls what it needs."
 
-**What changed.** Family Graph was repositioned. It's now the family registry, full stop. Anonymization is one consumer of the registry. MissionIQ and ParentPoint are downstream consumers. Family management is being extracted *out* of those apps and *into* Family Graph.
+**What changed.** Family Graph was repositioned. It's now the family registry, full stop. Anonymization is one consumer of the registry. The sibling apps are downstream consumers. Family management is being extracted *out* of those apps and *into* Family Graph.
 
 The API got a dual surface: PII endpoints (require Bearer token from OS keychain) and pseudonym endpoints (`/safe` suffix, loopback only). Two-tier audit logging: the registry logs its own events; consuming apps log external-export consent events back to the registry.
 
@@ -129,7 +129,7 @@ A few principles were present from the first conversation and never wavered:
 - **Audit log auto-redacts PII.** Logs never contain raw values.
 - **Mappings encrypted at rest.** SQLCipher with OS-account-derived key.
 - **Pseudonyms never re-issued.** Merged entries become aliases.
-- **Family resolver inherits MissionIQ's existing rules.** Don't re-derive what already works.
+- **Family resolver inherits the upstream identity engine's existing rules.** Don't re-derive what already works.
 
 ---
 
@@ -137,11 +137,11 @@ A few principles were present from the first conversation and never wavered:
 
 | Topic | Early decision | Final decision | Why we changed |
 |---|---|---|---|
-| Stack | Tauri + Rust + Python | Node.js + Express + SQLite + React | Discovered MissionIQ's stack; matching it removes a language boundary and lets us vendor identity logic |
+| Stack | Tauri + Rust + Python | Node.js + Express + SQLite + React | Discovered the upstream identity engine's stack; matching it removes a language boundary and lets us vendor identity logic |
 | Pseudonym format | Semantic (`FAM_001-A`) | Non-semantic hex (`f_a7b3c91d`) | Semantic codes leak ordering and family size to bad actors |
 | Multi-party sharing | v1 feature | v2 feature | Too much scope for v1; not blocking the core use case |
 | Sessions vs persistent store | Session-scoped tokens | Persistent registry | User said "resolve families once, revisit as needed"; sessions don't fit that mental model |
-| Relationship to MissionIQ | Peer / consumer of MissionIQ | Upstream of MissionIQ | The hub model is architecturally better; identity belongs in one place |
+| Relationship to the sibling app | Peer / consumer of the sibling app | Upstream of the sibling app | The hub model is architecturally better; identity belongs in one place |
 | Person identity | "Token" | First-class registry citizen with stable code and membership history | User explicitly asked for this in v6 conversation |
 | License | Apache 2.0 from day one | Closed source for v1, decide later | Avoiding the obligations of open-source while validating the product |
 | NER engine | Microsoft Presidio (Python) | compromise + winkNLP (JS), Presidio optional | Pure-JS deployment is meaningfully simpler |
@@ -158,16 +158,16 @@ A few principles were present from the first conversation and never wavered:
 | Sacrament eligibility windows | Considered as a registry feature | Same reason; sacramental register is the system of record |
 | Bitemporal event sourcing | Almost adopted in v5 | Overkill for the actual use case; family-membership history is enough |
 | Point-in-time queries ("who was in grade 5 in 2024") | Considered as v1 feature | Same; out of scope |
-| Family Graph as MissionIQ's database backend | Briefly considered | Tight coupling; failures cascade; chose API contract instead |
+| Family Graph as the sibling app's database backend | Briefly considered | Tight coupling; failures cascade; chose API contract instead |
 | Per-app scoped API keys | Discussed | Overkill for single-operator desktop; v2 evolution if threat model expands |
 
 ---
 
 ## What v6 is
 
-A local-first family registry. Source of truth for who lives in what household, who is related to whom, and where they live. Serves PII to authenticated local apps. Serves pseudonyms to AI workflows and external recipients. Built on Node.js + Express + SQLite (encrypted via SQLCipher) + React. Vendors MissionIQ's identity module. Reuses MissionIQ's resolution rules. Closed source for v1, shipping to St. Theresa first.
+A local-first family registry. Source of truth for who lives in what household, who is related to whom, and where they live. Serves PII to authenticated local apps. Serves pseudonyms to AI workflows and external recipients. Built on Node.js + Express + SQLite (encrypted via SQLCipher) + React. Vendors the upstream identity engine's identity module. Reuses the upstream identity engine's resolution rules. Closed source for v1, shipping to the pilot institution first.
 
-The product is small enough to build well and ambitious enough to be foundational infrastructure for Chris's portfolio of Catholic institutional software.
+The product is small enough to build well and ambitious enough to be foundational infrastructure for Chris's broader portfolio of Catholic institutional software.
 
 ---
 
@@ -175,13 +175,13 @@ The product is small enough to build well and ambitious enough to be foundationa
 
 1. **Build v6.** Use Claude Code. Build order is documented in v6 PRD (logging first, then store schema, then folder watch, then de-tokenization round-trip, then identity module, then conflict queue, then edits, then source handlers, then NER, then backup/restore, then bulk import wizard, then profiles).
 
-2. **Deploy to St. Theresa.** One operator, real data, real workflow. Run for at least 30 days without data-integrity issues.
+2. **Deploy to the pilot institution.** One operator, real data, real workflow. Run for at least 30 days without data-integrity issues.
 
 3. **Open-source decision.** Based on field experience. Default deferred until experience justifies a decision either way.
 
-4. **MissionIQ migration PRD.** Per the architectural memo. Phased rollout starting with read-through cache, then new data authoritative, then backfill, then drop legacy tables.
+4. **Sibling-app migration PRD.** Per the architectural memo. Phased rollout starting with read-through cache, then new data authoritative, then backfill, then drop legacy tables.
 
-5. **ParentPoint migration PRD.** Same phased pattern. Less work because ParentPoint's family management is less mature.
+5. **A second sibling-app migration PRD.** Same phased pattern. Less work because that app's family management is less mature.
 
 6. **Future apps.** Build on Family Graph from day one. No new app should re-implement family resolution.
 
@@ -623,59 +623,29 @@ Operator workflow on first boot:
 
 ---
 
-## Rename: Sanctus → Family Graph (Claude Code, 2026-04-28, continued)
+## Rename to Family Graph (Claude Code, 2026-04-28, continued)
 
-The product is no longer called Sanctus. It is **Family Graph**. Clean break,
+The product is no longer called by its earlier codename. It is **Family Graph**. Clean break,
 no backward-compat aliases — the product is pre-production and has no
 external integrations yet, so a hard rename is cheaper than a
 deprecation period.
 
 ### Surface area touched
 
-- **CLI:** `bin/sanctus.js` → `bin/family-graph.js`. `package.json#bin` now
-  publishes `family-graph`. The catch-all `npm` aliases in `package.json`
-  (`rotate-secret`, `backup`, `restore`) were repointed at
-  `bin/family-graph.js` since the original separate `bin/rotate-secret.js`
-  / `bin/backup.js` / `bin/restore.js` files never existed; a `status`
-  alias was added.
-- **Environment variables:** `SANCTUS_*` → `FAMILY_GRAPH_*` across the
-  server, the CLI, the README, and tests:
-    `FAMILY_GRAPH_HOME`, `FAMILY_GRAPH_DB`, `FAMILY_GRAPH_SECRET`, `FAMILY_GRAPH_PORT`,
-    `FAMILY_GRAPH_BIND`, `FAMILY_GRAPH_WATCH_DIR`, `FAMILY_GRAPH_OUT_DIR`,
-    `FAMILY_GRAPH_AUTO_MERGE`, `FAMILY_GRAPH_REVIEW`, `FAMILY_GRAPH_DISABLE_WATCH`,
-    `FAMILY_GRAPH_WATCH_PROCESS_EXISTING`, `FAMILY_GRAPH_DISABLE_NOTIFY`,
-    `FAMILY_GRAPH_POSTMARK_TOKEN`, `FAMILY_GRAPH_ENV`.
-- **Default filesystem paths:** `~/.sanctus/` → `~/.family-graph/`. The
-  default DB filename is now `family-graph.sqlite`. The encrypted backup
-  extension is now `.family-graph-backup` (magic header bytes
-  `FGRAPH01`). Existing `.sanctus-backup` files would no longer
-  decrypt — fine, since none have been issued in production.
-- **HTTP header:** `X-Sanctus-Actor` → `X-Family-Graph-Actor`. Apps that
-  identify themselves to the audit log set the new header.
-- **Email subjects:** `[Sanctus]` → `[Family Graph]`. Body signature line
-  updated. The deep link in templates points to `dashboard_url` as
-  before; only the brand text changes.
-- **Dashboard:** sidebar `<h1>Family Graph</h1>`, `<title>Family Graph</title>`,
-  token-banner copy, and the "X is running" splash all updated.
-- **Documentation:** README, `business_spec.md`, `product_spec.md`,
-  `session_notes.md`, and `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md`
-  now read "Family Graph" throughout.
-- **Source comments:** every `// Family Graph …` and SQL header comment
-  swapped. Audit-log header comment swapped.
-- **Lock files:** both `package-lock.json` and
-  `client/package-lock.json` regenerated so the package name in
-  the lock matches the new `name` field.
+The rename swept the CLI binary (`bin/family-graph.js`, plus the
+`rotate-secret` / `backup` / `restore` / `status` npm aliases), every
+environment variable (now `FAMILY_GRAPH_*`), the default home
+(`~/.family-graph/`), the `family-graph.sqlite` database, the encrypted-backup
+extension `.family-graph-backup` (magic header `FGRAPH01`), the audit-actor
+header (`X-Family-Graph-Actor`), email subjects (`[Family Graph]`), the
+dashboard chrome, both lock files, and all docs and source comments.
 
 ### Verification
 
 - 139 / 139 `node:test` cases still pass after the rename.
-- End-to-end smoke: `npm start`, `node bin/family-graph.js status`, `health`
-  endpoint, scoped-token issuance, queued notification (subject
-  `[Family Graph] Test notification`), and the `X-Family-Graph-Actor` header all
+- End-to-end smoke: `npm start`, `node bin/family-graph.js status`, the
+  `health` endpoint, scoped-token issuance, and a queued notification all
   exercise cleanly.
-- `grep -rIl --exclude-dir=node_modules --exclude-dir=.git
-  --exclude-dir=dist 'sanctus\|Sanctus\|SANCTUS' .` returns zero
-  matches.
 
 ---
 
@@ -707,41 +677,26 @@ The 139-case `node:test` suite continues to pass after these changes.
 
 ---
 
-## Rename: Custos → Family Graph + structured logging (Claude Code, 2026-04-28, continued)
+## Rename to Family Graph + structured logging (Claude Code, 2026-04-28, continued)
 
-Operator renamed the product. Clean break, same as the Sanctus → Custos
-swap before it. Also added structured logging because the operator hit
+Operator renamed the product again. Clean break, same as the earlier
+rename before it. Also added structured logging because the operator hit
 an unfixable-from-the-UI auth issue (stale token in browser localStorage
 masking a fresh paste) and we couldn't see why from the server side.
 
 ### Rename surface
 
-- CLI: `bin/custos.js` → `bin/family-graph.js`. `package.json#bin`
-  publishes `family-graph`.
-- Env vars: every `CUSTOS_*` → `FAMILY_GRAPH_*` plus two new ones for
-  logging (`_LOG_LEVEL`, `_LOG_FILE`).
-- Default home: `~/.custos` → `~/.family-graph`.
-- DB filename: `custos.sqlite` → `family-graph.sqlite`.
-- Backup magic: `CUSTOS1` → `FGRAPH01`.
-- HTTP header: `X-Custos-Actor` → `X-Family-Graph-Actor`.
-- Email subjects: `[Custos]` → `[Family Graph]`.
-- Dashboard: `<title>`, sidebar `<h1>`, token banner.
-- localStorage key: `custos.bearer` → `family-graph.bearer` — which
-  conveniently fixed the operator's stuck-on-stale-token issue, since
-  the browser starts fresh under the new key.
-- Docs: README, business_spec, product_spec, session_notes,
-  ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.
-- The git-clone URL in the README still points at
-  `github.com/christreadaway/custos.git` because the GitHub repo wasn't
-  renamed; we clone it into a `family-graph` working copy.
+Same mechanical sweep as the first rename: the CLI, every `FAMILY_GRAPH_*` env
+var (plus new `_LOG_LEVEL` / `_LOG_FILE`), the default home, the
+`family-graph.sqlite` DB, the `FGRAPH01` backup header, the
+`X-Family-Graph-Actor` header, email subjects, dashboard chrome, the
+dashboard's `family-graph.bearer` localStorage key, and the docs. Rotating the
+localStorage key incidentally fixed the operator's stuck-on-stale-token issue,
+since the browser starts fresh under the new key.
 
-Two sed artifacts cleaned up after the bulk replace:
-
-- `X-Custos-Actor` had become `X-Family Graph-Actor` (broken hyphen +
-  space). Restored to `X-Family-Graph-Actor`.
-- `nssm install Custos …` had become `nssm install Family Graph …` —
-  service name with a space breaks NSSM's argument parsing. Switched
-  to `family-graph` (kebab) for the service name.
+Two lessons worth keeping: a service name with a space breaks NSSM's argument
+parsing (use the kebab `family-graph`), and a careless bulk find-replace can
+mangle the hyphenated `X-Family-Graph-Actor` header - check it afterward.
 
 ### Structured logging
 
@@ -822,7 +777,7 @@ New `server/log/index.js` plus `server/log/middleware.js`:
 Operator sketched three things they wanted: (1) source tagging with a
 church/school category and free-form tags, (2) Google Sheets URL
 ingestion, (3) ingest donation-shaped files but **don't** turn Family
-Graph into a donor-analysis tool — money lives in MissionIQ. Plus a
+Graph into a donor-analysis tool - money lives in a sibling app. Plus a
 follow-up: a per-import summary screen showing what the latest file did.
 
 We dropped (2) (URL fetch out of scope for now), kept (1) and the
@@ -998,8 +953,8 @@ Audit of all five `.md` files at the end of the session.
   `/api/import/fetch-sheet`, `/api/imports`, `/api/imports/:code`,
   `/api/conflicts/assign`, `/api/notifications/*`, `/api/keys`. Logging
   section + cross-platform notes + env-var table all current.
-- **business_spec.md**: branded as Family Graph; no stale Sanctus or
-  Custos references. The "Family Graph does NOT do donor analysis"
+- **business_spec.md**: branded as Family Graph; no stale legacy-codename
+  references. The "Family Graph does NOT do donor analysis"
   posture remains accurate — we ingest donation files identity-only,
   no amounts persisted.
 - **session_notes.md**: ten dated entries from v1 build through this
@@ -1115,7 +1070,7 @@ cross-app integration plan.
 
 ---
 
-## v9 — Comprehensive missionIQ port: imports, matching, external API, profile fields
+## v9 — Comprehensive upstream-identity-engine port: imports, matching, external API, profile fields
 
 **The trigger.** Operator imports a 370-row Google Sheet. Family Graph
 preview cheerfully reports "370 rows" but creates zero families/persons.
@@ -1125,20 +1080,20 @@ across the board, and the import path silently inserted source_records
 without ever creating people. The operator had no way to see this
 before clicking Import — there was no diagnostic, no warning, no count
 of "rows that produced people." The user (correctly) said "do better"
-and pointed at the missionIQ repo as the gold-standard reference.
+and pointed at the upstream identity engine's repo as the gold-standard reference.
 
-**The instruction.** "Go back into the missionIQ repo and look at how
+**The instruction.** "Go back into the upstream identity engine's repo and look at how
 it imported the records and presented conflicts in the UI and do a
 MUCH more comprehensive job pulling out that code and adapting it
 here." Followed by: "look closely at the logic that determined if two
 records needed to be automatically combined or if the user needed to
 be prompted to resolve." Then: "we will need a way for those apps to
 bring in their data but call on ours for matching and perform a back
-and forth." Then: "improve upon what we built in missionIQ. Look at
-the family profiles in missionIQ. I never liked the UI but a lot of
+and forth." Then: "improve upon what we built in the upstream identity engine. Look at
+the family profiles in the upstream identity engine. I never liked the UI but a lot of
 the data points were important to collect."
 
-The missionIQ repo at `github.com/christreadaway/missioniq` was opened
+The upstream identity engine's repo was opened
 read-only via WebFetch + raw.githubusercontent.com. Five files
 mattered: `server/services/ingestion.js` (auto-mapper, alias
 dictionary, date/phone/email normalization, summary-row filter),
@@ -1178,7 +1133,7 @@ column-mapper editor when the auto-mapper failed.
 
 ### Phase 2 — matching primitives + resolver upgrade
 
-`server/identity/matching.js` (new, ~470 lines) ports the missionIQ
+`server/identity/matching.js` (new, ~470 lines) ports the upstream identity engine's
 scoring primitives in pure-function form: `normalize`, `stripSuffix`,
 `nameSimilarityIgnoringSuffix`, `normalizeAddress`,
 `addressSimilarity`, `stripUnit`, `normalizeState`, `addressesConflict`,
@@ -1192,7 +1147,7 @@ every email, every phone, and the full address. The decision gate:
 auto_merge; confidence ≥ thresholds.autoMerge → auto_merge;
 ≥ thresholds.review → enqueue; otherwise → create new.
 
-**Critical correctness fix vs missionIQ.** missionIQ treats an exact
+**Critical correctness fix vs the upstream identity engine.** The upstream identity engine treats an exact
 address match as definitive on its own. That's wrong for a household
 registry — Mary Escamilla and John Torre at the same address are a
 couple, not duplicates. Family Graph treats address as definitive
@@ -1224,14 +1179,14 @@ pair the operator already triaged.
 `POST /api/identity/feedback` (record `same` or `different`, with
 `different` becoming sticky). Input shape accepts both flat
 (`first_name`, `email`) and structured (`given_name`, `emails[]`,
-`address: {...}`) keys so missionIQ / ParentPoint pass through their
+`address: {...}`) keys so sibling apps pass through their
 native rows.
 
 ### Phase 4 — richer profile fields
 
 `persons` table grew `employer_ct`, `title_ct`, `do_not_contact` flag,
 `do_not_contact_reason_ct`, `not_living_together` flag — all from
-missionIQ's contacts shape. Multi-address / multi-email / multi-phone
+the upstream identity engine's contacts shape. Multi-address / multi-email / multi-phone
 were already well-modelled.
 
 ### Phase 5 — docs + tests
@@ -1284,7 +1239,7 @@ suite never would have:
    FACTS exports were silently being parsed via heuristics rather
    than the FACTS-specific mapping.
 2. `Family Name` colliding between primary_family_name and
-   family_display_name. With the missionIQ-style scoring, a header
+   family_display_name. With the upstream-identity-engine-style scoring, a header
    "Family Name" tied at 100 between the two slots and could win
    either. In FACTS / RenWeb / school rosters, "Family Name" is the
    household label, not an individual surname. Removed `'family
@@ -1330,8 +1285,8 @@ files + 5 new e2e files + 1 new playwright config. 218 total tests
 green: 206 server + 12 e2e. Client builds clean (Vite v5.4.21).
 
 **The throughline.** v9 closed the gap between "Family Graph is
-conceptually inspired by missionIQ" and "Family Graph runs the
-literal missionIQ logic, with the architectural mistakes corrected."
+conceptually inspired by the upstream identity engine" and "Family Graph runs the
+literal upstream-identity-engine logic, with the architectural mistakes corrected."
 
 ### v9 follow-up — dashboard UI for resolution notes + profile fields
 
@@ -1911,11 +1866,11 @@ empty-state branching, before considering the UI audit closed.
 
 ---
 
-## v12 — ParentPoint × FamilyGraph contract (Claude Code, 2026-05-15)
+## v12 — The integrating app × FamilyGraph contract (Claude Code, 2026-05-15)
 
 The operator dropped `FAMILYGRAPH_INTEGRATION.md` (v0.1, May 2026) into
 the repo with one ask: build comprehensively against it. That doc reads
-from ParentPoint's perspective - "FG must expose endpoints A, B, C; FG
+from the integrating app's perspective - "FG must expose endpoints A, B, C; FG
 must accept POSTs of shape X, Y, Z; FG must emit webhooks of shape W."
 The job was to make every one of those things real on the FamilyGraph
 side without breaking anything in the existing repo.
@@ -1926,35 +1881,35 @@ Migration 0012. New columns on `persons` (`kind`, `preferred_name_ct`),
 `families` (`primary_contact_person_code`, `communication_language`),
 `memberships` (`relation_label`), `phones` (`e164`, `sms_consent`). New
 tables for `person_consents`, `eim_certifications`, `school_contexts`,
-`pp_webhook_subscriptions`, `pp_webhook_deliveries`, and
-`pp_idempotency_keys`. Both `schema.sql` (the bootstrap path for fresh
+`webhook_subscriptions`, `webhook_deliveries`, and
+`idempotency_keys`. Both `schema.sql` (the bootstrap path for fresh
 installs) and the numbered migration (the upgrade path for existing
 deploys) carry the changes; `SCHEMA_VERSION` bumped 11 → 12.
 
-Eight helper modules under `server/parentpoint/`: `objects` (FG row →
-PP shape converters for the §6.1/§6.2/§6.3 objects), `consents`
+Eight helper modules under `server/integration/`: `objects` (FG row →
+integrating-app shape converters for the §6.1/§6.2/§6.3 objects), `consents`
 (photo + directory CRUD with defaults), `certifications` (EIM history
 that promotes a later cert to "current" but never demotes a still-valid
 one when an expired-historical backfill arrives), `schoolContext`
 (upsert keyed by (person, school) per §7.3), `webhooks` (subscription
 store, HMAC-SHA256 signature over the body, exponential backoff
 mirroring `server/notify`), `changes` (the `/changed?since=` queries
-that drive PP's hourly catch-up cron), `etag` (deterministic weak
+that drive the integrating app's hourly catch-up cron), `etag` (deterministic weak
 validator on stable JSON, plus `If-Match` matching), `idempotency`
 (`X-Request-Id` 24h dedupe with lazy expiry on lookup).
 
-The HTTP surface lives in `server/api/parentpoint.js` and mounts at
+The HTTP surface lives in `server/api/integration.js` and mounts at
 `/v1/...`. 17 endpoints covering every verb-path pair in §6.4 and §7.1
 of the contract, plus webhook subscription management. Per-request
 middleware enforces the contract version header (426 on unknown
 versions, accepted-with-log on missing), replays idempotent responses
 on duplicate `X-Request-Id`, computes ETags on GETs, validates
-`If-Match` on PATCHes. A new `parentpoint` scope on the per-app key
+`If-Match` on PATCHes. A new `integration` scope on the per-app key
 surface gates the whole router; the master token continues to work.
 
 Webhook dispatcher boots in `server/index.js` alongside the
 notifications dispatcher and the connector scheduler. Fires once at
-boot, then every 60s; disable with `FAMILY_GRAPH_DISABLE_PP_WEBHOOKS=1`.
+boot, then every 60s; disable with `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS=1`.
 Idempotency-key sweeper runs every 6h as belt-and-suspenders cleanup
 for rows that never get queried again after their TTL.
 
@@ -1962,15 +1917,15 @@ for rows that never get queried again after their TTL.
 
 The contract uses `personId` like `fg_p_01HQX...` (a ULID with a
 prefix); FG already issues codes like `p_a7b3c91d`. The two formats
-aren't compatible. Decision: `personId = p_xxxxxxxx`. PP stores
+aren't compatible. Decision: `personId = p_xxxxxxxx`. The integrating app stores
 whatever FG returns. The doc's example IDs are illustrative; the
 contract's "FamilyGraph-issued, immutable" requirement is satisfied by
 the existing identifier scheme.
 
-PP roles (`mother | father | step_parent | guardian | grandparent |
+The integrating app's roles (`mother | father | step_parent | guardian | grandparent |
 other | child`) don't match FG memberships.role (`parent | child |
 guardian | grandparent | spouse | other_adult | head | member`). Added
-`memberships.relation_label` for the finer-grained PP label; kept
+`memberships.relation_label` for the finer-grained integrating-app label; kept
 `role` as the bucket the resolver and family-list views care about.
 Inbound writes always set both columns; outbound responses prefer the
 label, fall back through the role bucket when the label is null
@@ -1987,7 +1942,7 @@ Consents default to `'allow'` for both fields when no row exists.
 The doc doesn't say what to do for an un-configured person; default to
 allow leaks the least information ("we don't have a flag here, treat
 as the permissive case") and matches the bulk-import workflow where
-PP would have to flip every legacy person to `'deny'` if the default
+the integrating app would have to flip every legacy person to `'deny'` if the default
 flipped the other way.
 
 EIM cert promotion. The new history table records every renewal; the
@@ -2006,7 +1961,7 @@ flips `status` to `'archived'` or `'merged'`. The fanout point will
 be wired to the archive workflow once that exists - tracked in the
 Appendix's "deliberately not in scope" section. The same applies to
 the `/admin/familygraph-conflicts` UI in §7.4: FG already has a
-conflict queue, but routing PP-detected divergences into it is a
+conflict queue, but routing integrating-app-detected divergences into it is a
 follow-up.
 
 **Bugs caught during the build.**
@@ -2050,12 +2005,12 @@ admin surfaces.
 
 No `mTLS` between repos (§11 Q3). The doc lists mTLS as an open
 question; for v0.1 the answer is the existing Bearer + signed
-webhooks combination. Revisit when the PP repo is concrete enough to
+webhooks combination. Revisit when the integrating app's repo is concrete enough to
 share certificate infrastructure with.
 
-No backwards-compat shim for old PP clients that don't send
-`X-PP-Contract-Version`. Decided on accept-with-log because the
-contract is v0.1 and the doc itself says "every FG API call PP makes
+No backwards-compat shim for old integrating-app clients that don't send
+`X-FG-Contract-Version`. Decided on accept-with-log because the
+contract is v0.1 and the doc itself says "every FG API call the integrating app makes
 WILL include the header" - the FG side is allowed to assume that
 forward. Logged warnings make the gap visible without breaking the
 honest path during early integration.
@@ -2076,7 +2031,7 @@ modules.
 keyed by `(person, school_id)`. Each column is independently nullable
 so a school can override only one of the two flags. The contract
 helper added `setOverride` / `clearOverride` /
-`listOverridesForPerson` / `effective` to `server/parentpoint/consents`.
+`listOverridesForPerson` / `effective` to `server/integration/consents`.
 `POST /v1/persons/:id/photoConsent` now accepts an optional `schoolId`
 in body or query — present means write the override, absent means
 update the identity-level base. `DELETE /v1/persons/:id/photoConsent?schoolId=`
@@ -2086,7 +2041,7 @@ riding along under the override values so the caller can render
 "override applied; base was X".
 
 The `consent.updated` webhook payload picks up an optional `schoolId`
-key. PP clients that were ignoring unknown keys keep working; clients
+key. Integrating-app clients that were ignoring unknown keys keep working; clients
 that care can switch on its presence to know whether to invalidate a
 single school's cache or the global identity cache.
 
@@ -2171,7 +2126,7 @@ implementation returned ALL rows; the test
 to drop to 0 after unsubscribe. Decision: default `list()` to
 active-only, accept `status: 'all'` for the operator view. The
 existing API endpoint `GET /v1/webhooks` calls the default list, so
-PP clients keep seeing exactly what they saw before; an operator UI
+integrating-app clients keep seeing exactly what they saw before; an operator UI
 that wants to render "your inactive subscriptions" passes the flag.
 
 **Identifier prefixes.** Added `dio_` (diocese) and `chg_` (entity
@@ -2218,7 +2173,7 @@ passing.
 **Critical bugs caught:**
 
 The `/v1/persons/changed` feed was rebroadcasting full PII for
-archived persons. The feed's purpose is "tell PP what to invalidate" —
+archived persons. The feed's purpose is "tell the integrating app what to invalidate" —
 shipping firstName, primaryEmail, mailingAddress for a record the
 operator just removed defeats the deletion. Fix: `personObject` and
 `householdObject` now take a `tombstone` option that returns only
@@ -2255,7 +2210,7 @@ res.json (not res.end). A retry on
 potentially nuked an override the operator re-set between attempts.
 Fix: middleware applies to all writes (POST/PATCH/DELETE), capture
 wraps both `res.json` and `res.end`, and the replay path uses
-`.end()` for cached null-body 204s so PP gets the same wire shape on
+`.end()` for cached null-body 204s so the integrating app gets the same wire shape on
 the second call.
 
 **High-impact fixes:**
@@ -2290,7 +2245,7 @@ Buffers but missed Buffers inside nested objects (which silently
 serialized as `{}`). Rewrote `_normaliseValue` to recurse. Added
 handling for Date / BigInt / NaN / Infinity / shared (non-circular)
 references. Also strips `__proto__` / `constructor` / `prototype`
-keys defensively so a malicious PP payload can't smuggle pollution
+keys defensively so a malicious integrating-app payload can't smuggle pollution
 into a careless downstream consumer.
 
 dioceses.update accepted both camelCase and snake_case but the
@@ -2463,7 +2418,7 @@ by default; `?include_body=1` opts in.
 
 Email-lookup miss audit — `GET /v1/persons?email=` previously
 audited only hits. Misses now record
-`pp_person_lookup_email_miss` with a salted hash of the queried
+`integration_person_lookup_email_miss` with a salted hash of the queried
 email (first 16 hex chars of HMAC-SHA256) so distinct-miss counts
 per actor are observable without leaking the actual email.
 
@@ -2498,7 +2453,7 @@ External Google Fonts CDN — acceptable for operator-trusted-
 desktop; air-gapped deployments can self-host.
 
 **Final state.** 490 tests, 489 passing, 1 skipped on root. The
-ParentPoint integration data flow is unchanged: every contract
+integrating app's data flow is unchanged: every contract
 endpoint still returns the same shape, every webhook still fires,
 every idempotency replay still works. The hardening sits underneath
 the contract without altering the contract.
@@ -2506,7 +2461,7 @@ the contract without altering the contract.
 **Shipped to main as PR #14 (2026-05-15).** Verified on the
 post-merge main tip: `_errors.js`, `rate-limit.js`,
 `security-hardening.test.js` all present; Appendix D in
-`FAMILYGRAPH_INTEGRATION.md`; PP guide at revision 2; schema v13
+`FAMILYGRAPH_INTEGRATION.md`; integration guide at revision 2; schema v13
 with all 11 numbered migrations intact; 489 tests passing on the
 merged commit. Branch and main are content-identical post-merge —
 the apparent "4 commits behind" on the feature branch is just the
@@ -2579,6 +2534,88 @@ and exercising it requires a real npm install, which is out of scope
 for the `node --test` suite. Operator can verify by running
 `npm install` (should refuse) and `SFW=1 npm install` (should
 proceed) in a clean checkout.
+
+---
+
+## Open-source prep: de-brand + relicense (Claude Code, 2026-06-03)
+
+Prepared the repo for a public release. Two jobs: strip proprietary product
+names out of the codebase and docs, and add a real license plus author
+attribution.
+
+The substantive part was architectural, not cosmetic. The `/v1` surface had
+been organized under a single consumer app's namespace, as if Family Graph
+carried per-app integration code. It doesn't - webhooks, idempotency, ETags,
+consents, certifications, school-context, the changed feed, and dioceses are
+all generic hub machinery that any app exercises. So the fix wasn't a rename to
+a different brand; it was re-framing that namespace into Family Graph's own
+generic, app-agnostic public Integration API. Any app authenticates with a
+scoped key and plugs into the same `/v1` contract; Family Graph carries no
+per-app code.
+
+Concretely, the change swept the server directory, the API router, a migration,
+the contract test files, the auth scope, the contract-version header, the
+webhook / idempotency database tables, a batch of code identifiers and
+audit-action names, and every doc - moving all of them off the old product name
+and onto neutral, capability-based names. An app-specific integration guide was
+deleted; the generic `INTEGRATION_GUIDE.md` and the `FAMILYGRAPH_INTEGRATION.md`
+contract were kept as the docs an external team integrates against.
+
+License: `UNLICENSED` to Apache-2.0, chosen over MIT for the explicit patent
+grant. Added `LICENSE` and a `NOTICE` carrying author attribution (Chris
+Treadaway), a support ask, and a dedication; updated both package manifests and
+the README / spec framing from "closed source for v1" to the settled
+open-source decision. Real first-site references were left intact on purpose.
+
+Migration trade-off: edited the relevant migration and `schema.sql` in place to
+drop a now-meaningless table-name prefix rather than adding a rename migration.
+This is a fresh public repo with no deployed databases; the runner keys on the
+numeric version prefix so the file rename is safe, and a fresh DB builds
+consistently. No schema-version bump - the effective schema is unchanged apart
+from names.
+
+Verification, static first: syntax checks, a smoke-load of the renamed module
+tree, identifier-consistency greps, and a repo-wide brand sweep that comes back
+clean across code and live docs. Then the full suite. Socket Firewall installs
+but its binary host is unreachable under this container's network policy, so the
+firewall can't run here; used the documented emergency bypass to install the
+exact pinned lockfile dependencies (no new packages, ephemeral container),
+logged here per the CLAUDE.md rule. `npm test`: 490 tests, 489 pass, 0 fail, 1
+pre-existing skip (the folder-watch EACCES case that can't run as root). The
+de-brand changed names, not behavior.
+
+---
+
+## Open-source hardening: hygiene docs, dep audit, repo tidy (Claude Code, 2026-06-03)
+
+Follow-up pass after the de-brand to get the repo presentable as a public
+project.
+
+Scrubbed the real pilot institution out of everything except `NOTICE` and
+`README` (where it is the named donation beneficiary): the demo fixture, the
+specs, and the sample tenant slug used across tests all now use neutral
+placeholders. Left the given-name nickname list in the matcher alone - that is
+name resolution, not the institution.
+
+Added `SECURITY.md` (private disclosure, the security model, and the one
+dependency advisory that has no upstream fix) and `CONTRIBUTING.md` (the
+mandatory Socket Firewall install flow, tests, and the PII / schema / auth
+conventions), both linked from the README.
+
+Dependency audit: cleared the moderate advisories with a lockfile-only patch
+(the version range already allowed it). One high-severity advisory in the
+spreadsheet parser has no fix published to the registry; documented it and the
+mitigation (it only parses operator-supplied local files) rather than swapping
+the library blind. Suite stayed green through the bump.
+
+Tidied the root: the six loose design-mockup files turned out to be the
+design-system source the handoff doc references, so they moved into
+`design-handoff/` instead of being deleted - root is clean, the source is
+preserved, and the doc path now resolves.
+
+Verification used the documented Socket Firewall bypass again (its binary host
+is unreachable in this container); full suite green at 489 pass, 0 fail, 1
+pre-existing skip throughout.
 
 ---
 

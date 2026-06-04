@@ -1,7 +1,7 @@
 'use strict';
 
 // End-to-end scenarios from §10 of FAMILYGRAPH_INTEGRATION.md. These exercise
-// the contract from "ParentPoint admin clicks a button" through to the
+// the contract from "Integration admin clicks a button" through to the
 // FamilyGraph side effects (mirrored writes, queued webhooks).
 
 const test = require('node:test');
@@ -13,7 +13,7 @@ const { newDb, newSecrets, defaultThresholds, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
 const families = require('../server/identity/families');
 const contacts = require('../server/identity/contacts');
-const webhooks = require('../server/parentpoint/webhooks');
+const webhooks = require('../server/integration/webhooks');
 
 function listen(app) {
   return new Promise(resolve => {
@@ -57,13 +57,13 @@ async function makeServer(t) {
 
 const auth = (secrets, extra = {}) => ({
   authorization: `Bearer ${secrets.master}`,
-  'x-family-graph-actor': 'parentpoint-scenario-test',
-  'x-pp-contract-version': 'v0.1',
-  'x-source-app': 'parentpoint',
+  'x-family-graph-actor': 'integration-scenario-test',
+  'x-fg-contract-version': 'v0.1',
+  'x-source-app': 'integration',
   ...extra,
 });
 
-test('scenario §10.1 → admin adds a family in standalone-like mode (PP suggests identities to FG)', async t => {
+test('scenario §10.1 → admin adds a family in standalone-like mode (the app suggests identities to FG)', async t => {
   const { port, db, secrets } = await makeServer(t);
   // Admin adds a parent.
   const mom = await request(port, {
@@ -99,18 +99,18 @@ test('scenario §10.1 → admin adds a family in standalone-like mode (PP sugges
   assert.equal(hh.body.household.primaryContactPersonId, mom.body.person.personId);
 });
 
-test('scenario §10.3 → parent updates phone in FG, webhook queues for PP', async t => {
+test('scenario §10.3 → parent updates phone in FG, webhook queues for the app', async t => {
   const { port, db, secrets } = await makeServer(t);
-  // Subscribe PP's webhook.
+  // Subscribe the app's webhook.
   const sub = webhooks.subscribe(db, secrets, {
-    url: 'https://us-central1-pp.cloudfunctions.net/familyGraphWebhook',
+    url: 'https://us-central1-demo.cloudfunctions.net/familyGraphWebhook',
     secret: 'shhhh',
     events: '*',
-    schoolHint: 'st-theresa',
+    schoolHint: 'st-marys',
   });
   // Create the parent + initial phone via the contract.
   const created = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
     body: { firstName: 'Amanda', lastName: 'Lee', kind: 'adult' },
   });
   const personId = created.body.person.personId;
@@ -124,7 +124,7 @@ test('scenario §10.3 → parent updates phone in FG, webhook queues for PP', as
   const tag = get.headers.etag;
   const patch = await request(port, {
     method: 'PATCH', path: `/v1/persons/${personId}`,
-    headers: auth(secrets, { 'if-match': tag, 'x-source-tenant': 'st-theresa' }),
+    headers: auth(secrets, { 'if-match': tag, 'x-source-tenant': 'st-marys' }),
     body: { phones: [{ value: '+15125550199', type: 'mobile', smsConsent: true, is_primary: true }] },
   });
   assert.equal(patch.status, 200);
@@ -139,7 +139,7 @@ test('scenario §10.3 → parent updates phone in FG, webhook queues for PP', as
   const payload = JSON.parse(pending[0].payload);
   assert.equal(payload.personId, personId);
   assert.ok(Array.isArray(payload.schoolHints));
-  assert.ok(payload.schoolHints.includes('st-theresa'));
+  assert.ok(payload.schoolHints.includes('st-marys'));
 
   // Dispatch and confirm signature.
   const calls = [];
@@ -154,9 +154,9 @@ test('scenario §10.4 → enrichment snapshot is persisted and readable', async 
   const annie = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const r = await request(port, {
     method: 'POST', path: `/v1/persons/${annie}/schoolContext`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
     body: {
-      schoolId: 'st-theresa', schoolYear: '2026-2027', grade: '3',
+      schoolId: 'st-marys', schoolYear: '2026-2027', grade: '3',
       classroomId: '3A', classroomName: 'Room 204 — Ms. Lee',
       activities: [
         { kind: 'sport', label: 'Basketball — Girls 4A', season: '2026-2027 Winter' },
@@ -172,8 +172,8 @@ test('scenario §10.4 → enrichment snapshot is persisted and readable', async 
   // A second POST with the same schoolId overwrites the previous snapshot.
   const r2 = await request(port, {
     method: 'POST', path: `/v1/persons/${annie}/schoolContext`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
-    body: { schoolId: 'st-theresa', grade: '3', activities: [{ kind: 'sport', label: 'Basketball — Girls 4A' }] },
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
+    body: { schoolId: 'st-marys', grade: '3', activities: [{ kind: 'sport', label: 'Basketball — Girls 4A' }] },
   });
   assert.equal(r2.status, 201);
   assert.equal(r2.body.schoolContext.activities.length, 1);
@@ -186,7 +186,7 @@ test('scenario §10.5 → student moves classroom; the snapshot reflects the new
     method: 'POST', path: `/v1/persons/${annie}/schoolContext`,
     headers: auth(secrets),
     body: {
-      schoolId: 'st-theresa', schoolYear: '2026-2027', grade: '3',
+      schoolId: 'st-marys', schoolYear: '2026-2027', grade: '3',
       classroomId: '3A', classroomName: 'Room 204 — Ms. Lee',
     },
   });
@@ -194,13 +194,13 @@ test('scenario §10.5 → student moves classroom; the snapshot reflects the new
     method: 'POST', path: `/v1/persons/${annie}/schoolContext`,
     headers: auth(secrets),
     body: {
-      schoolId: 'st-theresa', schoolYear: '2026-2027', grade: '3',
+      schoolId: 'st-marys', schoolYear: '2026-2027', grade: '3',
       classroomId: '3B', classroomName: 'Room 207 — Mr. Patel',
     },
   });
   assert.equal(r.status, 201);
   const g = await request(port, {
-    path: `/v1/persons/${annie}/schoolContext?schoolId=st-theresa`, headers: auth(secrets),
+    path: `/v1/persons/${annie}/schoolContext?schoolId=st-marys`, headers: auth(secrets),
   });
   assert.equal(g.body.schoolContext.classroomId, '3B');
   assert.equal(g.body.schoolContext.classroomName, 'Room 207 — Mr. Patel');
@@ -223,19 +223,19 @@ test('scenario > consent change generates a consent.updated webhook event', asyn
   assert.equal(payload.personId, annie);
 });
 
-test('scenario > PP push that creates a person then references that personId in a household round-trips correctly', async t => {
+test('scenario > app push that creates a person then references that personId in a household round-trips correctly', async t => {
   const { port, secrets } = await makeServer(t);
   // Create three people via the contract.
   const mom = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'pp_create_mom' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'integration_create_mom' }),
     body: { firstName: 'Amanda', lastName: 'Lee', kind: 'adult', primaryEmail: 'amanda@example.com' },
   });
   const dad = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'pp_create_dad' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'integration_create_dad' }),
     body: { firstName: 'Tim', lastName: 'Lee', kind: 'adult' },
   });
   const kid = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'pp_create_kid' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'integration_create_kid' }),
     body: { firstName: 'Annie', lastName: 'Lee', kind: 'child' },
   });
   // Compose them into a household.
@@ -262,7 +262,7 @@ test('scenario > PP push that creates a person then references that personId in 
 test('scenario > resend of the same X-Request-Id returns the cached response (idempotency)', async t => {
   const { port, secrets } = await makeServer(t);
   const body = { firstName: 'Pio', lastName: 'Pietrelcina', kind: 'adult' };
-  const headers = auth(secrets, { 'x-request-id': 'pp_idempotent' });
+  const headers = auth(secrets, { 'x-request-id': 'integration_idempotent' });
   const first = await request(port, { method: 'POST', path: '/v1/persons', headers, body });
   const second = await request(port, { method: 'POST', path: '/v1/persons', headers, body });
   assert.equal(first.status, 201);

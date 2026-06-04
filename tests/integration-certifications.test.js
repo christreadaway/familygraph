@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const { newDb, newSecrets, cleanup } = require('./_helpers');
 const people = require('../server/identity/people');
-const certs = require('../server/parentpoint/certifications');
+const certs = require('../server/integration/certifications');
 
 function setup(t) {
   const { db, dir } = newDb();

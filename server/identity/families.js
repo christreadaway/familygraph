@@ -117,7 +117,7 @@ function update(db, secrets, code, patch, audit = {}) {
 }
 
 // Bump updated_at without changing any other column. Used by the
-// ParentPoint contract layer when a linked person / consent / membership
+// Integration contract layer when a linked person / consent / membership
 // changes — the household-changed feed needs to surface the family.
 function touchUpdatedAt(db, code) {
   const target = aliases.resolveAlias(db, code);

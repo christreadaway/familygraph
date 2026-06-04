@@ -1,6 +1,6 @@
 'use strict';
 
-// Migration 0009: rich profile fields, vendored from missionIQ's contacts
+// Migration 0009: rich profile fields, vendored from the upstream identity engine's contacts
 // table. These are person-level details that matter for Catholic
 // institutional workflows but didn't make it into the v1 person schema:
 //

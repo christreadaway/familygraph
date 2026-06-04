@@ -1,15 +1,15 @@
 'use strict';
 
-// Convert FamilyGraph internal records into the ParentPoint contract
+// Convert FamilyGraph internal records into the Integration contract
 // shapes documented in §6.1 (person), §6.2 (household), §6.3 (consent).
-// One concept lives in one place: callers that need a PP-shaped object
+// One concept lives in one place: callers that need an app-shaped object
 // import from here rather than re-walking the schema.
 
 const enc = require('../crypto/encryption');
 const aliases = require('../identity/aliases');
 const consentsMod = require('./consents');
 
-// Map FG memberships.relation_label → PP household role. Returns the
+// Map FG memberships.relation_label → app household role. Returns the
 // literal label when set; falls back through legacy role/custody when the
 // label is null (pre-contract memberships).
 function relationLabelFor(membership) {
@@ -32,7 +32,7 @@ function relationLabelFor(membership) {
   }
 }
 
-// Map FG memberships.custody → PP custodial boolean (§6.2). 'sole' and
+// Map FG memberships.custody → app custodial boolean (§6.2). 'sole' and
 // 'joint' both grant custody; 'other_guardian'/'unspecified'/null are
 // false. The contract field is a bool, not a tri-state.
 function custodialFor(custody) {
@@ -40,11 +40,11 @@ function custodialFor(custody) {
   return false;
 }
 
-// Translate a PP role label into the FG memberships.role bucket.
+// Translate an app role label into the FG memberships.role bucket.
 // "mother"/"father"/"step_parent" all map to the existing 'parent' role;
 // "child" maps to 'child'; the rest pass through. We never invent a new
 // role bucket — callers that need finer detail consult relation_label.
-function ppRoleToInternal(label) {
+function roleToInternal(label) {
   switch (label) {
     case 'mother':
     case 'father':
@@ -298,7 +298,7 @@ module.exports = {
   consentObject,
   householdForPerson,
   personByEmail,
-  ppRoleToInternal,
+  roleToInternal,
   relationLabelFor,
   custodialFor,
 };

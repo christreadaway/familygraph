@@ -1,9 +1,11 @@
 # FamilyGraph Integration Guide
 
-**Audience:** engineers building a sibling app that wants to use
-FamilyGraph as the identity / household / consent layer. The
-ParentPoint connector is one example; a parish faith-formation app
-or a school-events app would be another.
+**Audience:** engineers building an app that wants to use
+FamilyGraph as the identity / household / consent layer. A
+parent-engagement app, a parish faith-formation app, or a
+school-events app would each be an example. This guide is
+self-contained and app-agnostic - hand it to any team integrating
+with a FamilyGraph install.
 
 **Status:** v0.2 of the contract, May 2026. The contract is versioned
 via the `X-FG-Contract-Version` header (current value: `v0.1`).
@@ -64,8 +66,8 @@ Don't use FamilyGraph when:
                                                          │  + Bearer
                                                          │
 ┌─────────────────────┐         ┌─────────────────┐     ▼
-│  ParentPoint        │ ◀─────▶ │   FamilyGraph   │ ◀──────────
-│  (school connector) │  HTTPS  │   /v1/...       │
+│  School app         │ ◀─────▶ │   FamilyGraph   │ ◀──────────
+│  (a connected app)  │  HTTPS  │   /v1/...       │
 └─────────────────────┘         │   + webhooks    │
                                 └─────────────────┘
                                          │
@@ -96,16 +98,14 @@ come in two flavours:
    operator's own dashboard and for one-time admin scripts.
 2. **Scoped key** — issued by the operator via the dashboard or
    `POST /api/keys`. A scoped key has a `name` (the consuming app)
-   and one or more scope strings. The relevant scope for sibling
-   apps is `parentpoint`.
+   and one or more scope strings. The relevant scope for integrating
+   apps is `integration`.
 
-> **Why `parentpoint` and not something more generic?** The contract
-> emerged from the ParentPoint × FamilyGraph integration. The scope
-> name is sticky for backwards compatibility. A future generic name
-> (e.g. `contract.v1`) is on the roadmap; for v0.2 use
-> `parentpoint`. Any app — not just PP — can hold the scope.
+> **The `integration` scope** grants access to the `/v1/...` contract
+> surface and nothing else. Any app can hold it; the operator issues
+> one scoped key per app so reads and writes stay attributable.
 
-Each scoped key is provisioned with its own name (`'parentpoint'`,
+Each scoped key is provisioned with its own name (`'engagement-app'`,
 `'parish-app'`, `'cyo-sports'`, etc.). FamilyGraph records the name
 on every audit row, so the operator can answer "which app read this
 person's record?" by filtering the audit log.
@@ -130,8 +130,8 @@ alphanumeric, then alphanumeric / dot / dash / underscore).
 semantics:
 
 - **Minor** (v0.1 → v0.2) when adding fields. Existing fields stay
-  the same shape. PP-style clients that ignore unknown keys keep
-  working without code changes.
+  the same shape. Clients that ignore unknown keys keep working
+  without code changes.
 - **Major** (v0.1 → v1.0) when changing field semantics. FG accepts
   only the major versions in its allowlist; unknown majors return
   `426 Upgrade Required`. Plan ahead.
@@ -194,7 +194,7 @@ When `active: false` and the response came from the **changed feed**
 }
 ```
 
-The tombstone deliberately omits PII so PP can purge its cache
+The tombstone deliberately omits PII so the app can purge its cache
 without rebroadcasting a removed person's contact info. Direct
 `GET /v1/persons/:id` of an archived person still returns the full
 record (operator UI use case).
@@ -310,7 +310,7 @@ points back via `diocese_code` + `diocese_record_id`.
   ],
   "allergies": ["peanuts"],
   "snapshotAt": "2026-05-15T10:31:22Z",
-  "sourceApp": "parentpoint",
+  "sourceApp": "engagement-app",
   "updatedAt": "2026-05-15T10:31:22Z"
 }
 ```
@@ -477,7 +477,7 @@ async function createPerson(person, requestId) {
     method: 'POST',
     headers: {
       'authorization': `Bearer ${TOKEN}`,
-      'x-pp-contract-version': 'v0.1',
+      'x-fg-contract-version': 'v0.1',
       'x-source-app': 'your-app',
       'x-source-tenant': 'your-tenant',
       'x-request-id': requestId,         // ← idempotency key
@@ -530,7 +530,7 @@ care what was there, just overwrite" semantics.
 |---|---|---|
 | 400 | Malformed input | Fix the body and retry |
 | 401 | Missing / invalid bearer | Provision a new key |
-| 403 | Bearer is valid but lacks the required scope | Ask the operator to add `parentpoint` |
+| 403 | Bearer is valid but lacks the required scope | Ask the operator to add `integration` |
 | 404 | Entity not found | Either it was archived (look at the changed feed) or the id is wrong |
 | 412 | If-Match mismatch (stale cache) | Re-fetch, re-apply |
 | 413 | Payload too large (256KB on `/v1`, 20MB on `/api/import`) | Split the request |
@@ -664,7 +664,7 @@ debugging a mismatch knows what to expect.
 
 When you're ready to wire FG into a sibling app:
 
-- [ ] Get an `sk_…` key from the operator with the `parentpoint` scope.
+- [ ] Get an `sk_…` key from the operator with the `integration` scope.
 - [ ] Pin `X-FG-Contract-Version: v0.1` in your HTTP client.
 - [ ] Set `X-Source-App` and `X-Source-Tenant` on every call.
 - [ ] Generate a fresh `X-Request-Id` per logical write.
@@ -691,7 +691,7 @@ sibling apps should be aware:
 
 - **mTLS between repos.** v0.2 uses Bearer + signed webhooks.
   mTLS is the eventual answer but isn't shipped yet.
-- **Per-app scoped key isolation.** A token with the `parentpoint`
+- **Per-app scoped key isolation.** A token with the `integration`
   scope can read all PII through `/v1`. There's no narrower
   "metadata only" scope today.
 - **Un-merge.** Merged identities produce alias rows. The change
@@ -710,7 +710,4 @@ changelog will spell out what changed.
 
 - `FAMILYGRAPH_INTEGRATION.md` — the contract spec (with v0.1, v0.2,
   and audit-pass appendices).
-- `PARENTPOINT_INTEGRATION_GUIDE_2026-05-15.md` — the ParentPoint-
-  specific companion to this doc. The date suffix pins the revision;
-  newer revisions ship as new files with later date suffixes.
 - `API_ACCESS_GUIDE.md` — operator-facing key-provisioning guide.

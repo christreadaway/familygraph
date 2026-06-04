@@ -3,7 +3,7 @@
 
 > **Status (2026-04-29, v9.1):** The web dashboard at
 > `http://127.0.0.1:3500/` is live and now Playwright-tested
-> end-to-end. v9 brought in the full missionIQ ingestion + matching
+> end-to-end. v9 brought in the full upstream identity-engine ingestion + matching
 > logic and the external identity API at
 > `/api/identity/{match,resolve,feedback}`. v9.1 added the dashboard
 > features and tests:

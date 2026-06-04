@@ -46,7 +46,7 @@ export default function Keys() {
       <div className="panel">
         <h3>Provision</h3>
         <div className="row">
-          <input placeholder="App name (e.g., missioniq)" value={name} onChange={e => setName(e.target.value)} style={{ flex: 1 }} />
+          <input placeholder="App name (e.g., donor_app)" value={name} onChange={e => setName(e.target.value)} style={{ flex: 1 }} />
         </div>
         <div className="row" style={{ marginTop: 8, flexWrap: 'wrap', gap: 8 }}>
           {SCOPES.map(s => (

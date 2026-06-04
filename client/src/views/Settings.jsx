@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 
 const KNOWN = [
-  { key: 'institution_name', label: 'Institution name', placeholder: 'St. Theresa Catholic School' },
+  { key: 'institution_name', label: 'Institution name', placeholder: 'St. Mary's Catholic School' },
   { key: 'operator_name', label: 'Operator name', placeholder: 'Jane Doe' },
   { key: 'operator_email', label: 'Operator email (connector failure alerts)', placeholder: 'admin@yourdomain.org' },
   { key: 'audit_retention_days', label: 'Audit retention (days, tier 1 only)', placeholder: '365', kind: 'number' },

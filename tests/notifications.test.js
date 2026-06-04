@@ -33,7 +33,7 @@ function seedConflict(db, secrets) {
 test('templates > assignTemplate produces subject + text + html with TTL and link', () => {
   const exp = new Date(Date.now() + 24 * 3_600_000).toISOString();
   const t = templates.assignTemplate({
-    count: 3, expiresAt: exp, dashboardUrl: 'https://family-graph.example.org', assignee: 'sarah@x.org', ttlHours: 24, institution: 'St Theresa',
+    count: 3, expiresAt: exp, dashboardUrl: 'https://family-graph.example.org', assignee: 'sarah@x.org', ttlHours: 24, institution: 'St Marys',
   });
   assert.match(t.subject, /3 family-data conflicts/);
   assert.match(t.subject, /resolve within 24h/);

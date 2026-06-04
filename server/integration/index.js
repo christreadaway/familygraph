@@ -1,7 +1,7 @@
 'use strict';
 
-// Aggregator for the ParentPoint contract helpers. The HTTP router in
-// server/api/parentpoint.js imports from here; tests that exercise the
+// Aggregator for the Integration contract helpers. The HTTP router in
+// server/api/integration.js imports from here; tests that exercise the
 // helper modules directly can do the same.
 
 module.exports = {

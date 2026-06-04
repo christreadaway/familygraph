@@ -3,7 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "description": "Local family registry. Source of truth for who is who in a Catholic institution.",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
+  "author": "Chris Treadaway <christreadaway@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/christreadaway/familygraph.git"
+  },
+  "funding": [
+    { "type": "venmo", "url": "https://venmo.com/u/ctreada" }
+  ],
   "type": "commonjs",
   "main": "server/index.js",
   "bin": {

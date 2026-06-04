@@ -12,7 +12,7 @@
 //   }
 //
 // Value normalization (phone splitting, email lowercasing, date parsing) is
-// vendored from missionIQ's ingestion module so the canonical shape we hand to
+// vendored from the upstream identity engine's ingestion module so the canonical shape we hand to
 // the resolver is already clean.
 
 function pick(row, keys) {
@@ -25,7 +25,7 @@ function pick(row, keys) {
   return null;
 }
 
-// Split a multi-value email field. Vendored from missionIQ.
+// Split a multi-value email field. Vendored from the upstream identity engine.
 function splitEmails(field) {
   if (field == null) return [];
   return String(field)
@@ -69,7 +69,7 @@ function splitPhones(field) {
 
 // Normalize a date value to ISO YYYY-MM-DD. Handles Excel serial numbers,
 // US-format MM/DD/YYYY (also short year), ISO, and "Jan 15, 2025".
-// Vendored from missionIQ.
+// Vendored from the upstream identity engine.
 function normalizeDate(raw) {
   if (raw == null || raw === '') return null;
   if (raw instanceof Date && !isNaN(raw.getTime())) return raw.toISOString().slice(0, 10);

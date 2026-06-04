@@ -1,6 +1,6 @@
 'use strict';
 
-// End-to-end test of the /v1 ParentPoint contract router.
+// End-to-end test of the /v1 Integration contract router.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -54,9 +54,9 @@ async function makeServer(t) {
 
 const auth = (secrets, extra = {}) => ({
   authorization: `Bearer ${secrets.master}`,
-  'x-family-graph-actor': 'parentpoint-test',
-  'x-pp-contract-version': 'v0.1',
-  'x-source-app': 'parentpoint',
+  'x-family-graph-actor': 'integration-test',
+  'x-fg-contract-version': 'v0.1',
+  'x-source-app': 'integration',
   ...extra,
 });
 
@@ -64,7 +64,7 @@ const auth = (secrets, extra = {}) => ({
 // PERSONS — read
 // -----------------------------------------------------------------------------
 
-test('PP API > GET /v1/persons?email=<x> returns the matched person', async t => {
+test('Integration API > GET /v1/persons?email=<x> returns the matched person', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee', kind: 'adult' });
   const e = contacts.upsertEmail(db, secrets, 'amanda@example.com');
@@ -82,7 +82,7 @@ test('PP API > GET /v1/persons?email=<x> returns the matched person', async t =>
   assert.match(r.headers['x-fg-contract-version'], /v0\.1/);
 });
 
-test('PP API > GET /v1/persons?email=<unknown> returns 404', async t => {
+test('Integration API > GET /v1/persons?email=<unknown> returns 404', async t => {
   const { port, secrets } = await makeServer(t);
   const r = await request(port, {
     path: '/v1/persons?email=ghost@example.com',
@@ -91,7 +91,7 @@ test('PP API > GET /v1/persons?email=<unknown> returns 404', async t => {
   assert.equal(r.status, 404);
 });
 
-test('PP API > GET /v1/persons/:id returns the §6.1 shape', async t => {
+test('Integration API > GET /v1/persons/:id returns the §6.1 shape', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, {
     given_name: 'Amanda', family_name: 'Lee', preferred_name: 'Mandy', kind: 'adult',
@@ -105,7 +105,7 @@ test('PP API > GET /v1/persons/:id returns the §6.1 shape', async t => {
   assert.equal(r.body.person.phones[0].smsConsent, true);
 });
 
-test('PP API > GET /v1/persons/:id 400s on a bad code', async t => {
+test('Integration API > GET /v1/persons/:id 400s on a bad code', async t => {
   const { port, secrets } = await makeServer(t);
   const r = await request(port, { path: '/v1/persons/not-a-code', headers: auth(secrets) });
   assert.equal(r.status, 400);
@@ -115,10 +115,10 @@ test('PP API > GET /v1/persons/:id 400s on a bad code', async t => {
 // PERSONS — write
 // -----------------------------------------------------------------------------
 
-test('PP API > POST /v1/persons creates a new identity and attaches contacts', async t => {
+test('Integration API > POST /v1/persons creates a new identity and attaches contacts', async t => {
   const { port, db, secrets } = await makeServer(t);
   const r = await request(port, {
-    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'pp_create_1' }),
+    method: 'POST', path: '/v1/persons', headers: auth(secrets, { 'x-request-id': 'integration_create_1' }),
     body: {
       firstName: 'Amanda', lastName: 'Lee', preferredName: 'Mandy',
       kind: 'adult',
@@ -139,9 +139,9 @@ test('PP API > POST /v1/persons creates a new identity and attaches contacts', a
   assert.ok(r.headers.etag);
 });
 
-test('PP API > POST /v1/persons is idempotent on X-Request-Id', async t => {
+test('Integration API > POST /v1/persons is idempotent on X-Request-Id', async t => {
   const { port, secrets } = await makeServer(t);
-  const headers = auth(secrets, { 'x-request-id': 'pp_create_2' });
+  const headers = auth(secrets, { 'x-request-id': 'integration_create_2' });
   const body = { firstName: 'Tim', lastName: 'Lee', kind: 'adult' };
   const a = await request(port, { method: 'POST', path: '/v1/persons', headers, body });
   const b = await request(port, { method: 'POST', path: '/v1/persons', headers, body });
@@ -151,7 +151,7 @@ test('PP API > POST /v1/persons is idempotent on X-Request-Id', async t => {
   assert.equal(b.headers['x-fg-idempotent-replay'], 'true');
 });
 
-test('PP API > PATCH /v1/persons/:id with stale If-Match returns 412', async t => {
+test('Integration API > PATCH /v1/persons/:id with stale If-Match returns 412', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee' });
   const r = await request(port, {
@@ -161,7 +161,7 @@ test('PP API > PATCH /v1/persons/:id with stale If-Match returns 412', async t =
   assert.equal(r.status, 412);
 });
 
-test('PP API > PATCH /v1/persons/:id with valid If-Match succeeds', async t => {
+test('Integration API > PATCH /v1/persons/:id with valid If-Match succeeds', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee' });
   const get = await request(port, { path: `/v1/persons/${p}`, headers: auth(secrets) });
@@ -175,7 +175,7 @@ test('PP API > PATCH /v1/persons/:id with valid If-Match succeeds', async t => {
   assert.equal(r.body.person.preferredName, 'Mandy');
 });
 
-test('PP API > PATCH /v1/persons/:id without If-Match accepts the write', async t => {
+test('Integration API > PATCH /v1/persons/:id without If-Match accepts the write', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee' });
   const r = await request(port, {
@@ -189,7 +189,7 @@ test('PP API > PATCH /v1/persons/:id without If-Match accepts the write', async 
 // PHOTO CONSENT
 // -----------------------------------------------------------------------------
 
-test('PP API > POST /v1/persons/:id/photoConsent updates consent', async t => {
+test('Integration API > POST /v1/persons/:id/photoConsent updates consent', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const r = await request(port, {
@@ -209,7 +209,7 @@ test('PP API > POST /v1/persons/:id/photoConsent updates consent', async t => {
 // EIM CERTIFICATIONS
 // -----------------------------------------------------------------------------
 
-test('PP API > POST /v1/persons/:id/eimCertifications adds a cert', async t => {
+test('Integration API > POST /v1/persons/:id/eimCertifications adds a cert', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Mary', family_name: 'Smith' });
   const r = await request(port, {
@@ -226,14 +226,14 @@ test('PP API > POST /v1/persons/:id/eimCertifications adds a cert', async t => {
 // SCHOOL CONTEXT
 // -----------------------------------------------------------------------------
 
-test('PP API > POST /v1/persons/:id/schoolContext stores the §7.3 snapshot', async t => {
+test('Integration API > POST /v1/persons/:id/schoolContext stores the §7.3 snapshot', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const r = await request(port, {
     method: 'POST', path: `/v1/persons/${p}/schoolContext`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
     body: {
-      schoolId: 'st-theresa', schoolYear: '2026-2027', grade: '3',
+      schoolId: 'st-marys', schoolYear: '2026-2027', grade: '3',
       classroomId: '3A', classroomName: 'Room 204 — Ms. Lee',
       activities: [{ kind: 'sport', label: 'Basketball — Girls 4A', season: '2026-2027 Winter' }],
       allergies: ['peanuts'],
@@ -244,17 +244,17 @@ test('PP API > POST /v1/persons/:id/schoolContext stores the §7.3 snapshot', as
   assert.equal(r.body.schoolContext.classroomId, '3A');
   // GET /schoolContext returns the same snapshot.
   const g = await request(port, {
-    path: `/v1/persons/${p}/schoolContext?schoolId=st-theresa`, headers: auth(secrets),
+    path: `/v1/persons/${p}/schoolContext?schoolId=st-marys`, headers: auth(secrets),
   });
   assert.equal(g.status, 200);
   assert.equal(g.body.schoolContext.grade, '3');
 });
 
-test('PP API > GET /v1/persons/:id/schoolContext without schoolId lists all snapshots', async t => {
+test('Integration API > GET /v1/persons/:id/schoolContext without schoolId lists all snapshots', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
-  const sc = require('../server/parentpoint/schoolContext');
-  sc.upsert(db, p, { schoolId: 'st-theresa', grade: '3' });
+  const sc = require('../server/integration/schoolContext');
+  sc.upsert(db, p, { schoolId: 'st-marys', grade: '3' });
   sc.upsert(db, p, { schoolId: 'st-johns', grade: '4' });
   const r = await request(port, { path: `/v1/persons/${p}/schoolContext`, headers: auth(secrets) });
   assert.equal(r.status, 200);
@@ -265,7 +265,7 @@ test('PP API > GET /v1/persons/:id/schoolContext without schoolId lists all snap
 // HOUSEHOLDS
 // -----------------------------------------------------------------------------
 
-test('PP API > POST /v1/households creates a household with members', async t => {
+test('Integration API > POST /v1/households creates a household with members', async t => {
   const { port, db, secrets } = await makeServer(t);
   const mom = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee', kind: 'adult' });
   const dad = people.create(db, secrets, { given_name: 'Tim', family_name: 'Lee', kind: 'adult' });
@@ -289,7 +289,7 @@ test('PP API > POST /v1/households creates a household with members', async t =>
   assert.equal(r.body.household.primaryContactPersonId, mom);
 });
 
-test('PP API > GET /v1/households?personId=<id> returns the active household', async t => {
+test('Integration API > GET /v1/households?personId=<id> returns the active household', async t => {
   const { port, db, secrets } = await makeServer(t);
   const f = families.create(db, secrets, { display_name: 'Lee' });
   const p = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee' });
@@ -299,18 +299,18 @@ test('PP API > GET /v1/households?personId=<id> returns the active household', a
   assert.equal(r.body.household.householdId, f);
 });
 
-test('PP API > POST /v1/households/:id/members adds a member and triggers a webhook', async t => {
+test('Integration API > POST /v1/households/:id/members adds a member and triggers a webhook', async t => {
   const { port, db, secrets } = await makeServer(t);
   const f = families.create(db, secrets, { display_name: 'Lee' });
   const mom = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee' });
   families.addMember(db, secrets, f, mom, { role: 'parent', relationLabel: 'mother', custody: 'joint' });
   const kid = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   // Subscribe a webhook so we can verify the queue grows.
-  const webhooks = require('../server/parentpoint/webhooks');
+  const webhooks = require('../server/integration/webhooks');
   webhooks.subscribe(db, secrets, { url: 'https://x.example/cb', events: '*' });
   const r = await request(port, {
     method: 'POST', path: `/v1/households/${f}/members`,
-    headers: auth(secrets, { 'x-source-tenant': 'st-theresa' }),
+    headers: auth(secrets, { 'x-source-tenant': 'st-marys' }),
     body: { personId: kid, role: 'child' },
   });
   assert.equal(r.status, 201);
@@ -324,7 +324,7 @@ test('PP API > POST /v1/households/:id/members adds a member and triggers a webh
 // CHANGED-SINCE FEEDS
 // -----------------------------------------------------------------------------
 
-test('PP API > GET /v1/persons/changed returns persons updated after the cursor', async t => {
+test('Integration API > GET /v1/persons/changed returns persons updated after the cursor', async t => {
   const { port, db, secrets } = await makeServer(t);
   const a = people.create(db, secrets, { given_name: 'A', family_name: 'X' });
   // Capture the cursor between the two writes by reading A's updated_at.
@@ -342,7 +342,7 @@ test('PP API > GET /v1/persons/changed returns persons updated after the cursor'
   assert.equal(codes.includes(a), false, 'A should not appear: its updated_at equals the cursor');
 });
 
-test('PP API > GET /v1/households/changed returns households updated after the cursor', async t => {
+test('Integration API > GET /v1/households/changed returns households updated after the cursor', async t => {
   const { port, db, secrets } = await makeServer(t);
   const f = families.create(db, secrets, { display_name: 'Lee' });
   const cursor = db.prepare('SELECT updated_at FROM families WHERE code = ?').get(f).updated_at;
@@ -357,7 +357,7 @@ test('PP API > GET /v1/households/changed returns households updated after the c
   assert.ok(codes.includes(g));
 });
 
-test('PP API > GET /v1/persons/changed rejects an unparseable since', async t => {
+test('Integration API > GET /v1/persons/changed rejects an unparseable since', async t => {
   const { port, secrets } = await makeServer(t);
   const r = await request(port, {
     path: '/v1/persons/changed?since=not-a-date', headers: auth(secrets),
@@ -369,22 +369,22 @@ test('PP API > GET /v1/persons/changed rejects an unparseable since', async t =>
 // CONTRACT VERSION
 // -----------------------------------------------------------------------------
 
-test('PP API > unsupported X-PP-Contract-Version returns 426', async t => {
+test('Integration API > unsupported X-FG-Contract-Version returns 426', async t => {
   const { port, secrets } = await makeServer(t);
   const r = await request(port, {
     path: '/v1/persons?email=x@y.com',
-    headers: { ...auth(secrets), 'x-pp-contract-version': 'v9.99' },
+    headers: { ...auth(secrets), 'x-fg-contract-version': 'v9.99' },
   });
   assert.equal(r.status, 426);
 });
 
-test('PP API > missing X-PP-Contract-Version is accepted (logged-only)', async t => {
+test('Integration API > missing X-FG-Contract-Version is accepted (logged-only)', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee' });
   const e = contacts.upsertEmail(db, secrets, 'amanda@example.com');
   contacts.attachEmailToPerson(db, p, e, { isPrimary: true });
   const headers = { ...auth(secrets) };
-  delete headers['x-pp-contract-version'];
+  delete headers['x-fg-contract-version'];
   const r = await request(port, { path: '/v1/persons?email=amanda@example.com', headers });
   assert.equal(r.status, 200);
 });
@@ -393,7 +393,7 @@ test('PP API > missing X-PP-Contract-Version is accepted (logged-only)', async t
 // WEBHOOK SUBSCRIPTION MANAGEMENT
 // -----------------------------------------------------------------------------
 
-test('PP API > webhook subscribe + list + unsubscribe lifecycle', async t => {
+test('Integration API > webhook subscribe + list + unsubscribe lifecycle', async t => {
   const { port, secrets } = await makeServer(t);
   const sub = await request(port, {
     method: 'POST', path: '/v1/webhooks', headers: auth(secrets),
@@ -416,10 +416,10 @@ test('PP API > webhook subscribe + list + unsubscribe lifecycle', async t => {
 // AUTH
 // -----------------------------------------------------------------------------
 
-test('PP API > a scoped key with only `parentpoint` scope can call /v1', async t => {
+test('Integration API > a scoped key with only `integration` scope can call /v1', async t => {
   const { port, db, secrets } = await makeServer(t);
   const apiKeys = require('../server/auth/api-keys');
-  const { token } = apiKeys.provision(db, { name: 'parentpoint-test', scopes: ['parentpoint'] });
+  const { token } = apiKeys.provision(db, { name: 'integration-test', scopes: ['integration'] });
   const p = people.create(db, secrets, { given_name: 'Amanda', family_name: 'Lee' });
   const e = contacts.upsertEmail(db, secrets, 'amanda@example.com');
   contacts.attachEmailToPerson(db, p, e, { isPrimary: true });
@@ -427,24 +427,24 @@ test('PP API > a scoped key with only `parentpoint` scope can call /v1', async t
     path: '/v1/persons?email=amanda@example.com',
     headers: {
       authorization: `Bearer ${token}`,
-      'x-pp-contract-version': 'v0.1',
+      'x-fg-contract-version': 'v0.1',
     },
   });
   assert.equal(r.status, 200);
 });
 
-test('PP API > a scoped key without parentpoint scope is rejected', async t => {
+test('Integration API > a scoped key without integration scope is rejected', async t => {
   const { port, db } = await makeServer(t);
   const apiKeys = require('../server/auth/api-keys');
   const { token } = apiKeys.provision(db, { name: 'pii-only', scopes: ['pii.read'] });
   const r = await request(port, {
     path: '/v1/persons?email=x@y.com',
-    headers: { authorization: `Bearer ${token}`, 'x-pp-contract-version': 'v0.1' },
+    headers: { authorization: `Bearer ${token}`, 'x-fg-contract-version': 'v0.1' },
   });
   assert.equal(r.status, 403);
 });
 
-test('PP API > unauthenticated /v1 requests are rejected', async t => {
+test('Integration API > unauthenticated /v1 requests are rejected', async t => {
   const { port } = await makeServer(t);
   const r = await request(port, { path: '/v1/persons?email=x@y.com' });
   assert.equal(r.status, 401);

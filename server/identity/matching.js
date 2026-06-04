@@ -1,6 +1,6 @@
 'use strict';
 
-// Identity matching primitives — vendored from missionIQ's resolver, restated
+// Identity matching primitives — vendored from the upstream identity engine's resolver, restated
 // in pure-function form so they can be used both by our internal resolver and
 // by the external /api/identity/match HTTP surface.
 //
@@ -18,7 +18,7 @@
 //        confidence ≥ thresholds.review     → enqueue conflict
 //        confidence <  thresholds.review     → create new
 //
-// Default thresholds (matching missionIQ's calibration): autoMerge=0.85,
+// Default thresholds (matching the upstream identity engine's calibration): autoMerge=0.85,
 // review=0.65. The Family Graph profiles system can override these per
 // institution.
 
@@ -419,7 +419,7 @@ function scoreMatch(a, b) {
   if (definitive) {
     if (addressesConflict(a, b)) {
       reasons.push('address_conflict_present');
-      // missionIQ allows this through (alternate address); we surface the
+      // the upstream identity engine allows this through (alternate address); we surface the
       // conflict to the operator by capping the confidence below auto-merge.
       // The caller's autoMerge threshold (default 0.85) is still met by
       // 0.95-0.10=0.85, so without further conflict signals we still merge.
@@ -482,7 +482,7 @@ function scoreMatch(a, b) {
   // ---- Address. Address is a strong signal for FAMILY attachment but on
   // its own is NOT enough to merge two distinct persons (different first
   // names at the same household are usually a spouse/parent/child triplet,
-  // not duplicates). missionIQ collapses these — Family Graph keeps them as
+  // not duplicates). the upstream identity engine collapses these — Family Graph keeps them as
   // separate persons under the same family, which the family resolver
   // handles. So address contributes a soft additive only, and only becomes
   // definitive when paired with a name match.
@@ -535,7 +535,7 @@ function classify(confidence, thresholds) {
   // 0.30 default review threshold — calibrated against the new additive
   // scoring so even surname-only or phonetic-variant first-name matches
   // surface for operator decision. Family Graph errs on the side of asking;
-  // missionIQ's single 0.75 gate just dropped weak matches on the floor.
+  // the upstream identity engine's single 0.75 gate just dropped weak matches on the floor.
   //   exact_last (0.30)                                  = 0.30  → review
   //   exact_last + phonetic_first (0.05)                 = 0.35  → review
   //   exact_last + nickname (0.18)                       = 0.48  → review

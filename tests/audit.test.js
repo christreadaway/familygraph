@@ -39,7 +39,7 @@ test('audit > tier-2 export consent is stored separately', t => {
   audit.record(db, {
     tier: 2,
     action: 'export_consent',
-    actor: 'missioniq',
+    actor: 'demo-app',
     destination: 'board-report.csv',
     metadata: { entity_codes: ['f_a7b3c91d'] },
   });

@@ -15,14 +15,14 @@ const audit = require('../audit');
 //     description: string
 //   }
 
-// Threshold notes (recalibrated for missionIQ-style additive scoring,
+// Threshold notes (recalibrated for upstream additive scoring,
 // see server/identity/matching.js):
 //   autoMerge ≥ 0.85 corresponds to "definitive signal AND no
 //                     conflicting address" — exact email/phone, exact
 //                     name+DOB, address+name overlap.
 //   review     ≥ 0.30 surfaces even a surname-only or phonetic match
 //                     for operator review (FG errs on the side of
-//                     asking; missionIQ silently dropped these).
+//                     asking; the upstream identity engine silently dropped these).
 //   Higher institutional bars (e.g., diocese with mixed-source data)
 //   raise both — fewer auto-merges, more conflict-queue work.
 const BUILTIN_PROFILES = [

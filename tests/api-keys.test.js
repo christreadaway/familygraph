@@ -40,7 +40,7 @@ function makeServer(t) {
 test('api-keys > provision returns a hashed-only record + plaintext token once', t => {
   const { db, dir } = newDb();
   t.after(() => { db.close(); cleanup(dir); });
-  const r = apiKeys.provision(db, { name: 'missioniq', scopes: ['pii.read', 'sanitize'] });
+  const r = apiKeys.provision(db, { name: 'demo-app', scopes: ['pii.read', 'sanitize'] });
   assert.match(r.token, /^sk_/);
   assert.deepEqual(r.scopes, ['pii.read', 'sanitize']);
   // The hash column never contains the token.
@@ -75,7 +75,7 @@ test('api-keys > scoped read-only token cannot write', async t => {
   const provision = await req(port, {
     method: 'POST', path: '/api/keys',
     headers: { authorization: `Bearer ${secrets.master}` },
-    body: { name: 'parentpoint', scopes: ['pii.read'] },
+    body: { name: 'integration', scopes: ['pii.read'] },
   });
   assert.equal(provision.status, 201);
   const tok = provision.body.token;

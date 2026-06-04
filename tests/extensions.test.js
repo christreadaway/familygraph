@@ -43,7 +43,7 @@ test('profiles > thresholdsFor merges active profile thresholds over fallback', 
   const fb = { autoMerge: 0.0, review: 0.0 };
   const out = profiles.thresholdsFor(db, fb);
   // diocese profile: see server/identity/profiles.js BUILTIN_PROFILES.
-  // Recalibrated for the additive scoring vendored from missionIQ.
+  // Recalibrated for the additive scoring vendored from the upstream identity engine.
   assert.equal(out.autoMerge, 0.90);
   assert.equal(out.review, 0.30);
 });

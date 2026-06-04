@@ -19,12 +19,12 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //   9 — persons.employer / title / do_not_contact / not_living_together.
 //  10 — connector_runs table + conflicts.metadata + import_runs.trigger.
 //  11 — persons.eim_* fields + ministries / ministry_assignments tables.
-//  12 — ParentPoint contract: persons.kind / preferred_name_ct,
+//  12 — Integration contract: persons.kind / preferred_name_ct,
 //       families.primary_contact_person_code / communication_language,
 //       memberships.relation_label, phones.e164 / sms_consent, plus
 //       person_consents / eim_certifications / school_contexts /
-//       pp_webhook_subscriptions / pp_webhook_deliveries /
-//       pp_idempotency_keys tables.
+//       webhook_subscriptions / webhook_deliveries /
+//       idempotency_keys tables.
 //  13 — Per-school consent overrides, diocesan EIM source of truth,
 //       and the entity_changes log that lets soft-archived persons
 //       and households be reinstated.
