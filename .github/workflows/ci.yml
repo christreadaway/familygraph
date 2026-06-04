@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install server dependencies
+        run: SFW_BYPASS=1 npm ci
+
+      - name: Install client dependencies
+        run: cd client && SFW_BYPASS=1 npm ci
+
+      - name: Build client
+        run: npm run client:build
+
+      - name: Run tests
+        run: npm test

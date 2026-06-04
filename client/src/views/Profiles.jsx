@@ -4,9 +4,10 @@ import { api } from '../api.js';
 export default function Profiles() {
   const [data, setData] = useState({ items: [], active: null });
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   function load() {
-    api.listProfiles().then(setData).catch(e => setError(e.message));
+    api.listProfiles().then(setData).catch(e => setError(e.message)).finally(() => setLoading(false));
   }
   useEffect(load, []);
 
@@ -19,6 +20,7 @@ export default function Profiles() {
       <h2>Profiles</h2>
       <p className="muted">Profiles bundle resolver thresholds and dashboard preferences for an institutional segment. The active profile influences the import resolver's auto-merge / review thresholds.</p>
       {error && <div className="panel error">{error}</div>}
+      {loading ? <div className="muted">Loading…</div> : <>
       <div className="panel">
         <h3>Active</h3>
         {data.active ? (
@@ -44,6 +46,7 @@ export default function Profiles() {
           </tbody>
         </table>
       </div>
+      </>}
     </>
   );
 }

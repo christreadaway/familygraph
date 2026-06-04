@@ -127,7 +127,7 @@ A few principles were present from the first conversation and never wavered:
 - **Open-source dependencies.** All MIT, Apache 2.0, BSD. No GPL or AGPL.
 - **No telemetry, no analytics, no phone-home.** Period.
 - **Audit log auto-redacts PII.** Logs never contain raw values.
-- **Mappings encrypted at rest.** SQLCipher with OS-account-derived key.
+- **Mappings encrypted at rest.** Application-layer AES-256-GCM column encryption with OS-account-derived key.
 - **Pseudonyms never re-issued.** Merged entries become aliases.
 - **Family resolver inherits the upstream identity engine's existing rules.** Don't re-derive what already works.
 
@@ -165,7 +165,7 @@ A few principles were present from the first conversation and never wavered:
 
 ## What v6 is
 
-A local-first family registry. Source of truth for who lives in what household, who is related to whom, and where they live. Serves PII to authenticated local apps. Serves pseudonyms to AI workflows and external recipients. Built on Node.js + Express + SQLite (encrypted via SQLCipher) + React. Vendors the upstream identity engine's identity module. Reuses the upstream identity engine's resolution rules. Closed source for v1, shipping to the pilot institution first.
+A local-first family registry. Source of truth for who lives in what household, who is related to whom, and where they live. Serves PII to authenticated local apps. Serves pseudonyms to AI workflows and external recipients. Built on Node.js + Express + SQLite (column-level AES-256-GCM encryption) + React. Vendors the upstream identity engine's identity module. Reuses the upstream identity engine's resolution rules. Open-source under Apache 2.0.
 
 The product is small enough to build well and ambitious enough to be foundational infrastructure for Chris's broader portfolio of Catholic institutional software.
 
@@ -2637,6 +2637,64 @@ specific handlers are implementation docs describing shipped code, not product
 framing, so they stay.
 
 No code changes. No test changes.
+
+---
+
+## Open-source polish: fonts, CI, dashboard UX, doc hygiene (Claude Code, 2026-06-04)
+
+Pre-release audit found ten items that would look rough in an open-source repo.
+Fixed all of them in one pass.
+
+**Google Fonts CDN eliminated.** Downloaded all 20 WOFF2 files (Inter 400-700,
+Inter Tight 500-700, JetBrains Mono 400-600, latin + latin-ext subsets) and
+bundled them under `client/src/fonts/`. New `fonts.css` with @font-face
+declarations; `app.css` imports the local file instead of
+`fonts.googleapis.com`. Zero external network requests now. The "no phone home"
+claim in the README is no longer contradicted by a CDN call on every page load.
+Build size went from ~241 KB JS to ~299 KB JS (the font files are separate
+assets, not inlined) which is an acceptable trade for the privacy guarantee.
+
+**GitHub Actions CI.** `.github/workflows/ci.yml` runs on push to main and on
+PRs: install deps (with `SFW_BYPASS=1` since the sfw binary isn't available in
+CI and the lockfile pins exact versions), build the client, run the full 490-test
+suite. Simple single-job workflow; caching is a v2 evolution.
+
+**`window.prompt()` and `window.confirm()` replaced with inline UI.**
+Families.jsx do-not-call flow now shows a reason input + Confirm/Cancel buttons
+in the table row instead of the browser's native prompt dialog.
+Connectors.jsx credential deletion shows an inline confirmation message instead
+of `window.confirm()`.
+
+**Loading states on all list views.** Families, People, Conflicts, Profiles,
+Rules, Keys all start with `loading: true` and show "Loading..." until the first
+fetch resolves. Previously they flashed the empty-state message ("No families
+yet") before data arrived, which on a slow connection looks broken. Search view
+only shows the loading indicator when a search is in flight, not on initial mount.
+
+**Settings.jsx placeholder text.** Replaced `"St. Mary's Catholic School"` and
+`"Jane Doe"` with `"[Institution Name]"` and `"[Operator Name]"` per the
+CLAUDE.md PII rules.
+
+**`package.json` engines field.** Added `"engines": { "node": ">=20" }` so
+someone on Node 18 gets a clear error instead of cryptic failures.
+
+**CLAUDE_CODE_HANDOFF.md status header.** Updated from v9.1/218 tests to
+v13/489 tests, noting the integration API, live connectors, EIM, and Apache 2.0.
+
+**Session notes factual corrections.** Fixed the "Decisions that survived" and
+"What v6 is" sections where current-tense statements still said "SQLCipher" and
+"closed source" — the actual implementation is application-layer AES-256-GCM and
+Apache 2.0.
+
+**design-handoff/ README.** Added a 4-line explanation so the six loose HTML/CSS
+files don't look like abandoned artifacts.
+
+**README API-only features note.** Added a paragraph noting that dioceses,
+per-school consent overrides, and webhook management are API-only in v1. Pointed
+to the integration docs.
+
+Verification: 490 tests, 489 pass, 1 pre-existing skip (EACCES on root). Client
+builds clean (Vite v5.4.21, 299 KB JS / 22 KB CSS). No server code changes.
 
 ---
 

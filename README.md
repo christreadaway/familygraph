@@ -698,6 +698,12 @@ the Family Graph design system (see `CLAUDE_CODE_HANDOFF.md`):
   posture so "where the data came from" never reads the same as "what
   state it's in."
 
+Some features are API-only in v1 and do not have dashboard pages yet:
+the dioceses catalog, per-school consent overrides, and webhook
+subscription management. See [`INTEGRATION_GUIDE.md`](./INTEGRATION_GUIDE.md)
+and [`FAMILYGRAPH_INTEGRATION.md`](./FAMILYGRAPH_INTEGRATION.md) for those
+endpoints.
+
 ### Client dev workflow
 
 For interactive frontend work, run the API server and the Vite dev

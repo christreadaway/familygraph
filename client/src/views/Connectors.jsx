@@ -109,6 +109,7 @@ export function ConnectorDetail() {
   const [finalRun, setFinalRun] = useState(null);
   const [finalImport, setFinalImport] = useState(null);
   const [runs, setRuns] = useState([]);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Refs let interval callbacks see the latest activeRunCode without
   // capturing a stale closure.
@@ -222,10 +223,10 @@ export function ConnectorDetail() {
   }
 
   async function handleDelete() {
-    if (!window.confirm('Delete credentials and disable this connector? Existing data is not removed.')) return;
     setBusy(true); setError(null);
     try {
       await api.deleteConnectorCredentials(name);
+      setConfirmingDelete(false);
       await loadConnector();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
@@ -276,7 +277,17 @@ export function ConnectorDetail() {
         ))}
         <div className="row" style={{ gap: 8 }}>
           <button className="primary" disabled={busy} onClick={handleSaveCreds}>Save credentials</button>
-          <button disabled={busy} onClick={handleDelete}>Delete credentials</button>
+          {confirmingDelete ? (
+            <>
+              <span className="muted" style={{ fontSize: 'var(--t-small)' }}>
+                Delete credentials and disable this connector? Existing data is not removed.
+              </span>
+              <button className="danger" disabled={busy} onClick={handleDelete}>Confirm</button>
+              <button disabled={busy} onClick={() => setConfirmingDelete(false)}>Cancel</button>
+            </>
+          ) : (
+            <button disabled={busy} onClick={() => setConfirmingDelete(true)}>Delete credentials</button>
+          )}
         </div>
       </div>
 

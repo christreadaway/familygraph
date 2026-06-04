@@ -1,29 +1,11 @@
 # Family Graph — Claude Code Handoff
 **Theme:** Institutional · **Chrome:** native per OS (macOS traffic lights on Mac, Windows controls on Windows) · **Surface:** local desktop app (Tauri or Electron) on macOS + Windows.
 
-> **Status (2026-04-29, v9.1):** The web dashboard at
-> `http://127.0.0.1:3500/` is live and now Playwright-tested
-> end-to-end. v9 brought in the full upstream identity-engine ingestion + matching
-> logic and the external identity API at
-> `/api/identity/{match,resolve,feedback}`. v9.1 added the dashboard
-> features and tests:
-> - **ColumnMapper** on Import (auto-opens when auto-mapper produces
->   zero person rows).
-> - **Conflicts** view: per-conflict resolution-notes textarea +
->   reason chips (`exact_email_match`, `nickname_or_short_form`,
->   `address_conflict_present`, …); closed conflicts surface stored
->   notes verbatim.
-> - **PersonDetail**: Profile section — employer / title / DNC + reason
->   / not-living-together.
-> - **FamilyDetail**: per-member DOB+age+grade (with summer-grace
->   "completed N · rising N+1" between May 15 – Aug 15);
->   "do-not-call" + "separate residence" pills inline; Contact
->   channels panel rolling up emails + phones across the family
->   with attribution; bulk Do-not-call list panel.
-> - **Families list**: server-side surname search (`?q=`) + per-row
->   quick "Add to do-not-call" action.
-> - **Tests**: 206 server + 12 Playwright e2e = 218 green. Run
->   `npm test` and `npm run test:e2e`.
+> **Status (2026-06-04, v13):** Schema v13. 489 tests green
+> (`npm test` + `npm run test:e2e`). The integration API at `/v1` is
+> live (contract v0.2). Live connectors shipping for FACTS and Ministry
+> Platform. EIM certification and ministry rosters are in. The project
+> is now open-source under Apache 2.0.
 >
 > The Tauri/Electron desktop shell (§5) is the next major milestone;
 > everything below the title bar applies regardless of how the shell
