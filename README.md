@@ -3,10 +3,13 @@
 **Local family registry for Catholic institutions.** Open source under the Apache-2.0 license.
 
 Family Graph is the source of truth for family identity in an institution's data
-ecosystem. It accepts files from existing systems (FACTS, RenWeb, Ministry
-Platform, Google Sheets, Excel, generic CSV), reconciles them against a
-persistent ledger, and exposes that ledger to the institution's other tools
-through a local HTTP API. PII at rest is encrypted; AI workflows always see
+ecosystem. It accepts any list of people - whether it comes from a school
+information system, a parish management platform, a Google Sheet, an Excel
+workbook, or a hand-typed CSV - and reconciles it against a persistent ledger.
+Shipped handlers cover common formats and systems (FACTS, RenWeb, Ministry
+Platform, Google Sheets, Excel, generic CSV), but the product is
+platform-agnostic: if you have a list, Family Graph can ingest it. The ledger is
+exposed to the institution's other tools through a local HTTP API. PII at rest is encrypted; AI workflows always see
 pseudonyms; PII exports require explicit consent and land in a tier-2 audit
 trail.
 
