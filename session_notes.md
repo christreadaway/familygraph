@@ -2586,4 +2586,37 @@ de-brand changed names, not behavior.
 
 ---
 
+## Open-source hardening: hygiene docs, dep audit, repo tidy (Claude Code, 2026-06-03)
+
+Follow-up pass after the de-brand to get the repo presentable as a public
+project.
+
+Scrubbed the real pilot institution out of everything except `NOTICE` and
+`README` (where it is the named donation beneficiary): the demo fixture, the
+specs, and the sample tenant slug used across tests all now use neutral
+placeholders. Left the given-name nickname list in the matcher alone - that is
+name resolution, not the institution.
+
+Added `SECURITY.md` (private disclosure, the security model, and the one
+dependency advisory that has no upstream fix) and `CONTRIBUTING.md` (the
+mandatory Socket Firewall install flow, tests, and the PII / schema / auth
+conventions), both linked from the README.
+
+Dependency audit: cleared the moderate advisories with a lockfile-only patch
+(the version range already allowed it). One high-severity advisory in the
+spreadsheet parser has no fix published to the registry; documented it and the
+mitigation (it only parses operator-supplied local files) rather than swapping
+the library blind. Suite stayed green through the bump.
+
+Tidied the root: the six loose design-mockup files turned out to be the
+design-system source the handoff doc references, so they moved into
+`design-handoff/` instead of being deleted - root is clean, the source is
+preserved, and the doc path now resolves.
+
+Verification used the documented Socket Firewall bypass again (its binary host
+is unreachable in this container); full suite green at 489 pass, 0 fail, 1
+pre-existing skip throughout.
+
+---
+
 *End of session notes*
