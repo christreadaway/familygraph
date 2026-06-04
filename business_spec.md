@@ -49,7 +49,7 @@ A single, local source of truth for family identity, with a documented contract 
 ### What Family Graph does
 
 - **Owns the master record** for every person and household in the community. Names, contact info, household links, custody flags, photo and directory consent, safe-environment certifications.
-- **Ingests data from existing systems.** FACTS, RenWeb, Ministry Platform, Google Sheets, Excel, plus direct writes from consuming apps. Reconciles incoming records against the persistent ledger.
+- **Ingests data from any source.** A SIS export, a parish management report, a Google Sheet, an Excel workbook, a hand-typed CSV from a clipboard - any list of people can be federated into the ledger regardless of where it came from. Many parishes don't use a formal platform at all; they keep records in spreadsheets or on paper. Family Graph serves all of them. Shipped handlers cover common formats and systems (FACTS, RenWeb, Ministry Platform, Google Sheets, Excel, generic CSV); consuming apps can also write directly through the API.
 - **Auto-merges high-confidence matches; surfaces ambiguous pairs to the operator** for review. Creates new entries for genuinely new people. Resolution rules accumulate over time and reduce the queue depth.
 - **Builds household and relationship structure.** Multiple addresses per family. Custody designations. Family-to-family links for divorced parents and connected households. Free-form notes for the situations real people don't fit into clean schemas.
 - **Serves identity to authorized apps over a versioned contract.** Apps read household-and-person objects through `GET /v1/persons/:id` and friends. Apps suggest new identities through `POST /v1/persons`. Per-school consent overrides, diocesan-EIM linkage, and archive / reinstate workflows are all first-class endpoints.
@@ -61,8 +61,8 @@ A single, local source of truth for family identity, with a documented contract 
 
 - Donor analysis, giving history, engagement scoring (a donor-intelligence app does that)
 - Parent communication, school engagement (a parent-engagement app does that)
-- Sacramental records, parish accounting (Ministry Platform does that)
-- School enrollment management (FACTS or RenWeb does that)
+- Sacramental records, parish accounting (the parish management system does that)
+- School enrollment management (the school information system does that)
 - Time-aware logic like grade rollover or sacrament eligibility (those belong to the systems that own the underlying processes)
 
 Family Graph is deliberately narrow. It does the one thing the existing ecosystem doesn't do: maintain a unified, accurate, privacy-conscious identity ledger, and serve it to every app that needs to reference it.

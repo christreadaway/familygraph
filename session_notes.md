@@ -196,7 +196,7 @@ The product is small enough to build well and ambitious enough to be foundationa
 - The dual API surface (`/api/families/:id` vs `/api/families/:id/safe`) is implemented as separate route files in code, not a query parameter. Make the security boundary visible.
 - The audit log captures both internal events (Tier 1) and external-export consent events from consuming apps (Tier 2).
 - Bearer token auth is shared local secret in v1. Per-app scoped keys are a known v2 evolution.
-- Ministry Platform is the parish system to support, not ParishSOFT. Different segment.
+- Family Graph is platform-agnostic. It should be able to take ANY list of people - a SIS export, a parish management report, a Google Sheet, an Excel workbook, a hand-typed CSV from a clipboard - and federate it into the single source of truth. The shipped handlers for specific systems (FACTS, RenWeb, Ministry Platform) are conveniences, not the product boundary. Many parishes don't use any formal platform at all; they keep records in spreadsheets or even on paper. Family Graph serves all of them equally. If an operator has a list, Family Graph can ingest it.
 - Family Graph is closed source for v1. The decision to open-source comes after field experience.
 - Claude Code, not me, builds this. The PRD is detailed enough that Claude Code can execute against it.
 
@@ -2616,6 +2616,27 @@ preserved, and the doc path now resolves.
 Verification used the documented Socket Firewall bypass again (its binary host
 is unreachable in this container); full suite green at 489 pass, 0 fail, 1
 pre-existing skip throughout.
+
+---
+
+## Doc clarification: platform-agnostic posture (2026-06-04)
+
+Operator review flagged that the docs still read as if Family Graph is built
+around specific vendor systems (FACTS, RenWeb, Ministry Platform). That was
+never the intent. Many parishes don't use a formal platform at all - they keep
+records in spreadsheets, Google Sheets, or even on paper. Family Graph should be
+able to take ANY list of people and federate it into the single source of truth,
+regardless of where it came from. The shipped handlers for specific systems are
+conveniences - the product boundary is "if you have a list, we can ingest it."
+
+Updated forward-looking language in session_notes.md (the "things to remember"
+section), README.md (the opening paragraph), and business_spec.md (the "what
+FG does" and "what FG does NOT do" sections). Historical session-notes entries
+stay as-is because they're the decision record. Product_spec.md references to
+specific handlers are implementation docs describing shipped code, not product
+framing, so they stay.
+
+No code changes. No test changes.
 
 ---
 
