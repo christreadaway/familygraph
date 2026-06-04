@@ -27,11 +27,18 @@ export default function Conflicts() {
   const [assignee, setAssignee] = useState('');
   const [ttl, setTtl] = useState(24);
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
   // Per-row staged note. Operators jot a one-line WHY ("father and son,
   // confirmed via parish records") before clicking merge / reject / dismiss.
   // The note persists into conflicts.resolution_notes.
   const [notes, setNotes] = useState({});
   const [pendingDecision, setPendingDecision] = useState({});
+
+  useEffect(() => {
+    if (!status) return;
+    const t = setTimeout(() => setStatus(null), 4000);
+    return () => clearTimeout(t);
+  }, [status]);
 
   function load() {
     const params = { status: filter.status };
@@ -68,7 +75,7 @@ export default function Conflicts() {
     setError(null); setBusy(true);
     try {
       const r = await api.assignConflicts({ codes: selected, assignee, ttl_hours: ttl });
-      alert(`Assigned ${r.assigned} conflict(s) to ${r.assignee}; expires ${new Date(r.expires_at).toLocaleString()}`);
+      setStatus(`Assigned ${r.assigned} conflict(s) to ${r.assignee}; expires ${new Date(r.expires_at).toLocaleString()}`);
       load();
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
@@ -76,7 +83,7 @@ export default function Conflicts() {
     setError(null); setBusy(true);
     try {
       const r = await api.assignConflicts({ all_open: true, assignee, ttl_hours: ttl });
-      alert(`Assigned ${r.assigned} open conflict(s) to ${r.assignee}; expires ${new Date(r.expires_at).toLocaleString()}`);
+      setStatus(`Assigned ${r.assigned} open conflict(s) to ${r.assignee}; expires ${new Date(r.expires_at).toLocaleString()}`);
       load();
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
@@ -89,7 +96,7 @@ export default function Conflicts() {
     setError(null); setBusy(true);
     try {
       const r = await api.scanDuplicates({});
-      alert(
+      setStatus(
         `Scanned ${r.scanned} active person${r.scanned === 1 ? '' : 's'}. ` +
         `Surfaced ${r.matches_found} potential duplicate match${r.matches_found === 1 ? '' : 'es'}. ` +
         `${r.new_conflicts_opened} new conflict${r.new_conflicts_opened === 1 ? '' : 's'} opened. ` +
@@ -102,6 +109,7 @@ export default function Conflicts() {
   return (
     <>
       <h2>Conflict queue</h2>
+      {status && <div className="panel" style={{background: 'var(--c-surface-alt)', marginBottom: 12}}>{status} <button onClick={() => setStatus(null)} style={{marginLeft: 8}}>✕</button></div>}
       {error && <div className="panel error">{error}</div>}
 
       <div className="panel">

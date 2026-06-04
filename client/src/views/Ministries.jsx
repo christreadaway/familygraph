@@ -9,6 +9,14 @@ export default function Ministries() {
   const [newDesc, setNewDesc] = useState('');
   const [newRequiresEim, setNewRequiresEim] = useState(false);
   const [expiring, setExpiring] = useState(null);
+  const [confirmingArchive, setConfirmingArchive] = useState(null);
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    if (!status) return;
+    const t = setTimeout(() => setStatus(null), 4000);
+    return () => clearTimeout(t);
+  }, [status]);
 
   function load() {
     api
@@ -32,14 +40,14 @@ export default function Ministries() {
     setNewRequiresEim(false);
     load();
   }
-  async function archive(code) {
-    if (!confirm('Archive this ministry? Existing assignments are kept but no new ones can be added.')) return;
-    await api.archiveMinistry(code);
+  async function archive(ministryCode) {
+    setConfirmingArchive(null);
+    await api.archiveMinistry(ministryCode);
     load();
   }
   async function recompute() {
     const r = await api.eimRecompute();
-    alert(`EIM recompute: ${r.changed} row(s) flipped to expired.`);
+    setStatus(`EIM recompute: ${r.changed} row(s) flipped to expired.`);
     load();
   }
 
@@ -48,6 +56,13 @@ export default function Ministries() {
   return (
     <>
       <h2>Ministries &amp; volunteer rosters</h2>
+
+      {status && (
+        <div className="panel" style={{ background: 'rgba(76,175,80,.08)', borderColor: '#4caf50', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{status}</span>
+          <button onClick={() => setStatus(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>×</button>
+        </div>
+      )}
 
       <div className="panel">
         <h3>EIM expiring soon</h3>
@@ -134,7 +149,15 @@ export default function Ministries() {
                   <td>{m.status}</td>
                   <td>
                     {m.status === 'active' && (
-                      <button onClick={() => archive(m.code)}>Archive</button>
+                      confirmingArchive === m.code ? (
+                        <span className="row" style={{ gap: 4, alignItems: 'center', fontSize: 12 }}>
+                          <span>Archive? Existing assignments kept, no new ones.</span>
+                          <button className="danger" onClick={() => archive(m.code)}>Confirm</button>
+                          <button onClick={() => setConfirmingArchive(null)}>Cancel</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setConfirmingArchive(m.code)}>Archive</button>
+                      )
                     )}
                   </td>
                 </tr>

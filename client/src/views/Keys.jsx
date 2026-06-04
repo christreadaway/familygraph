@@ -10,6 +10,7 @@ export default function Keys() {
   const [name, setName] = useState('');
   const [picked, setPicked] = useState({ 'pii.read': true });
   const [issued, setIssued] = useState(null);
+  const [confirmingRevoke, setConfirmingRevoke] = useState(null);
 
   function load() {
     api.listKeys().then(d => setItems(d.items || [])).catch(e => setError(e.message)).finally(() => setLoading(false));
@@ -28,7 +29,7 @@ export default function Keys() {
       load();
     } catch (e) { setError(e.message); }
   }
-  async function revoke(c) { if (confirm('Revoke this key? Apps using it will stop working.')) { await api.revokeKey(c); load(); } }
+  async function revoke(c) { await api.revokeKey(c); setConfirmingRevoke(null); load(); }
 
   return (
     <>
@@ -73,7 +74,17 @@ export default function Keys() {
                 <td>{k.scopes.map(s => <code key={s} style={{ marginRight: 6 }}>{s}</code>)}</td>
                 <td className="muted">{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : '—'}</td>
                 <td>{k.revoked ? <span className="tag error">revoked</span> : <span className="tag action">active</span>}</td>
-                <td>{!k.revoked && <button className="danger" onClick={() => revoke(k.code)}>revoke</button>}</td>
+                <td>{!k.revoked && (confirmingRevoke === k.code ? (
+                  <>
+                    <span className="muted" style={{ fontSize: 'var(--t-small)' }}>
+                      Revoke this key? Apps using it will stop working.
+                    </span>{' '}
+                    <button className="danger" onClick={() => revoke(k.code)}>Confirm</button>
+                    <button onClick={() => setConfirmingRevoke(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <button className="danger" onClick={() => setConfirmingRevoke(k.code)}>revoke</button>
+                ))}</td>
               </tr>
             ))}
             {items.length === 0 && <tr><td colSpan={6} className="muted">No keys yet.</td></tr>}

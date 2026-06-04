@@ -74,6 +74,8 @@ export default function FamilyDetail() {
   const [ministryCatalog, setMinistryCatalog] = useState([]);
   const [newAssignmentMinistry, setNewAssignmentMinistry] = useState('');
   const [newAssignmentRole, setNewAssignmentRole] = useState('member');
+  const [confirmingEndMember, setConfirmingEndMember] = useState(null);
+  const [confirmingClearDnc, setConfirmingClearDnc] = useState(false);
 
   const { view } = useFG();
   const pseudo = view === 'pseudonym';
@@ -108,7 +110,7 @@ export default function FamilyDetail() {
     load();
   }
   async function endMember(membership) {
-    if (!confirm('End this membership?')) return;
+    setConfirmingEndMember(null);
     await api.endMembership(code, membership, { reason: 'edit' });
     load();
   }
@@ -209,16 +211,24 @@ export default function FamilyDetail() {
               >
                 {allFlagged ? 'Already on the do-not-call list' : 'Add household to do-not-call list'}
               </button>
-              <button
-                onClick={async () => {
-                  if (!confirm('Clear do-not-call from every member of this family?')) return;
-                  await api.setFamilyDoNotContact(code, false);
-                  load();
-                }}
-                disabled={flagged === 0}
-              >
-                Clear from household
-              </button>
+              {confirmingClearDnc ? (
+                <span className="row" style={{ gap: 4, alignItems: 'center', fontSize: 12 }}>
+                  <span>Clear do-not-call from every member?</span>
+                  <button className="danger" onClick={async () => {
+                    setConfirmingClearDnc(false);
+                    await api.setFamilyDoNotContact(code, false);
+                    load();
+                  }}>Confirm</button>
+                  <button onClick={() => setConfirmingClearDnc(false)}>Cancel</button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setConfirmingClearDnc(true)}
+                  disabled={flagged === 0}
+                >
+                  Clear from household
+                </button>
+              )}
             </div>
           </div>
         );
@@ -289,7 +299,17 @@ export default function FamilyDetail() {
                   </td>
                   <td>{m.custody || <span className="muted">—</span>}</td>
                   <td className="muted">{new Date(m.started_at).toLocaleString()}</td>
-                  <td><button className="danger" onClick={() => endMember(m.membership_code)}>end</button></td>
+                  <td>
+                    {confirmingEndMember === m.membership_code ? (
+                      <span className="row" style={{ gap: 4, alignItems: 'center', fontSize: 12 }}>
+                        <span>End membership?</span>
+                        <button className="danger" onClick={() => endMember(m.membership_code)}>Confirm</button>
+                        <button onClick={() => setConfirmingEndMember(null)}>Cancel</button>
+                      </span>
+                    ) : (
+                      <button className="danger" onClick={() => setConfirmingEndMember(m.membership_code)}>end</button>
+                    )}
+                  </td>
                 </tr>
               );
             })}

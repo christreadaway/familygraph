@@ -9,13 +9,18 @@ export default function ExportView() {
   const [reason, setReason] = useState('');
   const [error, setError] = useState(null);
   const [ok, setOk] = useState(null);
+  const [confirmingExport, setConfirmingExport] = useState(false);
 
   async function run() {
     setError(null); setOk(null);
+    if (mode === 'pii' && !confirmingExport) {
+      setConfirmingExport(true);
+      return;
+    }
+    setConfirmingExport(false);
     try {
       const body = { entity, mode, format };
       if (mode === 'pii') {
-        if (!confirm(`Export ${entity} with real names to "${destination}"? This will be logged in the tier-2 audit trail.`)) return;
         body.consent = true;
         body.destination = destination;
         body.reason = reason;
@@ -56,7 +61,7 @@ export default function ExportView() {
           </div>
           <div>
             <label>Mode</label>
-            <select value={mode} onChange={e => setMode(e.target.value)}>
+            <select value={mode} onChange={e => { setMode(e.target.value); setConfirmingExport(false); }}>
               <option value="safe">safe (codes only)</option>
               <option value="pii">PII (consent required)</option>
             </select>
@@ -75,11 +80,26 @@ export default function ExportView() {
             <div><label>Reason</label><input value={reason} onChange={e => setReason(e.target.value)} placeholder="quarterly board report" /></div>
           </div>
         )}
-        <div className="row" style={{ marginTop: 12 }}>
-          <button className={mode === 'pii' ? 'danger' : 'primary'} onClick={run} disabled={mode === 'pii' && !destination}>
-            {mode === 'pii' ? 'Export PII (logs consent)' : 'Export'}
-          </button>
-        </div>
+        {confirmingExport && mode === 'pii' && (
+          <div className="panel" style={{ marginTop: 12, borderColor: 'var(--danger, #c00)', padding: 16 }}>
+            <strong>PII export consent</strong>
+            <p style={{ margin: '8px 0' }}>
+              You are about to export <strong>{entity}</strong> with real names to <strong>"{destination}"</strong>.
+              This action will be logged in the tier-2 audit trail with your identity, the destination, and your stated reason.
+            </p>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="danger" onClick={run}>I confirm - export PII</button>
+              <button onClick={() => setConfirmingExport(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {!confirmingExport && (
+          <div className="row" style={{ marginTop: 12 }}>
+            <button className={mode === 'pii' ? 'danger' : 'primary'} onClick={run} disabled={mode === 'pii' && !destination}>
+              {mode === 'pii' ? 'Export PII (logs consent)' : 'Export'}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

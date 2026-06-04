@@ -2696,6 +2696,17 @@ to the integration docs.
 Verification: 490 tests, 489 pass, 1 pre-existing skip (EACCES on root). Client
 builds clean (Vite v5.4.21, 299 KB JS / 22 KB CSS). No server code changes.
 
+**Follow-up: eliminate all remaining browser dialog calls.** The first pass only
+fixed Families.jsx and Connectors.jsx. Seven more views still used
+`window.alert()` or `window.confirm()`: Conflicts (3 alerts), Notifications (1
+alert), Ministries (1 confirm + 1 alert), FamilyDetail (2 confirms), Rules (1
+confirm), Keys (1 confirm), Export (1 confirm). All replaced with inline UI:
+`alert()` calls became auto-dismissing status banners (4-second timeout +
+manual dismiss); `confirm()` calls became inline Confirm/Cancel button pairs
+that appear in-place on first click. The Export PII consent gate got a
+prominent danger-styled confirmation panel explaining exactly what will happen.
+Client builds clean (302 KB JS / 22 KB CSS). 489 pass, 0 fail, 1 skip.
+
 ---
 
 *End of session notes*
