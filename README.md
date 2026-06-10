@@ -495,14 +495,27 @@ report for a human to confirm; nothing auto-expires.
 - `PATCH /api/organizations/:code` — edit. `DELETE` — archive.
 - `POST /api/organizations/:code/affiliations` — affiliate a person OR a
   family (exactly one of `person_code`, `family_code`; optional `role`).
-- `DELETE /api/organizations/affiliations/:code` — end an affiliation
-  (body: `{ "reason": "graduated" | "moved" | ... }`).
+- `DELETE /api/organizations/affiliations/:code` — end an affiliation.
+  `reason` is a high-level class (`graduated` / `transferred` / `moved`
+  / `deceased` / `withdrew` / `inactive` / `other`); the story behind it
+  goes in `reason_detail`, and `ended_at` may be approximate (`2025`,
+  `2025-08`, or a full date) for departures noticed after the fact.
+  Nothing is ever removed — leaving is always an end-date.
+- `POST /api/organizations/affiliations/:code/transition` — end the
+  current role and open a successor in one transaction. The canonical
+  case is student → alumni at graduation or transfer (default
+  `to_role: "alumni"`, default reason `graduated`): leaving the student
+  role doesn't mean leaving the community.
 - `POST /api/organizations/affiliations/:code/verify` — record observed
   activity (`method` = `registration` / `sacrament` / `liturgy` /
   `ministry` / `giving` / `communication` / `connector_sync` /
   `attestation` / `other`, optional `source`, optional backdated
-  `verified_at` — the marker only moves forward).
-- `GET /api/organizations/affiliations/:code/verifications` — the trail.
+  `verified_at` — the marker only moves forward, and an optional
+  `period` label like `2025-2026` or `2026` notes the participation
+  year).
+- `GET /api/organizations/affiliations/:code/verifications` — the
+  trail, plus `periods`: the distinct years a student attended or a
+  family participated on the parish roster.
 - `GET /api/organizations/:code/stale?days=N` — the rolling-verification
   work queue: active affiliations nothing has confirmed in N days
   (default 365).

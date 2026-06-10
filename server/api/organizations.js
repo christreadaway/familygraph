@@ -200,16 +200,53 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(req.params.code, 'affiliation')) {
       return res.status(400).json({ error: 'invalid affiliation code' });
     }
-    const code = organizations.endAffiliation(db, req.params.code, { reason: req.body?.reason, ...ctx(req) });
-    if (!code) return res.status(404).json({ error: 'not found' });
-    audit.record(db, {
-      action: 'affiliation_end',
-      actor: req.auth?.actor || 'unknown',
-      entityCode: code,
-      entityKind: 'affiliation',
-      metadata: { reason: req.body?.reason || null },
-    });
-    res.status(204).end();
+    try {
+      const code = organizations.endAffiliation(db, req.params.code, {
+        reason: req.body?.reason,
+        reason_detail: req.body?.reason_detail,
+        ended_at: req.body?.ended_at,
+        ...ctx(req),
+      });
+      if (!code) return res.status(404).json({ error: 'not found' });
+      audit.record(db, {
+        action: 'affiliation_end',
+        actor: req.auth?.actor || 'unknown',
+        entityCode: code,
+        entityKind: 'affiliation',
+        metadata: { reason: req.body?.reason || null, ended_at: req.body?.ended_at || null },
+      });
+      res.status(204).end();
+    } catch (e) {
+      res.status(400).json({ error: userFacingMessage(e) });
+    }
+  });
+
+  // Transition an active affiliation into a successor role in one
+  // transaction — the canonical case being student → alumni at
+  // graduation or transfer. The old row survives, dated and classified;
+  // the alumni affiliation begins where it ended.
+  r.post('/affiliations/:code/transition', (req, res) => {
+    if (!isValidCode(req.params.code, 'affiliation')) {
+      return res.status(400).json({ error: 'invalid affiliation code' });
+    }
+    try {
+      const code = organizations.transition(db, secrets, req.params.code, req.body || {}, ctx(req));
+      if (!code) return res.status(404).json({ error: 'not found' });
+      audit.record(db, {
+        action: 'affiliation_transition',
+        actor: req.auth?.actor || 'unknown',
+        entityCode: code,
+        entityKind: 'affiliation',
+        metadata: {
+          from_affiliation: req.params.code,
+          to_role: req.body?.to_role || 'alumni',
+          reason: req.body?.reason || null,
+        },
+      });
+      res.status(201).json({ code });
+    } catch (e) {
+      res.status(400).json({ error: userFacingMessage(e) });
+    }
   });
 
   r.post('/affiliations/:code/verify', (req, res) => {
@@ -245,6 +282,9 @@ function build({ db, secrets, includePii }) {
         includePii,
         limit: req.query.limit,
       }),
+      // Distinct participation-year labels — "years in the community"
+      // for a student or a family on the parishioner roster.
+      periods: organizations.listPeriods(db, req.params.code),
     });
   });
 

@@ -2907,4 +2907,39 @@ in the PRD's business rules.
 
 ---
 
+## Follow-up: alumni, departure classes, participation years (migration 0016)
+
+Three operator rules from the tail of the session. One: leaving the
+student role doesn't mean leaving the community — graduating or
+transferring kids become ALUMNI via `POST
+/api/organizations/affiliations/:code/transition`, which ends the
+student row (dated, classified) and opens an ongoing alumni affiliation
+where it ended, both in one transaction with paired entity_changes
+rows. Two: nobody is ever removed — departure is an end-date that may
+be approximate (`2025`, `2025-08`, or a full date) plus a high-level
+reason class (`graduated` / `transferred` / `moved` / `deceased` /
+`withdrew` / `inactive` / `merge` / `other`) with free-text
+`reason_detail` for the story. The class is what reports aggregate on.
+Three: each year in the community is notable — verification rows carry
+an optional `period` label (`2025-2026` school year, `2026` parish
+year) and the verifications endpoint returns the distinct `periods`,
+which answers "years attended" for a student and "years of
+participation" for a roster family with the same query.
+
+Migration 0016 is a rename-and-rebuild (SQLite CHECKs can't be altered
+in place): `affiliations` is rebuilt with the `alumni` role and the
+reason-class CHECK + `reason_detail`, and `affiliation_verifications`
+is rebuilt against the new parent with `period`. The runner executes
+migrations inside a transaction with foreign keys ON, so the rebuild
+leans on SQLite's rename-updates-child-FKs behaviour and drops the old
+indexes explicitly (index names survive a table rename). Verified
+against a populated v15-shaped database: free-text reasons map to
+'other' with the original text preserved in reason_detail, 'merge'
+stays a class, the verification trail survives, zero FK violations.
+
+4 new tests. New total: 517 tests, 516 pass, 0 fail, 1 pre-existing
+skip.
+
+---
+
 *End of session notes*

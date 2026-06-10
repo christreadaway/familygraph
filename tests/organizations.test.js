@@ -327,6 +327,127 @@ test('verification > stale report surfaces quiet affiliations, never auto-expire
 });
 
 // ---------------------------------------------------------------------------
+// Alumni transitions, departure classes, participation years
+// ---------------------------------------------------------------------------
+
+test('alumni > graduation transitions student to alumni, history intact', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { person, school } = await seed(port, auth);
+  const student = (await req(port, {
+    method: 'POST', path: `/api/organizations/${school}/affiliations`, headers: auth,
+    body: { person_code: person, role: 'student' },
+  })).body.code;
+
+  const grad = await req(port, {
+    method: 'POST', path: `/api/organizations/affiliations/${student}/transition`, headers: auth,
+    body: { ended_at: '2026-05-29', reason_detail: 'class of 2026' },
+  });
+  assert.equal(grad.status, 201);
+  assert.notEqual(grad.body.code, student);
+
+  const all = await req(port, { path: `/api/organizations/by-person/${person}?status=all`, headers: auth });
+  const ended = all.body.items.find(a => a.code === student);
+  const alum = all.body.items.find(a => a.code === grad.body.code);
+  assert.equal(ended.ended_at, '2026-05-29', 'approximate operator-supplied date honoured');
+  assert.equal(ended.reason, 'graduated', 'alumni transition defaults to graduated');
+  assert.equal(ended.reason_detail, 'class of 2026');
+  assert.equal(alum.role, 'alumni');
+  assert.equal(alum.ended_at, null, 'alumni affiliation is ongoing');
+  assert.equal(alum.started_at, '2026-05-29', 'alumni begins where student ended');
+
+  // The kid is still in the community: active affiliations include alumni.
+  const active = await req(port, { path: `/api/organizations/by-person/${person}`, headers: auth });
+  assert.equal(active.body.items.length, 1);
+  assert.equal(active.body.items[0].role, 'alumni');
+
+  // Already-ended affiliations can't transition again.
+  const again = await req(port, {
+    method: 'POST', path: `/api/organizations/affiliations/${student}/transition`, headers: auth,
+    body: {},
+  });
+  assert.equal(again.status, 400);
+});
+
+test('alumni > transfer to another school is alumni too, classed as transferred', async t => {
+  const { port, secrets } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { person, school } = await seed(port, auth);
+  const student = (await req(port, {
+    method: 'POST', path: `/api/organizations/${school}/affiliations`, headers: auth,
+    body: { person_code: person, role: 'student' },
+  })).body.code;
+  const moved = await req(port, {
+    method: 'POST', path: `/api/organizations/affiliations/${student}/transition`, headers: auth,
+    body: { reason: 'transferred', reason_detail: 'enrolled at [School Name 2]' },
+  });
+  assert.equal(moved.status, 201);
+  const all = await req(port, { path: `/api/organizations/by-person/${person}?status=all`, headers: auth });
+  assert.equal(all.body.items.find(a => a.code === student).reason, 'transferred');
+  assert.equal(all.body.items.find(a => a.code === moved.body.code).role, 'alumni');
+});
+
+test('departure > reason must be a known class; detail carries the story', async t => {
+  const { port, secrets } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { family, parish } = await seed(port, auth);
+  const aff = (await req(port, {
+    method: 'POST', path: `/api/organizations/${parish}/affiliations`, headers: auth,
+    body: { family_code: family },
+  })).body.code;
+
+  const vague = await req(port, {
+    method: 'DELETE', path: `/api/organizations/affiliations/${aff}`, headers: auth,
+    body: { reason: 'just because' },
+  });
+  assert.equal(vague.status, 400);
+  assert.match(vague.body.error, /reason must be one of/);
+
+  const ended = await req(port, {
+    method: 'DELETE', path: `/api/organizations/affiliations/${aff}`, headers: auth,
+    body: { reason: 'moved', reason_detail: 'relocated out of state', ended_at: '2025-08' },
+  });
+  assert.equal(ended.status, 204);
+  const rows = await req(port, { path: `/api/organizations/by-family/${family}?status=ended`, headers: auth });
+  assert.equal(rows.body.items[0].reason, 'moved');
+  assert.equal(rows.body.items[0].reason_detail, 'relocated out of state');
+  assert.equal(rows.body.items[0].ended_at, '2025-08', 'approximate month-level date accepted');
+});
+
+test('periods > verification rows carry year labels; distinct years listed for students and families', async t => {
+  const { port, secrets } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { family, person, parish, school } = await seed(port, auth);
+
+  const student = (await req(port, {
+    method: 'POST', path: `/api/organizations/${school}/affiliations`, headers: auth,
+    body: { person_code: person, role: 'student' },
+  })).body.code;
+  for (const period of ['2024-2025', '2025-2026', '2025-2026']) {
+    await req(port, {
+      method: 'POST', path: `/api/organizations/affiliations/${student}/verify`, headers: auth,
+      body: { method: 'connector_sync', source: 'school_sis', period },
+    });
+  }
+  const studentTrail = await req(port, { path: `/api/organizations/affiliations/${student}/verifications`, headers: auth });
+  assert.deepEqual(studentTrail.body.periods, ['2024-2025', '2025-2026'], 'distinct school years');
+
+  const fam = (await req(port, {
+    method: 'POST', path: `/api/organizations/${parish}/affiliations`, headers: auth,
+    body: { family_code: family },
+  })).body.code;
+  for (const period of ['2025', '2026']) {
+    await req(port, {
+      method: 'POST', path: `/api/organizations/affiliations/${fam}/verify`, headers: auth,
+      body: { method: 'giving', period },
+    });
+  }
+  const famTrail = await req(port, { path: `/api/organizations/affiliations/${fam}/verifications`, headers: auth });
+  assert.deepEqual(famTrail.body.periods, ['2025', '2026'], 'parish family years of participation');
+  assert.equal(famTrail.body.items[0].period, '2026');
+});
+
+// ---------------------------------------------------------------------------
 // Merge integration
 // ---------------------------------------------------------------------------
 

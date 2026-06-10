@@ -792,13 +792,15 @@ CREATE TABLE IF NOT EXISTS affiliations (
   family_code      TEXT REFERENCES families(code) ON DELETE CASCADE,
   role             TEXT NOT NULL DEFAULT 'member',
   started_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  ended_at         TEXT,                  -- null while active
-  reason           TEXT,                  -- why ended (graduated, moved, deceased, withdrew)
+  ended_at         TEXT,                  -- null while active; may be approximate (operator-supplied)
+  reason           TEXT,                  -- high-level departure class, see CHECK
+  reason_detail    TEXT,                  -- free-text story behind the class
   last_verified_at TEXT,                  -- refreshed by each verification row
   notes_ct         BLOB,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  CHECK (role IN ('registered','parishioner','student','staff','volunteer','clergy','member','other')),
+  CHECK (role IN ('registered','parishioner','student','alumni','staff','volunteer','clergy','member','other')),
+  CHECK (reason IS NULL OR reason IN ('graduated','transferred','moved','deceased','withdrew','inactive','merge','other')),
   CHECK (
     (person_code IS NOT NULL AND family_code IS NULL)
     OR (person_code IS NULL AND family_code IS NOT NULL)
@@ -819,6 +821,7 @@ CREATE TABLE IF NOT EXISTS affiliation_verifications (
   affiliation_code TEXT NOT NULL REFERENCES affiliations(code) ON DELETE CASCADE,
   method           TEXT NOT NULL,         -- registration | sacrament | liturgy | ministry | giving | communication | connector_sync | attestation | other
   source           TEXT,                  -- connector / app / operator label
+  period           TEXT,                  -- participation-year label ('2025-2026' school year, '2026' parish year)
   verified_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   notes_ct         BLOB,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -826,6 +829,8 @@ CREATE TABLE IF NOT EXISTS affiliation_verifications (
 );
 CREATE INDEX IF NOT EXISTS affiliation_verifications_affiliation_idx
   ON affiliation_verifications (affiliation_code, verified_at);
+CREATE INDEX IF NOT EXISTS affiliation_verifications_period_idx
+  ON affiliation_verifications (affiliation_code, period);
 
 -------------------------------------------------------------------------------
 -- Staff accounts with domain-verified login (migration 0015)

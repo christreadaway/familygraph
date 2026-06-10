@@ -28,8 +28,12 @@ const aliases = require('./aliases');
 const history = require('./history');
 
 const KINDS = new Set(['parish', 'school', 'other']);
-const ROLES = new Set(['registered', 'parishioner', 'student', 'staff', 'volunteer', 'clergy', 'member', 'other']);
+const ROLES = new Set(['registered', 'parishioner', 'student', 'alumni', 'staff', 'volunteer', 'clergy', 'member', 'other']);
 const PERSON_ONLY_ROLES = new Set(['student']);
+// High-level departure classes. The free-text story goes in
+// reason_detail; the class is what reports aggregate on ("how many
+// families left for another school this year?").
+const END_REASONS = new Set(['graduated', 'transferred', 'moved', 'deceased', 'withdrew', 'inactive', 'merge', 'other']);
 const VERIFICATION_METHODS = new Set([
   'registration', 'sacrament', 'liturgy', 'ministry', 'giving',
   'communication', 'connector_sync', 'attestation', 'other',
@@ -59,6 +63,7 @@ function row2affiliation(row, secrets, { includePii = false } = {}) {
     started_at: row.started_at,
     ended_at: row.ended_at,
     reason: row.reason || null,
+    reason_detail: row.reason_detail || null,
     last_verified_at: row.last_verified_at || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -74,6 +79,7 @@ function row2verification(row, secrets, { includePii = false } = {}) {
     affiliation_code: row.affiliation_code,
     method: row.method,
     source: row.source || null,
+    period: row.period || null,
     verified_at: row.verified_at,
     created_at: row.created_at,
   };
@@ -265,17 +271,39 @@ function affiliate(db, secrets, orgCode, input = {}, audit = {}) {
   return tx();
 }
 
-function endAffiliation(db, code, { reason, actor, actorKind, requestId } = {}) {
+// `ended_at` may be operator-supplied and approximate ("they left
+// sometime in 2024"): YYYY, YYYY-MM, YYYY-MM-DD, or a full ISO stamp.
+function _normalizeEndedAt(endedAt) {
+  if (endedAt == null) return null;
+  const s = String(endedAt).trim();
+  if (!/^\d{4}(-\d{2}){0,2}(T[\d:.]+Z?)?$/.test(s)) {
+    throw new Error('ended_at must be an ISO date (YYYY, YYYY-MM, or YYYY-MM-DD)');
+  }
+  return s;
+}
+
+function _validateReason(reason) {
+  if (reason == null) return null;
+  const r = String(reason).toLowerCase().trim();
+  if (!END_REASONS.has(r)) {
+    throw new Error(`reason must be one of: ${[...END_REASONS].join(', ')}`);
+  }
+  return r;
+}
+
+function endAffiliation(db, code, { reason, reason_detail, ended_at, actor, actorKind, requestId } = {}) {
   if (!isValidCode(code, 'affiliation')) throw new Error('invalid affiliation code');
   const row = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
   if (!row) return null;
   if (row.ended_at) return code;
+  const reasonClass = _validateReason(reason);
+  const endedAt = _normalizeEndedAt(ended_at);
   const tx = db.transaction(() => {
     db.prepare(
-      `UPDATE affiliations SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-         reason = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      `UPDATE affiliations SET ended_at = COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+         reason = ?, reason_detail = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE code = ?`
-    ).run(reason ? String(reason) : null, code);
+    ).run(endedAt, reasonClass, reason_detail ? String(reason_detail) : null, code);
     const after = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
     history.record(db, {
       // 'archive' is the closest fit in the entity_changes operation
@@ -283,9 +311,60 @@ function endAffiliation(db, code, { reason, actor, actorKind, requestId } = {}) 
       entityKind: 'affiliation', entityCode: code, operation: 'archive',
       before: row, after,
       actor: actor || 'system', actorKind, requestId,
-      reason: reason ? String(reason) : null,
+      reason: reasonClass,
     });
     return code;
+  });
+  return tx();
+}
+
+// Transition an active affiliation into a successor role in one
+// transaction — the canonical case being student → alumni at
+// graduation or unenrollment. Leaving the student role doesn't mean
+// leaving the community: the old row survives (dated, classified), and
+// a new ongoing affiliation begins where it ended.
+function transition(db, secrets, code, input = {}, audit = {}) {
+  if (!isValidCode(code, 'affiliation')) throw new Error('invalid affiliation code');
+  const row = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
+  if (!row) return null;
+  if (row.ended_at) throw new Error('affiliation already ended; affiliate anew instead');
+  const toRole = input.to_role ? String(input.to_role).toLowerCase() : 'alumni';
+  if (!ROLES.has(toRole)) throw new Error(`invalid role: ${toRole}`);
+  if (toRole === row.role) throw new Error('to_role matches the current role');
+  if (PERSON_ONLY_ROLES.has(toRole) && !row.person_code) {
+    throw new Error(`role '${toRole}' requires a person affiliation`);
+  }
+  const reasonClass = _validateReason(input.reason) || (toRole === 'alumni' ? 'graduated' : 'other');
+  const endedAt = _normalizeEndedAt(input.ended_at);
+  const newCodeValue = newCode('affiliation');
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE affiliations SET ended_at = COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+         reason = ?, reason_detail = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE code = ?`
+    ).run(endedAt, reasonClass, input.reason_detail ? String(input.reason_detail) : null, code);
+    const endedRow = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
+    history.record(db, {
+      entityKind: 'affiliation', entityCode: code, operation: 'archive',
+      before: row, after: endedRow,
+      actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+      reason: reasonClass, relatedCodes: [newCodeValue],
+    });
+    db.prepare(
+      `INSERT INTO affiliations (code, org_code, person_code, family_code, role, started_at, notes_ct)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      newCodeValue, row.org_code, row.person_code, row.family_code, toRole,
+      endedRow.ended_at, enc.encrypt(secrets, input.notes),
+    );
+    const created = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(newCodeValue);
+    history.record(db, {
+      entityKind: 'affiliation', entityCode: newCodeValue, operation: 'create',
+      before: null, after: created,
+      actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+      relatedCodes: [code],
+    });
+    return newCodeValue;
   });
   return tx();
 }
@@ -306,12 +385,19 @@ function verify(db, secrets, affiliationCode, input = {}, audit = {}) {
     throw new Error(`verification method must be one of: ${[...VERIFICATION_METHODS].join(', ')}`);
   }
   const verifiedAt = input.verified_at ? String(input.verified_at) : null;
+  // Participation-year label: '2025-2026' for a school year, '2026'
+  // for a parish year. Free-form but short — it's a roster column.
+  let period = null;
+  if (input.period != null) {
+    period = String(input.period).trim();
+    if (!period || period.length > 20) throw new Error('period must be a short label like 2025-2026');
+  }
   const code = newCode('affiliation_verification');
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT INTO affiliation_verifications (code, affiliation_code, method, source, verified_at, notes_ct)
-       VALUES (?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now')), ?)`
-    ).run(code, affiliationCode, method, input.source ? String(input.source) : null, verifiedAt, enc.encrypt(secrets, input.notes));
+      `INSERT INTO affiliation_verifications (code, affiliation_code, method, source, period, verified_at, notes_ct)
+       VALUES (?, ?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now')), ?)`
+    ).run(code, affiliationCode, method, input.source ? String(input.source) : null, period, verifiedAt, enc.encrypt(secrets, input.notes));
     const v = db.prepare(`SELECT * FROM affiliation_verifications WHERE code = ?`).get(code);
     db.prepare(
       `UPDATE affiliations
@@ -338,6 +424,16 @@ function listVerifications(db, secrets, affiliationCode, { includePii = false, l
       ORDER BY verified_at DESC LIMIT ?`
   ).all(affiliationCode, lim);
   return rows.map(r => row2verification(r, secrets, { includePii }));
+}
+
+// The "years in the community" answer for one affiliation: distinct
+// participation-year labels from the verification trail.
+function listPeriods(db, affiliationCode) {
+  if (!isValidCode(affiliationCode, 'affiliation')) return [];
+  return db.prepare(
+    `SELECT DISTINCT period FROM affiliation_verifications
+      WHERE affiliation_code = ? AND period IS NOT NULL ORDER BY period`
+  ).all(affiliationCode).map(r => r.period);
 }
 
 function listAffiliations(db, secrets, {
@@ -409,12 +505,15 @@ module.exports = {
   archiveOrganization,
   affiliate,
   endAffiliation,
+  transition,
   verify,
   listVerifications,
+  listPeriods,
   listAffiliations,
   repointPersonAffiliations,
   repointFamilyAffiliations,
   KINDS,
   ROLES,
+  END_REASONS,
   VERIFICATION_METHODS,
 };

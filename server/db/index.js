@@ -32,7 +32,9 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //       rolling last_verified_at marker + affiliation_verifications trail.
 //  15 — staff accounts: organizations domain-verification columns +
 //       admin_accounts / admin_login_tokens / admin_sessions.
-const SCHEMA_VERSION = 15;
+//  16 — alumni role + departure-reason classes (+ reason_detail) on
+//       affiliations, and per-year `period` labels on verifications.
+const SCHEMA_VERSION = 16;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

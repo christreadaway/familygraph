@@ -102,6 +102,29 @@ verification trail, the backdated high-water mark, the stale report,
 both merge directions, and the auth posture. Suite total: 503 tests,
 502 pass, 1 pre-existing skip.
 
+## Added later the same day: alumni, departure classes, participation years
+
+Three more operator rules, all shipped (migration 0016):
+
+1. **Leaving the student role doesn't mean leaving the community.**
+   Kids who graduate or unenroll — even to another school — become
+   ALUMNI: the student affiliation ends (dated, classified) and an
+   ongoing `alumni` affiliation begins where it ended, in one
+   transaction (`POST .../affiliations/:code/transition`).
+2. **Nobody is ever removed.** Families who leave either or both
+   communities keep their rows; departure is an end-date (which may be
+   approximate — `2025`, `2025-08`) plus a high-level reason class:
+   `graduated`, `transferred`, `moved`, `deceased`, `withdrew`,
+   `inactive`, `merge`, `other` — with free-text `reason_detail` for
+   the story. Classes are what reports aggregate on ("how many families
+   transferred out this year?"); pre-existing free-text reasons
+   migrated to `other` with the text preserved in the detail field.
+3. **Each year in the community is worth noting.** Verification rows
+   carry an optional `period` label — `2025-2026` for a school year,
+   `2026` for a parish year — so "years attended" for a student and
+   "years of participation" for a family on the parishioner roster are
+   the same query over distinct periods.
+
 > **Update, same day:** the login below got built. See
 > `STAFF_ACCOUNTS_PRD.md` for the contract and the session notes for
 > what shipped (migration 0015: domain verification on organizations,
