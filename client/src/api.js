@@ -193,4 +193,41 @@ export const api = {
     return request('GET', `/api/connector-runs${qs ? `?${qs}` : ''}`);
   },
   getConnectorRun: code => request('GET', `/api/connector-runs/${code}`),
+
+  // Organizations (parish / school) + dated affiliations + verification.
+  listOrganizations: params => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/organizations${qs ? `?${qs}` : ''}`);
+  },
+  getOrganization: code => request('GET', `/api/organizations/${code}`),
+  createOrganization: body => request('POST', '/api/organizations', body),
+  updateOrganization: (code, body) => request('PATCH', `/api/organizations/${code}`, body),
+  archiveOrganization: code => request('DELETE', `/api/organizations/${code}`),
+  setOrganizationDomain: (code, domain) => request('POST', `/api/organizations/${code}/domain`, { domain }),
+  verifyOrganizationDomain: (code, method) => request('POST', `/api/organizations/${code}/domain/verify`, { method }),
+  staleAffiliations: (code, days) =>
+    request('GET', `/api/organizations/${code}/stale${days ? `?days=${days}` : ''}`),
+  affiliate: (orgCode, body) => request('POST', `/api/organizations/${orgCode}/affiliations`, body),
+  endAffiliation: (code, body) => request('DELETE', `/api/organizations/affiliations/${code}`, body),
+  transitionAffiliation: (code, body) => request('POST', `/api/organizations/affiliations/${code}/transition`, body),
+  verifyAffiliation: (code, body) => request('POST', `/api/organizations/affiliations/${code}/verify`, body),
+  affiliationVerifications: code => request('GET', `/api/organizations/affiliations/${code}/verifications`),
+  affiliationsForPerson: (code, params) => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/organizations/by-person/${code}${qs ? `?${qs}` : ''}`);
+  },
+  affiliationsForFamily: (code, params) => {
+    const qs = new URLSearchParams(params || {}).toString();
+    return request('GET', `/api/organizations/by-family/${code}${qs ? `?${qs}` : ''}`);
+  },
+
+  // Staff accounts (master-only management) + magic-link login.
+  listAccounts: () => request('GET', '/api/accounts'),
+  inviteAccount: body => request('POST', '/api/accounts', body),
+  updateAccount: (code, body) => request('PATCH', `/api/accounts/${code}`, body),
+  disableAccount: code => request('DELETE', `/api/accounts/${code}`),
+  authRequestLink: email => request('POST', '/api/auth/request-link', { email }),
+  authRedeem: token => request('POST', '/api/auth/redeem', { token }),
+  authMe: () => request('GET', '/api/auth/me'),
+  authLogout: () => request('POST', '/api/auth/logout'),
 };

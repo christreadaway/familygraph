@@ -76,6 +76,9 @@ export default function FamilyDetail() {
   const [newAssignmentRole, setNewAssignmentRole] = useState('member');
   const [confirmingEndMember, setConfirmingEndMember] = useState(null);
   const [confirmingClearDnc, setConfirmingClearDnc] = useState(false);
+  const [affiliations, setAffiliations] = useState([]);
+  const [affiliationsError, setAffiliationsError] = useState(null);
+  const [orgIndex, setOrgIndex] = useState({});
 
   const { view } = useFG();
   const pseudo = view === 'pseudonym';
@@ -92,6 +95,20 @@ export default function FamilyDetail() {
   }
 
   useEffect(load, [code]);
+
+  useEffect(() => {
+    setAffiliationsError(null);
+    api.affiliationsForFamily(code, { status: 'all' })
+      .then(d => setAffiliations(d.items || []))
+      .catch(e => setAffiliationsError(e.message));
+    api.listOrganizations({ status: 'all' })
+      .then(d => {
+        const idx = {};
+        (d.items || []).forEach(o => { idx[o.code] = o; });
+        setOrgIndex(idx);
+      })
+      .catch(() => {});
+  }, [code]);
 
   if (error) return <div className="panel error">Error: {error}</div>;
   if (!data) return <div className="muted">Loading…</div>;
@@ -506,6 +523,49 @@ export default function FamilyDetail() {
             {history.length === 0 && <tr><td colSpan={6} className="muted">No membership history.</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      <div className="panel">
+        <h3>Communities</h3>
+        {affiliationsError ? (
+          <p className="muted" style={{ fontSize: 13 }}>Could not load affiliations: {affiliationsError}</p>
+        ) : affiliations.length === 0 ? (
+          <p className="muted" style={{ fontSize: 13 }}>No parish or school affiliations recorded.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>Organization</th><th>Role</th><th>Started</th><th>Ended</th><th>Reason</th><th>Last verified</th></tr>
+            </thead>
+            <tbody>
+              {affiliations
+                .slice()
+                .sort((a, b) => {
+                  const activeDiff = (a.ended_at ? 1 : 0) - (b.ended_at ? 1 : 0);
+                  if (activeDiff !== 0) return activeDiff;
+                  return (b.started_at || '').localeCompare(a.started_at || '');
+                })
+                .map(a => {
+                  const org = orgIndex[a.org_code];
+                  return (
+                    <tr key={a.code}>
+                      <td>
+                        <Link to={`/organizations/${a.org_code}`}>{org ? org.name : a.org_code}</Link>
+                        {org && org.kind && <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>({org.kind})</span>}
+                      </td>
+                      <td>{a.role || <span className="muted">—</span>}</td>
+                      <td className="muted">{a.started_at ? a.started_at.slice(0, 10) : '—'}</td>
+                      <td className="muted">{a.ended_at ? a.ended_at.slice(0, 10) : <Pill state="loopback">active</Pill>}</td>
+                      <td>
+                        {a.reason || <span className="muted">—</span>}
+                        {a.reason_detail && <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>{a.reason_detail}</span>}
+                      </td>
+                      <td className="muted">{a.last_verified_at ? a.last_verified_at.slice(0, 10) : '—'}</td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="split">
