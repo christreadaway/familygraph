@@ -36,6 +36,7 @@ const buildScan = require('./api/scan');
 const buildIdentityApi = require('./api/identity');
 const buildConnectors = require('./api/connectors');
 const buildMinistries = require('./api/ministries');
+const buildOrganizations = require('./api/organizations');
 const connectorScheduler = require('./connectors/scheduler');
 const eim = require('./identity/eim');
 const entityHistory = require('./identity/history');
@@ -192,6 +193,10 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   // Volunteer ministries + EIM. Reads are gated on pii.read because per-
   // assignment notes can contain operator commentary; writes need pii.write.
   app.use('/api/ministries', method2scope(bearerRead, bearerWrite), piiRateLimit, buildMinistries({ db, secrets, includePii: true }));
+  // Organizations (parish / school) + dated affiliations with the rolling
+  // verification trail. Same scope posture as ministries: reads gated on
+  // pii.read because affiliation notes carry operator commentary.
+  app.use('/api/organizations', method2scope(bearerRead, bearerWrite), piiRateLimit, buildOrganizations({ db, secrets, includePii: true }));
 
   // FamilyGraph Integration API surface (FAMILYGRAPH_INTEGRATION.md
   // v0.1). All routes live under /v1/... so the URL shape matches the

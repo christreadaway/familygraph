@@ -20,6 +20,9 @@ const PREFIXES = {
   ministry_assignment: 'ma_',
   diocese: 'dio_',
   entity_change: 'chg_',
+  organization: 'org_',
+  affiliation: 'aff_',
+  affiliation_verification: 'av_',
 };
 
 const PREFIX_TO_KIND = Object.fromEntries(

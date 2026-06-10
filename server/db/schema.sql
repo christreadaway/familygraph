@@ -739,3 +739,82 @@ CREATE INDEX IF NOT EXISTS entity_changes_entity_idx     ON entity_changes (enti
 CREATE INDEX IF NOT EXISTS entity_changes_created_at_idx ON entity_changes (created_at);
 CREATE INDEX IF NOT EXISTS entity_changes_operation_idx  ON entity_changes (operation);
 CREATE INDEX IF NOT EXISTS entity_changes_actor_idx      ON entity_changes (actor);
+
+-------------------------------------------------------------------------------
+-- Organizations and affiliations (migration 0014)
+-------------------------------------------------------------------------------
+-- Community membership is temporal: kids graduate, families move, people
+-- die or stop attending. "Parish, school, or both" is therefore never a
+-- stored flag; it's a query over affiliation rows with started_at /
+-- ended_at, the same way `memberships` treats household composition.
+-- Leaving a community is an end-date with a reason, not a delete.
+--
+-- `last_verified_at` is a rolling freshness marker. Verification
+-- refreshes confidence, never gates existence: a stale affiliation is a
+-- dashboard signal for the operator, not an auto-expiry. The
+-- append-only `affiliation_verifications` trail records WHY we believe
+-- the affiliation is alive (registration form, sacrament, liturgy or
+-- ministry participation, giving, connector sync, operator attestation).
+
+CREATE TABLE IF NOT EXISTS organizations (
+  code         TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  kind         TEXT NOT NULL,             -- parish | school | other
+  diocese_code TEXT,                      -- soft FK to dioceses.code
+  notes_ct     BLOB,
+  status       TEXT NOT NULL DEFAULT 'active',
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (kind IN ('parish','school','other')),
+  CHECK (status IN ('active','archived'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS organizations_kind_name_active_uniq
+  ON organizations (kind, name) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS organizations_kind_idx       ON organizations (kind);
+CREATE INDEX IF NOT EXISTS organizations_status_idx     ON organizations (status);
+CREATE INDEX IF NOT EXISTS organizations_updated_at_idx ON organizations (updated_at);
+
+-- One row affiliates a person OR a family (exactly one, the
+-- ministry_assignments pattern). Parish registration is family-level by
+-- convention; school enrollment is person-level.
+CREATE TABLE IF NOT EXISTS affiliations (
+  code             TEXT PRIMARY KEY,
+  org_code         TEXT NOT NULL REFERENCES organizations(code) ON DELETE CASCADE,
+  person_code      TEXT REFERENCES persons(code)  ON DELETE CASCADE,
+  family_code      TEXT REFERENCES families(code) ON DELETE CASCADE,
+  role             TEXT NOT NULL DEFAULT 'member',
+  started_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  ended_at         TEXT,                  -- null while active
+  reason           TEXT,                  -- why ended (graduated, moved, deceased, withdrew)
+  last_verified_at TEXT,                  -- refreshed by each verification row
+  notes_ct         BLOB,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (role IN ('registered','parishioner','student','staff','volunteer','clergy','member','other')),
+  CHECK (
+    (person_code IS NOT NULL AND family_code IS NULL)
+    OR (person_code IS NULL AND family_code IS NOT NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS affiliations_org_idx      ON affiliations (org_code);
+CREATE INDEX IF NOT EXISTS affiliations_person_idx   ON affiliations (person_code);
+CREATE INDEX IF NOT EXISTS affiliations_family_idx   ON affiliations (family_code);
+CREATE INDEX IF NOT EXISTS affiliations_active_idx   ON affiliations (org_code, ended_at);
+CREATE INDEX IF NOT EXISTS affiliations_verified_idx ON affiliations (org_code, last_verified_at);
+CREATE UNIQUE INDEX IF NOT EXISTS affiliations_active_person_uniq
+  ON affiliations (org_code, person_code) WHERE ended_at IS NULL AND person_code IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS affiliations_active_family_uniq
+  ON affiliations (org_code, family_code) WHERE ended_at IS NULL AND family_code IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS affiliation_verifications (
+  code             TEXT PRIMARY KEY,
+  affiliation_code TEXT NOT NULL REFERENCES affiliations(code) ON DELETE CASCADE,
+  method           TEXT NOT NULL,         -- registration | sacrament | liturgy | ministry | giving | communication | connector_sync | attestation | other
+  source           TEXT,                  -- connector / app / operator label
+  verified_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  notes_ct         BLOB,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (method IN ('registration','sacrament','liturgy','ministry','giving','communication','connector_sync','attestation','other'))
+);
+CREATE INDEX IF NOT EXISTS affiliation_verifications_affiliation_idx
+  ON affiliation_verifications (affiliation_code, verified_at);

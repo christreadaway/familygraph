@@ -465,6 +465,55 @@ Notes on the catalog:
   ISO-8601 dates (`YYYY-MM-DD`). Bad input gets a 400 with a
   message naming the offending field.
 
+### Organizations + affiliations (parish / school membership)
+
+Community membership is temporal — kids graduate, families move, people
+die or stop attending. So "is this family at the parish, the school, or
+both?" is never a stored flag in Family Graph. It's a query over dated
+affiliation rows, the same way household composition works: leaving a
+community is an end-date with a reason, not a delete.
+
+Organizations are first-class entities with their own `org_` codes
+(`kind` = `parish` / `school` / `other`, optional `diocese_code`). An
+affiliation links a person OR a family (exactly one) to an organization
+with a role and a lifespan. Parish registration is family-level by
+convention (default role `registered` for a family at a parish); school
+enrollment is person-level (`student` requires a person).
+
+Every affiliation carries a rolling `last_verified_at` marker plus an
+append-only verification trail. Verification refreshes confidence — it
+never gates existence. Each piece of observed activity (a registration
+form, a sacrament, liturgy or ministry participation, giving, mail and
+email still landing, a connector sync returning the record, an explicit
+operator attestation) appends a row and bumps the marker. A family that
+goes quiet simply stops accruing rows and surfaces on the staleness
+report for a human to confirm; nothing auto-expires.
+
+- `GET /api/organizations` / `?kind=parish|school` / `?status=all` — catalog.
+- `POST /api/organizations` — create (`name`, `kind`, optional `diocese_code`).
+- `GET /api/organizations/:code` — organization + active affiliations.
+- `PATCH /api/organizations/:code` — edit. `DELETE` — archive.
+- `POST /api/organizations/:code/affiliations` — affiliate a person OR a
+  family (exactly one of `person_code`, `family_code`; optional `role`).
+- `DELETE /api/organizations/affiliations/:code` — end an affiliation
+  (body: `{ "reason": "graduated" | "moved" | ... }`).
+- `POST /api/organizations/affiliations/:code/verify` — record observed
+  activity (`method` = `registration` / `sacrament` / `liturgy` /
+  `ministry` / `giving` / `communication` / `connector_sync` /
+  `attestation` / `other`, optional `source`, optional backdated
+  `verified_at` — the marker only moves forward).
+- `GET /api/organizations/affiliations/:code/verifications` — the trail.
+- `GET /api/organizations/:code/stale?days=N` — the rolling-verification
+  work queue: active affiliations nothing has confirmed in N days
+  (default 365).
+- `GET /api/organizations/by-person/:code` / `by-family/:code` — the
+  computed "parish, school, or both" answer for one person or family.
+
+Re-affiliating someone already active updates the row in place instead
+of stacking duplicates; leaving and returning produces a second dated
+row so history survives. Person and family merges carry affiliations
+onto the winning code, ending duplicates rather than colliding.
+
 ### External-app identity API
 
 Consuming apps bring in their own domain data (donations, engagement

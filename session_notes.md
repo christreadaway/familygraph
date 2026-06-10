@@ -2785,4 +2785,47 @@ those a real `org_` code to reference.
 
 ---
 
+## Follow-up: organizations + affiliations + rolling verification shipped
+
+The design discussion above got the operator's green light in the same
+session, so it shipped. Migration 0014 (schema version 14) adds three
+tables: `organizations` (parish/school, `org_` codes, soft FK to
+dioceses), `affiliations` (person OR family per row, the
+ministry_assignments pattern, with started/ended/reason and a
+`last_verified_at` high-water mark), and `affiliation_verifications`
+(append-only trail; methods are registration, sacrament, liturgy,
+ministry, giving, communication, connector_sync, attestation, other —
+the operator's own list of how a parish actually sees that a family is
+still alive, plus "mail still lands").
+
+The two decisions worth remembering. First, "parish, school, or both"
+is computed from active affiliations, never stored — a graduation ends
+the school row and leaves the parish registration untouched, and the
+tests assert exactly that. Second, verification refreshes confidence
+but never gates existence: a quiet family surfaces on
+`GET /api/organizations/:code/stale?days=N` for a human to confirm, and
+nothing auto-expires. Backdated verifications (late giving batches) land
+in the trail without moving the marker backwards. Person and family
+merges re-point affiliations like ministry assignments, ending
+duplicates rather than colliding.
+
+Surface mounted at `/api/organizations` with the ministries scope
+posture (pii.read / pii.write). Default role for a family at a parish is
+'registered'; 'student' requires a person — a family can't be enrolled
+in third grade. README gained a section; product_spec deliberately not
+churned (its route table predates ministries too — if it gets refreshed,
+do both at once).
+
+New requirement captured but NOT built: church-admin login with accounts
+verified by the parish web site's domain. Today the dashboard is
+master-token-only; per-user accounts are a real auth-surface change and
+get their own session and PRD. Sketch lives in
+`IDENTITY_MODEL_SUMMARY.md`, which also records this whole line of
+thinking with a date stamp at the operator's request.
+
+12 new tests in `tests/organizations.test.js`. New total: 503 tests,
+502 pass, 0 fail, 1 pre-existing skip.
+
+---
+
 *End of session notes*
