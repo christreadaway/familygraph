@@ -28,9 +28,9 @@ const MAX_OUTSTANDING_LINKS = 3;
 // stays with the operator.
 const GRANTABLE_SCOPES = new Set([...apiKeys.VALID_SCOPES].filter(s => s !== '*'));
 
-function _hash(token) {
-  return crypto.createHash('sha256').update(String(token), 'utf8').digest('hex');
-}
+// Token hashing shares api-keys' scheme: one place to change if token
+// storage ever moves to keyed hashes.
+const _hash = apiKeys.hash;
 
 function _emailDomain(email) {
   const at = String(email).lastIndexOf('@');
@@ -58,14 +58,28 @@ function _row2account(row, secrets, { includeEmail = false } = {}) {
   return { ...base, email: enc.decrypt(secrets, row.email_ct) };
 }
 
-// The eligibility rule, applied at invite AND at every login: the
-// email's domain must match a verified domain on an active org.
-function _verifiedOrgForDomain(db, domain) {
-  if (!domain) return null;
+// The eligibility rule at INVITE time: the email's domain must match a
+// verified domain on an active org. A parish and its school can
+// legitimately share one domain (shared campus and staff), so multiple
+// matches are possible — the caller disambiguates with org_code.
+function _verifiedOrgsForDomain(db, domain) {
+  if (!domain) return [];
   return db.prepare(
     `SELECT * FROM organizations
-      WHERE domain = ? AND domain_verified_at IS NOT NULL AND status = 'active'`
-  ).get(domain);
+      WHERE domain = ? AND domain_verified_at IS NOT NULL AND status = 'active'
+      ORDER BY created_at ASC`
+  ).all(domain);
+}
+
+// The trust rule at every LOGIN (link request and redeem): the
+// account's OWN organization must still be active with this email's
+// domain verified. Checking by the account's org — not by a global
+// domain lookup — means a parish and school sharing a domain can't
+// lock each other's staff out.
+function _accountOrgTrusted(db, account, emailDomain) {
+  if (!emailDomain) return false;
+  const org = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(account.org_code);
+  return !!(org && org.status === 'active' && org.domain === emailDomain && org.domain_verified_at);
 }
 
 function invite(db, secrets, input = {}, audit = {}) {
@@ -81,11 +95,30 @@ function invite(db, secrets, input = {}, audit = {}) {
       throw new Error(`scope not grantable to a staff account: ${s}`);
     }
   }
-  const org = _verifiedOrgForDomain(db, _emailDomain(email));
-  if (!org) {
+  const candidates = _verifiedOrgsForDomain(db, _emailDomain(email));
+  if (!candidates.length) {
     throw new Error('email domain does not match any verified organization domain');
   }
+  let org;
+  if (input.org_code) {
+    org = candidates.find(o => o.code === input.org_code);
+    if (!org) throw new Error('org_code does not match a verified organization for this email domain');
+  } else if (candidates.length === 1) {
+    org = candidates[0];
+  } else {
+    // A parish and its school sharing one domain is a real case; the
+    // invite must say which community the account belongs to.
+    throw new Error(
+      `multiple organizations share this domain; pass org_code (one of: ${candidates.map(o => o.code).join(', ')})`
+    );
+  }
   const emailHash = enc.hmac(secrets, email);
+  const existingActive = db.prepare(
+    `SELECT code FROM admin_accounts WHERE email_hash = ? AND status = 'active'`
+  ).get(emailHash);
+  if (existingActive) {
+    throw new Error('an active account already exists for this email');
+  }
   const code = newCode('admin_account');
   const tx = db.transaction(() => {
     db.prepare(
@@ -142,6 +175,15 @@ function update(db, secrets, code, patch = {}, audit = {}) {
     }
     status = patch.status;
   }
+  // Re-enabling must not collide with a newer active account for the
+  // same email (the unique index only covers active rows, so disable +
+  // re-invite is legal — and makes the old row un-re-enableable).
+  if (status === 'active' && existing.status === 'disabled') {
+    const dupe = db.prepare(
+      `SELECT code FROM admin_accounts WHERE email_hash = ? AND status = 'active' AND code != ?`
+    ).get(existing.email_hash, code);
+    if (dupe) throw new Error('an active account already exists for this email; disable it first');
+  }
   const tx = db.transaction(() => {
     db.prepare(
       `UPDATE admin_accounts SET display_name = ?, scopes = ?, status = ?,
@@ -188,10 +230,9 @@ function requestLink(db, secrets, email) {
     log.warn('auth.link_requested', { account_code: 'unknown_email', email_hash: _hashPrefix(emailHash) });
     return { ok: true };
   }
-  const org = _verifiedOrgForDomain(db, _emailDomain(normalized));
-  if (!org || org.code !== account.org_code) {
-    // Domain un-verified or organization archived since the invite:
-    // the trust chain is broken, so logins stop.
+  if (!_accountOrgTrusted(db, account, _emailDomain(normalized))) {
+    // Domain un-verified, changed, or organization archived since the
+    // invite: the trust chain is broken, so logins stop.
     log.warn('auth.link_requested', {
       account_code: account.code, email_hash: _hashPrefix(emailHash), reason: 'domain_no_longer_verified',
     });
@@ -262,8 +303,7 @@ function redeem(db, secrets, rawToken) {
     return null;
   }
   const email = enc.normalizeEmail(enc.decrypt(secrets, account.email_ct));
-  const org = _verifiedOrgForDomain(db, _emailDomain(email));
-  if (!org || org.code !== account.org_code) {
+  if (!_accountOrgTrusted(db, account, _emailDomain(email))) {
     log.warn('auth.login_failed', { reason: 'domain_no_longer_verified', account_code: account.code });
     return null;
   }
@@ -296,7 +336,7 @@ function redeem(db, secrets, rawToken) {
 function lookupSession(db, token) {
   if (typeof token !== 'string' || !token.startsWith('st_')) return null;
   const row = db.prepare(
-    `SELECT s.code AS session_code, s.expires_at, s.revoked_at,
+    `SELECT s.code AS session_code, s.expires_at, s.revoked_at, s.last_used_at,
             a.code AS account_code, a.display_name, a.scopes, a.org_code, a.status
        FROM admin_sessions s JOIN admin_accounts a ON a.code = s.account_code
       WHERE s.token_hash = ?`
@@ -304,9 +344,15 @@ function lookupSession(db, token) {
   if (!row) return null;
   if (row.revoked_at || row.status !== 'active') return null;
   if (row.expires_at <= new Date().toISOString()) return null;
-  db.prepare(
-    `UPDATE admin_sessions SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
-  ).run(row.session_code);
+  // last_used_at is an operator-facing freshness signal, not a ledger:
+  // refreshing it at most once a minute keeps staff reads from turning
+  // into a WAL write per request.
+  const staleCutoff = new Date(Date.now() - 60_000).toISOString();
+  if (!row.last_used_at || row.last_used_at < staleCutoff) {
+    db.prepare(
+      `UPDATE admin_sessions SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
+    ).run(row.session_code);
+  }
   return {
     session_code: row.session_code,
     account_code: row.account_code,
@@ -314,6 +360,28 @@ function lookupSession(db, token) {
     org_code: row.org_code,
     scopes: JSON.parse(row.scopes),
   };
+}
+
+// Kill every live session and outstanding link for an organization's
+// accounts. The trust break that motivates un-verifying a domain or
+// archiving an org (compromised mail, offboarded institution) is at
+// least as severe as disabling one account, so it gets the same
+// immediate revocation, not a wait-for-expiry.
+function revokeSessionsForOrg(db, orgCode, { reason = 'org_trust_change' } = {}) {
+  const sessions = db.prepare(
+    `UPDATE admin_sessions SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE revoked_at IS NULL
+        AND account_code IN (SELECT code FROM admin_accounts WHERE org_code = ?)`
+  ).run(orgCode).changes;
+  const links = db.prepare(
+    `UPDATE admin_login_tokens SET used_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE used_at IS NULL
+        AND account_code IN (SELECT code FROM admin_accounts WHERE org_code = ?)`
+  ).run(orgCode).changes;
+  if (sessions || links) {
+    log.info('auth.session_revoked', { by: reason, org_code: orgCode, sessions, links });
+  }
+  return { sessions, links };
 }
 
 function logout(db, token) {
@@ -335,6 +403,7 @@ module.exports = {
   redeem,
   lookupSession,
   logout,
+  revokeSessionsForOrg,
   GRANTABLE_SCOPES,
   LINK_TTL_MS,
   SESSION_TTL_MS,

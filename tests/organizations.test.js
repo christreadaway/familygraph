@@ -505,6 +505,130 @@ test('multi-community > alumni of one school, student at another; family moves p
 });
 
 // ---------------------------------------------------------------------------
+// Code-review regressions (CODE_REVIEW_2026-06-10.md)
+// ---------------------------------------------------------------------------
+
+test('review > garbage verified_at is rejected and cannot poison the high-water mark', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { family, parish } = await seed(port, auth);
+  const aff = (await req(port, {
+    method: 'POST', path: `/api/organizations/${parish}/affiliations`, headers: auth,
+    body: { family_code: family },
+  })).body.code;
+  for (const bad of ['next week', 'TBD', '06/01/2026', '9999z']) {
+    const r = await req(port, {
+      method: 'POST', path: `/api/organizations/affiliations/${aff}/verify`, headers: auth,
+      body: { method: 'giving', verified_at: bad },
+    });
+    assert.equal(r.status, 400, `'${bad}' must be rejected`);
+  }
+  assert.equal(
+    db.prepare('SELECT last_verified_at FROM affiliations WHERE code = ?').get(aff).last_verified_at,
+    null, 'marker untouched by rejected input'
+  );
+});
+
+test('review > bare re-affiliation preserves role and notes', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { person, school } = await seed(port, auth);
+  const aff = (await req(port, {
+    method: 'POST', path: `/api/organizations/${school}/affiliations`, headers: auth,
+    body: { person_code: person, role: 'student', notes: 'allergy plan on file' },
+  })).body.code;
+  // A connector-style re-confirm: same target, no role, no notes.
+  const again = await req(port, {
+    method: 'POST', path: `/api/organizations/${school}/affiliations`, headers: auth,
+    body: { person_code: person },
+  });
+  assert.equal(again.body.code, aff);
+  const row = db.prepare('SELECT role, notes_ct FROM affiliations WHERE code = ?').get(aff);
+  assert.equal(row.role, 'student', 'role not downgraded to the default');
+  assert.ok(row.notes_ct, 'notes not wiped');
+});
+
+test('review > ending an already-ended affiliation is 409, not a phantom 204', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { family, parish } = await seed(port, auth);
+  const aff = (await req(port, {
+    method: 'POST', path: `/api/organizations/${parish}/affiliations`, headers: auth,
+    body: { family_code: family },
+  })).body.code;
+  await req(port, {
+    method: 'DELETE', path: `/api/organizations/affiliations/${aff}`, headers: auth,
+    body: { reason: 'moved' },
+  });
+  const second = await req(port, {
+    method: 'DELETE', path: `/api/organizations/affiliations/${aff}`, headers: auth,
+    body: { reason: 'deceased' },
+  });
+  assert.equal(second.status, 409);
+  assert.equal(
+    db.prepare('SELECT reason FROM affiliations WHERE code = ?').get(aff).reason,
+    'moved', 'original reason kept'
+  );
+});
+
+test('review > transition refuses to mint affiliations under an archived org', async t => {
+  const { port, secrets } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { person, school } = await seed(port, auth);
+  const aff = (await req(port, {
+    method: 'POST', path: `/api/organizations/${school}/affiliations`, headers: auth,
+    body: { person_code: person, role: 'student' },
+  })).body.code;
+  await req(port, { method: 'DELETE', path: `/api/organizations/${school}`, headers: auth });
+  const r = await req(port, {
+    method: 'POST', path: `/api/organizations/affiliations/${aff}/transition`, headers: auth,
+    body: {},
+  });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /archived/);
+});
+
+test('review > merges leave entity_changes snapshots for repointed affiliations', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { parish } = await seed(port, auth);
+  const famA = (await req(port, {
+    method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'Dup A' },
+  })).body.code;
+  const famB = (await req(port, {
+    method: 'POST', path: '/api/families', headers: auth, body: { display_name: 'Dup B' },
+  })).body.code;
+  const affB = (await req(port, {
+    method: 'POST', path: `/api/organizations/${parish}/affiliations`, headers: auth,
+    body: { family_code: famB },
+  })).body.code;
+  await req(port, {
+    method: 'POST', path: `/api/families/${famB}/merge`, headers: auth,
+    body: { winner_code: famA },
+  });
+  const snaps = db.prepare(
+    `SELECT operation, reason FROM entity_changes WHERE entity_kind = 'affiliation' AND entity_code = ?`
+  ).all(affB);
+  assert.ok(
+    snaps.some(s => s.operation === 'merge' && s.reason === 'merge'),
+    `repointed affiliation has a merge snapshot (got ${JSON.stringify(snaps)})`
+  );
+});
+
+test('review > affiliation rows carry joined org_name/org_kind', async t => {
+  const { port, secrets } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { family, parish } = await seed(port, auth);
+  await req(port, {
+    method: 'POST', path: `/api/organizations/${parish}/affiliations`, headers: auth,
+    body: { family_code: family },
+  });
+  const rows = await req(port, { path: `/api/organizations/by-family/${family}`, headers: auth });
+  assert.equal(rows.body.items[0].org_name, '[Parish Name]');
+  assert.equal(rows.body.items[0].org_kind, 'parish');
+});
+
+// ---------------------------------------------------------------------------
 // Merge integration
 // ---------------------------------------------------------------------------
 

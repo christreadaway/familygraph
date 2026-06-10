@@ -34,6 +34,15 @@
 // are dropped explicitly before the new tables recreate them.
 
 exports.up = function up(db) {
+  // Fresh databases bootstrap from schema.sql, which already carries
+  // the final table shapes — rebuilding them again would mean every
+  // future column added to schema.sql must ALSO be added to this
+  // migration's inline DDL or fresh and migrated databases drift
+  // apart. Same guard pattern as 0015: presence of a v16 column means
+  // there is nothing to do.
+  const cols = db.prepare(`PRAGMA table_info(affiliations)`).all().map(r => r.name);
+  if (cols.includes('reason_detail')) return;
+
   // --- affiliations: rebuild with 'alumni' in the role CHECK ---
   db.exec(`ALTER TABLE affiliations RENAME TO affiliations_old`);
   for (const idx of [

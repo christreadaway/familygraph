@@ -243,6 +243,119 @@ test('login > re-set (unverified) domain stops link issuance', async t => {
 });
 
 // ---------------------------------------------------------------------------
+// Code-review regressions (CODE_REVIEW_2026-06-10.md)
+// ---------------------------------------------------------------------------
+
+test('review > org GET exposes domain state (but never the token)', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const org = await verifiedParish(port, db, auth);
+  const got = await req(port, { path: `/api/organizations/${org}`, headers: auth });
+  assert.equal(got.body.organization.domain, 'parish-domain.example');
+  assert.ok(got.body.organization.domain_verified_at);
+  assert.equal(got.body.organization.domain_verification_method, 'dns');
+  assert.equal(got.body.organization.domain_verification_token, undefined, 'token never rides a GET');
+  const list = await req(port, { path: '/api/organizations', headers: auth });
+  assert.equal(list.body.items[0].domain, 'parish-domain.example');
+});
+
+test('review > shared domain: invite needs org_code, logins key off the account own org', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const parish = await verifiedParish(port, db, auth);
+  // The school shares the parish's domain (shared campus and staff).
+  const school = (await req(port, {
+    method: 'POST', path: '/api/organizations', headers: auth,
+    body: { name: '[School Name]', kind: 'school' },
+  })).body.code;
+  const set = await req(port, {
+    method: 'POST', path: `/api/organizations/${school}/domain`, headers: auth,
+    body: { domain: 'parish-domain.example' },
+  });
+  const v = await domains.verifyDomain(db, school, {
+    method: 'dns', resolveTxt: async () => [['familygraph-verify=' + set.body.verification_token]],
+  });
+  assert.equal(v.verified, true);
+
+  // Ambiguous invite must name the org.
+  const ambiguous = await req(port, {
+    method: 'POST', path: '/api/accounts', headers: auth,
+    body: { email: 'principal@parish-domain.example', display_name: 'Principal' },
+  });
+  assert.equal(ambiguous.status, 400);
+  assert.match(ambiguous.body.error, /org_code/);
+  const ok = await req(port, {
+    method: 'POST', path: '/api/accounts', headers: auth,
+    body: { email: 'principal@parish-domain.example', display_name: 'Principal', org_code: school },
+  });
+  assert.equal(ok.status, 201);
+
+  // The school principal can log in even though the PARISH also claims
+  // the domain — trust is checked against the account's own org.
+  await req(port, { method: 'POST', path: '/api/auth/request-link', body: { email: 'principal@parish-domain.example' } });
+  const note = db.prepare(`SELECT * FROM notifications WHERE kind = 'magic_link' ORDER BY created_at DESC LIMIT 1`).get();
+  assert.ok(note, 'link issued despite two orgs sharing the domain');
+});
+
+test('review > duplicate-email invite and conflicting re-enable get friendly 400s', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  await verifiedParish(port, db, auth);
+  const first = (await req(port, {
+    method: 'POST', path: '/api/accounts', headers: auth,
+    body: { email: STAFF_EMAIL, display_name: 'First' },
+  })).body.code;
+  const dupe = await req(port, {
+    method: 'POST', path: '/api/accounts', headers: auth,
+    body: { email: STAFF_EMAIL, display_name: 'Second' },
+  });
+  assert.equal(dupe.status, 400);
+  assert.match(dupe.body.error, /active account already exists/);
+
+  // disable + re-invite is legal; re-enabling the old row then conflicts.
+  await req(port, { method: 'DELETE', path: `/api/accounts/${first}`, headers: auth });
+  await req(port, {
+    method: 'POST', path: '/api/accounts', headers: auth,
+    body: { email: STAFF_EMAIL, display_name: 'Second' },
+  });
+  const reenable = await req(port, {
+    method: 'PATCH', path: `/api/accounts/${first}`, headers: auth,
+    body: { status: 'active' },
+  });
+  assert.equal(reenable.status, 400);
+  assert.match(reenable.body.error, /disable it first/);
+});
+
+test('review > changing or clearing the domain revokes live sessions', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const org = await verifiedParish(port, db, auth);
+  const { session } = await loginAs(port, db, auth);
+  const sessAuth = { authorization: `Bearer ${session}` };
+  assert.equal((await req(port, { path: '/api/people', headers: sessAuth })).status, 200);
+
+  // Compromised mail domain: operator clears it. The session dies NOW,
+  // not at its 12-hour expiry.
+  await req(port, {
+    method: 'POST', path: `/api/organizations/${org}/domain`, headers: auth,
+    body: { domain: null },
+  });
+  const after = await req(port, { path: '/api/people', headers: sessAuth });
+  assert.equal(after.status, 401);
+});
+
+test('review > archiving the organization revokes live sessions', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const org = await verifiedParish(port, db, auth);
+  const { session } = await loginAs(port, db, auth);
+  const sessAuth = { authorization: `Bearer ${session}` };
+  await req(port, { method: 'DELETE', path: `/api/organizations/${org}`, headers: auth });
+  const after = await req(port, { path: '/api/people', headers: sessAuth });
+  assert.equal(after.status, 401);
+});
+
+// ---------------------------------------------------------------------------
 // Sessions: scopes, attribution, revocation
 // ---------------------------------------------------------------------------
 

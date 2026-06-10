@@ -2967,4 +2967,60 @@ skip.
 
 ---
 
+## Follow-up: dashboard UI + seven-angle code review with fixes
+
+The operator asked for the remaining unbuilt features plus a code
+review. The biggest unbuilt piece was the dashboard UI — everything
+this branch added was API-complete but invisible. Built via three
+parallel agents on disjoint files while the main session wired shared
+files: **Parishes & schools** (catalog + org detail with the
+affiliation roster, inline verify/transition/end forms, verification
+trail with years, stale report, domain management), **Staff accounts**
+(invite / scopes / disable / re-enable), **/login** (magic-link request
++ redeem, StrictMode-safe single-use redemption, URL scrubbed after
+redeem, account-existence never revealed), and read-only **Communities**
+panels on person/family detail. SFW_BYPASS=1 used once more for the
+client `npm ci` — same unreachable-sfw-host condition as earlier
+entries.
+
+Deliberately NOT built, with reasons: OIDC (needs a real IdP; magic
+links are the stated v1 floor), per-org data scoping (single-institution
+deployments), write-back + precedence config flags (dead code until an
+upstream write API integration exists — the decision is captured in
+IDENTITY_MODEL_SUMMARY.md and waits for that work).
+
+Then the review: seven parallel finder angles over the full branch diff
+(~4,960 lines), ~32 candidates, verified and fixed in-session. Full
+findings with status live in `CODE_REVIEW_2026-06-10.md` — that file is
+the deliverable the operator asked to read later; this entry is just
+the journal pointer. Headlines: org reads omitted the domain fields the
+new UI was built on (verification could never complete from the
+dashboard — tests had only exercised the POST side); unvalidated
+verified_at could lexicographically pin last_verified_at forever; bare
+re-affiliation wiped notes and downgraded roles; re-ending an ended
+affiliation 204'd and wrote a false audit row (now 409); transition
+bypassed the archived-org guard; merge repointing wrote no
+entity_changes snapshots (audit-rule violation); a parish and school
+sharing one domain could lock each other's staff out (invites now take
+org_code, login trust keys off the account's own org); un-verifying a
+domain or archiving an org left live sessions valid for up to 12h (now
+revoked transactionally); a 403 missing_scope logged staff out of the
+dashboard (now only 401 clears the credential); migration 0016 rebuilt
+tables on every fresh init (now guarded like 0015); the
+notifications-template PII tripwire had gone vacuous for 16-hex codes;
+product_spec's published identifier validators still said 8-hex only.
+Plus cleanup: shared auditCtx helper replaces four copies, accounts
+hashing reuses apiKeys.hash, session last_used_at writes debounced to
+1/min, affiliation rows now carry joined org_name/org_kind so the
+Communities panels stopped downloading the whole org catalog per page.
+
+PRD got its as-built Appendix (UI shipped same-day; trust breaks revoke
+sessions, stronger than the PRD's "login requests refused"; shared
+domains first-class; 403 ≠ logout). README updated to match.
+
+11 new regression tests. New total: 529 tests, 528 pass, 0 fail, 1
+pre-existing skip. Client builds clean.
+
+---
+
 *End of session notes*

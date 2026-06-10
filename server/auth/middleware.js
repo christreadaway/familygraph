@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const apiKeys = require('./api-keys');
+const accounts = require('./accounts');
 const log = require('../log');
 
 // Compact fingerprint we can log to identify a token without revealing it.
@@ -116,7 +117,6 @@ function bearerAuth(secrets, opts = {}) {
     // where sk_ keys resolve through api_keys. The actor is the named
     // staff member, so audit rows attribute changes to a person.
     if (db && token.startsWith('st_')) {
-      const accounts = require('./accounts');
       const sess = accounts.lookupSession(db, token);
       if (sess) {
         if (required && !apiKeys.authorizes(sess.scopes, required)) {

@@ -521,11 +521,25 @@ report for a human to confirm; nothing auto-expires.
   (default 365).
 - `GET /api/organizations/by-person/:code` / `by-family/:code` — the
   computed "parish, school, or both" answer for one person or family.
+  Affiliation rows carry joined `org_name` / `org_kind` so consumers
+  don't need the organization catalog to label them.
 
 Re-affiliating someone already active updates the row in place instead
-of stacking duplicates; leaving and returning produces a second dated
-row so history survives. Person and family merges carry affiliations
-onto the winning code, ending duplicates rather than colliding.
+of stacking duplicates (only the fields you actually send are touched —
+a bare re-confirm never downgrades a role or clears notes); leaving and
+returning produces a second dated row so history survives; re-ending an
+already-ended affiliation is a 409 and the row keeps its original
+reason and date. Person and family merges carry affiliations onto the
+winning code, ending duplicates rather than colliding, with
+entity_changes snapshots for every row the merge touches.
+
+The dashboard surfaces all of this under **Parishes & schools**:
+catalog + create, per-organization detail with the affiliation roster
+(verify / transition / end inline), the verification trail with years
+of participation, the stale report, and domain management. Person and
+family detail pages each gain a read-only **Communities** panel, and
+**Staff accounts** + **/login** cover account administration and staff
+sign-in.
 
 ### Staff accounts (domain-verified login)
 
@@ -542,8 +556,11 @@ sets the org's domain, FamilyGraph issues a token, and the parish or
 school proves control either with a DNS TXT record
 (`familygraph-verify=<token>`) or a well-known file at
 `https://<domain>/.well-known/familygraph-verify.txt`. Changing the
-domain always requires re-verification, and un-verifying the domain or
-archiving the organization stops logins for its accounts.
+domain always requires re-verification. Un-verifying or changing the
+domain, or archiving the organization, doesn't just stop new logins —
+it revokes the org's live staff sessions and pending links in the same
+transaction, because that's the moment the operator means "stop
+trusting this domain NOW".
 
 Login is invite-only — no self-signup; the master token provisions
 accounts. Staff POST their email; if an active account exists, a
@@ -560,9 +577,11 @@ SHA-256 hashes and never logged.
   `{method: "dns" | "http"}`.
 - `GET /api/accounts` / `POST /api/accounts` /
   `PATCH /api/accounts/:code` / `DELETE /api/accounts/:code` — master
-  only. POST body `{email, display_name, scopes?}` (scopes from the
-  existing vocabulary, `*` not grantable; default `["pii.read"]`).
-  DELETE disables the account (revokes sessions immediately).
+  only. POST body `{email, display_name, scopes?, org_code?}` (scopes
+  from the existing vocabulary, `*` not grantable; default
+  `["pii.read"]`; `org_code` disambiguates when a parish and its school
+  legitimately share one verified domain). DELETE disables the account
+  (revokes sessions immediately).
 - `POST /api/auth/request-link` — open + rate-limited; body `{email}`;
   always returns `{ok: true}`.
 - `POST /api/auth/redeem` — body `{token}`; returns

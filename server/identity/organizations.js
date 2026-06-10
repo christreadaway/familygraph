@@ -46,6 +46,13 @@ function row2org(row) {
     name: row.name,
     kind: row.kind,
     diocese_code: row.diocese_code || null,
+    // Domain verification state rides on every org read so the
+    // dashboard can render verify controls. The verification TOKEN is
+    // deliberately omitted: it is returned once by setDomain and only
+    // belongs in DNS / the well-known file, not on a pii.read surface.
+    domain: row.domain || null,
+    domain_verified_at: row.domain_verified_at || null,
+    domain_verification_method: row.domain_verification_method || null,
     status: row.status,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -57,6 +64,10 @@ function row2affiliation(row, secrets, { includePii = false } = {}) {
   const base = {
     code: row.code,
     org_code: row.org_code,
+    // Present when the row came through listAffiliations' join; older
+    // single-row reads simply omit them.
+    org_name: row.org_name || null,
+    org_kind: row.org_kind || null,
     person_code: row.person_code || null,
     family_code: row.family_code || null,
     role: row.role,
@@ -171,6 +182,11 @@ function updateOrganization(db, secrets, code, patch = {}, audit = {}) {
          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE code = ?`
     ).run(name, kind, dioceseCode, status, notesCt, code);
+    // Archiving an org breaks the trust chain its staff accounts hang
+    // off; their live sessions and pending links die with it.
+    if (status === 'archived' && existing.status !== 'archived') {
+      require('../auth/accounts').revokeSessionsForOrg(db, code, { reason: 'org_archived' });
+    }
     const after = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(code);
     history.record(db, {
       entityKind: 'organization', entityCode: code,
@@ -231,18 +247,24 @@ function affiliate(db, secrets, orgCode, input = {}, audit = {}) {
 
   // Re-activate an existing active affiliation rather than stacking
   // duplicates — the active-row unique index would reject the insert.
+  // Only fields the caller actually supplied are touched: a bare
+  // re-affiliate call (a connector re-confirming presence, a second
+  // operator click) must not downgrade a 'student' to the default role
+  // or null out existing encrypted notes.
   const existingActive = db.prepare(
     resolvedPerson
       ? `SELECT * FROM affiliations WHERE org_code = ? AND person_code = ? AND ended_at IS NULL`
       : `SELECT * FROM affiliations WHERE org_code = ? AND family_code = ? AND ended_at IS NULL`
   ).get(orgCode, resolvedPerson || resolvedFamily);
   if (existingActive) {
+    const nextRole = input.role ? role : existingActive.role;
+    const nextNotesCt = 'notes' in input ? enc.encrypt(secrets, input.notes) : existingActive.notes_ct;
     const tx = db.transaction(() => {
       db.prepare(
         `UPDATE affiliations SET role = ?, notes_ct = ?,
            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE code = ?`
-      ).run(role, enc.encrypt(secrets, input.notes), existingActive.code);
+      ).run(nextRole, nextNotesCt, existingActive.code);
       const after = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(existingActive.code);
       history.record(db, {
         entityKind: 'affiliation', entityCode: existingActive.code, operation: 'update',
@@ -291,11 +313,17 @@ function _validateReason(reason) {
   return r;
 }
 
+// Sentinel for "the affiliation was already ended": the API maps it to
+// a 409 instead of pretending the new reason/date were applied. The old
+// silent `return code` made the HTTP layer reply 204 and write an audit
+// row for a change that never happened.
+const ALREADY_ENDED = Symbol.for('organizations.affiliation.alreadyEnded');
+
 function endAffiliation(db, code, { reason, reason_detail, ended_at, actor, actorKind, requestId } = {}) {
   if (!isValidCode(code, 'affiliation')) throw new Error('invalid affiliation code');
   const row = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
   if (!row) return null;
-  if (row.ended_at) return code;
+  if (row.ended_at) return ALREADY_ENDED;
   const reasonClass = _validateReason(reason);
   const endedAt = _normalizeEndedAt(ended_at);
   const tx = db.transaction(() => {
@@ -328,6 +356,14 @@ function transition(db, secrets, code, input = {}, audit = {}) {
   const row = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
   if (!row) return null;
   if (row.ended_at) throw new Error('affiliation already ended; affiliate anew instead');
+  // Same guard affiliate() applies: an archived organization takes no
+  // new affiliations, and the transition's successor row is a new
+  // affiliation. Without this, graduating a student under an archived
+  // school would mint exactly the row the affiliate() guard forbids.
+  const org = db.prepare(`SELECT status FROM organizations WHERE code = ?`).get(row.org_code);
+  if (!org || org.status !== 'active') {
+    throw new Error('organization is archived; un-archive before transitioning affiliations');
+  }
   const toRole = input.to_role ? String(input.to_role).toLowerCase() : 'alumni';
   if (!ROLES.has(toRole)) throw new Error(`invalid role: ${toRole}`);
   if (toRole === row.role) throw new Error('to_role matches the current role');
@@ -384,7 +420,19 @@ function verify(db, secrets, affiliationCode, input = {}, audit = {}) {
   if (!VERIFICATION_METHODS.has(method)) {
     throw new Error(`verification method must be one of: ${[...VERIFICATION_METHODS].join(', ')}`);
   }
-  const verifiedAt = input.verified_at ? String(input.verified_at) : null;
+  // verified_at feeds the lexicographic high-water MAX on
+  // last_verified_at, so a non-ISO string ('next week', 'TBD') would
+  // sort above every real timestamp and permanently pin the marker —
+  // the affiliation would never surface on the stale report again.
+  // Same accepted shapes as ended_at: YYYY, YYYY-MM, YYYY-MM-DD, or a
+  // full ISO stamp.
+  let verifiedAt = null;
+  if (input.verified_at != null) {
+    verifiedAt = String(input.verified_at).trim();
+    if (!/^\d{4}(-\d{2}){0,2}(T[\d:.]+Z?)?$/.test(verifiedAt)) {
+      throw new Error('verified_at must be an ISO date (YYYY, YYYY-MM, YYYY-MM-DD, or a full timestamp)');
+    }
+  }
   // Participation-year label: '2025-2026' for a school year, '2026'
   // for a parish year. Free-form but short — it's a roster column.
   let period = null;
@@ -455,8 +503,12 @@ function listAffiliations(db, secrets, {
     where.push(`COALESCE(last_verified_at, started_at) < strftime('%Y-%m-%dT%H:%M:%fZ','now','-' || ? || ' days')`);
     params.push(days);
   }
-  const sql = `SELECT * FROM affiliations${where.length ? ' WHERE ' + where.join(' AND ') : ''}
-    ORDER BY COALESCE(last_verified_at, started_at) ASC`;
+  // Joined org name/kind ride on every row so consumers (the dashboard
+  // Communities panels especially) don't have to fetch the whole
+  // organization catalog just to label a handful of affiliations.
+  const sql = `SELECT a.*, o.name AS org_name, o.kind AS org_kind
+    FROM affiliations a JOIN organizations o ON o.code = a.org_code${where.length ? ' WHERE ' + where.join(' AND ') : ''}
+    ORDER BY COALESCE(a.last_verified_at, a.started_at) ASC`;
   return db.prepare(sql).all(...params).map(r => row2affiliation(r, secrets, { includePii }));
 }
 
@@ -466,35 +518,49 @@ function listAffiliations(db, secrets, {
 // of re-pointing into a collision.
 // ---------------------------------------------------------------------------
 
-function _repoint(db, column, loserCode, winnerCode) {
-  const rows = db.prepare(`SELECT * FROM affiliations WHERE ${column} = ?`).all(loserCode);
-  for (const a of rows) {
-    if (a.ended_at == null) {
-      const dupe = db.prepare(
-        `SELECT 1 FROM affiliations WHERE org_code = ? AND ${column} = ? AND ended_at IS NULL`
-      ).get(a.org_code, winnerCode);
-      if (dupe) {
-        db.prepare(
-          `UPDATE affiliations SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-             reason = 'merge', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-           WHERE code = ?`
-        ).run(a.code);
-        continue;
-      }
+function _repoint(db, column, loserCode, winnerCode, audit = {}) {
+  const selectStmt = db.prepare(`SELECT * FROM affiliations WHERE ${column} = ?`);
+  const dupeStmt = db.prepare(
+    `SELECT 1 FROM affiliations WHERE org_code = ? AND ${column} = ? AND ended_at IS NULL`
+  );
+  const endStmt = db.prepare(
+    `UPDATE affiliations SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+       reason = 'merge', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     WHERE code = ?`
+  );
+  const moveStmt = db.prepare(
+    `UPDATE affiliations SET ${column} = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     WHERE code = ?`
+  );
+  const reloadStmt = db.prepare(`SELECT * FROM affiliations WHERE code = ?`);
+  // Each ended or re-pointed row gets its own entity_changes snapshot:
+  // merges mutate affiliations like any other write, and "any change
+  // must have an audit trail" includes the merge path.
+  const snap = (a, operation) => {
+    history.record(db, {
+      entityKind: 'affiliation', entityCode: a.code, operation,
+      before: a, after: reloadStmt.get(a.code),
+      actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+      reason: 'merge', relatedCodes: [loserCode, winnerCode],
+    });
+  };
+  for (const a of selectStmt.all(loserCode)) {
+    if (a.ended_at == null && dupeStmt.get(a.org_code, winnerCode)) {
+      endStmt.run(a.code);
+      snap(a, 'archive');
+      continue;
     }
-    db.prepare(
-      `UPDATE affiliations SET ${column} = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE code = ?`
-    ).run(winnerCode, a.code);
+    moveStmt.run(winnerCode, a.code);
+    snap(a, 'merge');
   }
 }
 
-function repointPersonAffiliations(db, loserCode, winnerCode) {
-  _repoint(db, 'person_code', loserCode, winnerCode);
+function repointPersonAffiliations(db, loserCode, winnerCode, audit = {}) {
+  _repoint(db, 'person_code', loserCode, winnerCode, audit);
 }
 
-function repointFamilyAffiliations(db, loserCode, winnerCode) {
-  _repoint(db, 'family_code', loserCode, winnerCode);
+function repointFamilyAffiliations(db, loserCode, winnerCode, audit = {}) {
+  _repoint(db, 'family_code', loserCode, winnerCode, audit);
 }
 
 module.exports = {
@@ -505,6 +571,7 @@ module.exports = {
   archiveOrganization,
   affiliate,
   endAffiliation,
+  ALREADY_ENDED,
   transition,
   verify,
   listVerifications,

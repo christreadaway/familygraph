@@ -412,7 +412,7 @@ function merge(db, secrets, loserCode, winnerCode, opts = {}) {
     // the loser, re-point the rest, so a merge never strands a student
     // or parishioner under their losing code.
     const organizations = require('./organizations');
-    organizations.repointPersonAffiliations(db, loser, winner);
+    organizations.repointPersonAffiliations(db, loser, winner, opts);
 
     db.prepare(
       `UPDATE persons SET status = 'merged', merged_into = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`

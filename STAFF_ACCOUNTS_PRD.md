@@ -163,3 +163,33 @@ standard structured log, with redaction:
   `auth.account_disabled`, `domain.verify_attempt` (org code, method,
   outcome). Failures carry a stable `reason` field so the operator can
   paste log lines into a chat and the failure is identifiable.
+
+---
+
+## Appendix — as-built deviations (2026-06-10, same day)
+
+The PRD above is the record of intent; this appendix records where the
+shipped system deliberately went further.
+
+1. **Dashboard UI shipped same-day** (§8 listed it out of scope).
+   `/login` (magic-link request + redeem), **Staff accounts**
+   (invite / scopes / disable / re-enable), and domain management on
+   the organization detail page all landed in the same branch, plus
+   **Parishes & schools** and the Communities panels for the
+   organizations feature this PRD builds on.
+2. **Trust breaks revoke sessions, not just logins.** §5 promised only
+   that login *requests* are refused after a domain is removed or an
+   org archived. As built, clearing/changing a domain and archiving an
+   organization revoke the org's live sessions and outstanding links in
+   the same transaction — the same immediacy account-disable always
+   had. The PRD's weaker wording was a reviewed-and-rejected gap (see
+   `CODE_REVIEW_2026-06-10.md`, finding 8).
+3. **Shared domains are first-class.** A parish and its school can both
+   verify the same domain (shared campus and staff is a real,
+   documented case). Invites against an ambiguous domain require
+   `org_code`; login trust is checked against the account's own
+   organization, so co-domained orgs cannot lock each other's staff
+   out. §6's data model is unchanged.
+4. **A 403 does not end a staff session.** The dashboard treats
+   `missing_scope` as "this surface isn't yours," not "your credential
+   is dead" — only a 401 clears the stored session.

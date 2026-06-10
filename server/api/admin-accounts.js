@@ -6,18 +6,13 @@
 
 const express = require('express');
 const { userFacingMessage } = require('./_errors');
+const { auditCtx: ctx } = require('./_ctx');
 const accounts = require('../auth/accounts');
 const audit = require('../audit');
 const { isValidCode } = require('../crypto/identifiers');
 
 function build({ db, secrets }) {
   const r = express.Router();
-
-  const ctx = req => ({
-    actor: req.auth?.actor || 'unknown',
-    actorKind: req.auth?.kind || null,
-    requestId: req.get('x-request-id') || null,
-  });
 
   r.get('/', (req, res) => {
     res.json({ items: accounts.list(db, secrets, { includeEmail: true }) });

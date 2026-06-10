@@ -14,6 +14,7 @@
 const crypto = require('crypto');
 const { isValidCode } = require('../crypto/identifiers');
 const history = require('../identity/history');
+const accounts = require('./accounts');
 const log = require('../log');
 
 // Conservative hostname shape: dot-separated labels of [a-z0-9-] that
@@ -38,6 +39,11 @@ function setDomain(db, orgCode, domain, audit = {}) {
   if (!existing) return null;
 
   const normalized = domain == null ? '' : String(domain).trim().toLowerCase();
+  // Any change to the domain breaks the trust chain that existing
+  // staff sessions were minted under, so live sessions and pending
+  // links for this org's accounts are revoked in the same transaction
+  // — the un-verify case is the one where the operator most urgently
+  // means "stop trusting this domain NOW".
   if (!normalized) {
     const tx = db.transaction(() => {
       db.prepare(
@@ -47,6 +53,7 @@ function setDomain(db, orgCode, domain, audit = {}) {
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
           WHERE code = ?`
       ).run(orgCode);
+      if (existing.domain) accounts.revokeSessionsForOrg(db, orgCode, { reason: 'domain_cleared' });
       const after = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(orgCode);
       history.record(db, {
         entityKind: 'organization', entityCode: orgCode, operation: 'update',
@@ -69,6 +76,9 @@ function setDomain(db, orgCode, domain, audit = {}) {
               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
         WHERE code = ?`
     ).run(normalized, token, orgCode);
+    if (existing.domain && existing.domain !== normalized) {
+      accounts.revokeSessionsForOrg(db, orgCode, { reason: 'domain_changed' });
+    }
     const after = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(orgCode);
     history.record(db, {
       entityKind: 'organization', entityCode: orgCode, operation: 'update',

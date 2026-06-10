@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { auditCtx: ctx } = require('./_ctx');
 const families = require('../identity/families');
 const contacts = require('../identity/contacts');
 const tagsLib = require('../identity/tags');
@@ -10,15 +11,6 @@ const { isValidCode } = require('../crypto/identifiers');
 
 function build({ db, secrets, includePii }) {
   const r = express.Router();
-
-  // Audit context forwarded into the entity_changes snapshot log so the
-  // before/after row names the human or app that made the change, not
-  // 'system' (any change must have an audit trail — with attribution).
-  const ctx = req => ({
-    actor: req.auth?.actor || 'unknown',
-    actorKind: req.auth?.kind || null,
-    requestId: req.get('x-request-id') || null,
-  });
 
   r.get('/', (req, res) => {
     const all = families.list(db, secrets, {

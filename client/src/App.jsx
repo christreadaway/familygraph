@@ -125,6 +125,12 @@ export default function App() {
 
   useEffect(() => {
     function onAuthFailed(e) {
+      // 403 missing_scope means the CREDENTIAL is fine — the surface is
+      // just beyond its scopes. That's a normal click for a read-only
+      // staff session (the sidebar shows every link); wiping the token
+      // here would log staff out and dead-end them in master-token
+      // instructions. Only a 401 (dead/unknown credential) clears it.
+      if (e.detail?.reason === 'missing_scope') return;
       setTokenOk(false);
       setLastReason(e.detail?.reason || null);
       setLastError(e.detail?.detail || null);

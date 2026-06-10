@@ -52,14 +52,25 @@ function kindOf(code) {
   return null;
 }
 
+// Kinds that existed before the suffix widening (8 → 16 hex) and may
+// therefore have legacy 8-hex codes in real databases. Kinds minted
+// after the widening have only ever been 16 hex; accepting 8 for them
+// would turn an operator's truncated paste into a confusing 404
+// instead of the 400 the validation exists to give.
+const LEGACY_8HEX_KINDS = new Set([
+  'family', 'person', 'email', 'phone', 'address', 'relationship',
+  'membership', 'source', 'conflict', 'token_set', 'audit', 'rule',
+  'profile', 'ministry', 'ministry_assignment', 'diocese', 'entity_change',
+]);
+
 function isValidCode(code, kind = null) {
   if (typeof code !== 'string') return false;
   const k = kindOf(code);
   if (!k) return false;
   if (kind && k !== kind) return false;
-  // Hex suffix is exactly 16 chars (current) or 8 chars (legacy, pre-widening).
   const suffix = code.slice(PREFIXES[k].length);
-  return /^(?:[0-9a-f]{16}|[0-9a-f]{8})$/.test(suffix);
+  if (/^[0-9a-f]{16}$/.test(suffix)) return true;
+  return LEGACY_8HEX_KINDS.has(k) && /^[0-9a-f]{8}$/.test(suffix);
 }
 
 module.exports = {

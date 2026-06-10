@@ -19,7 +19,6 @@ export default function PersonDetail() {
   const [newAssignmentRole, setNewAssignmentRole] = useState('member');
   const [affiliations, setAffiliations] = useState([]);
   const [affiliationsError, setAffiliationsError] = useState(null);
-  const [orgIndex, setOrgIndex] = useState({});
 
   function load() {
     api
@@ -50,18 +49,12 @@ export default function PersonDetail() {
 
   useEffect(() => {
     setAffiliationsError(null);
+    // Affiliation rows carry org_name/org_kind from the server-side
+    // join — no need to download the whole organization catalog here.
     api
       .affiliationsForPerson(code, { status: 'all' })
       .then(d => setAffiliations(d.items || []))
       .catch(e => setAffiliationsError(e.message));
-    api
-      .listOrganizations({ status: 'all' })
-      .then(d => {
-        const idx = {};
-        (d.items || []).forEach(o => { idx[o.code] = o; });
-        setOrgIndex(idx);
-      })
-      .catch(() => {});
   }, [code]);
 
   if (error) return <div className="panel error">Error: {error}</div>;
@@ -329,12 +322,11 @@ export default function PersonDetail() {
                   return (b.started_at || '').localeCompare(a.started_at || '');
                 })
                 .map(a => {
-                  const org = orgIndex[a.org_code];
                   return (
                     <tr key={a.code}>
                       <td>
-                        <Link to={`/organizations/${a.org_code}`}>{org ? org.name : a.org_code}</Link>
-                        {org && org.kind && <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>({org.kind})</span>}
+                        <Link to={`/organizations/${a.org_code}`}>{a.org_name || a.org_code}</Link>
+                        {a.org_kind && <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>({a.org_kind})</span>}
                       </td>
                       <td>{a.role || <span className="muted">—</span>}</td>
                       <td className="muted">{a.started_at ? a.started_at.slice(0, 10) : '—'}</td>

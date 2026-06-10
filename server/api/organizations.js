@@ -1,6 +1,7 @@
 'use strict';
 
 const { userFacingMessage } = require('./_errors');
+const { auditCtx: ctx } = require('./_ctx');
 const express = require('express');
 const organizations = require('../identity/organizations');
 const domains = require('../auth/domains');
@@ -10,13 +11,6 @@ const { isValidCode } = require('../crypto/identifiers');
 function build({ db, secrets, includePii }) {
   const r = express.Router();
 
-  // Audit context forwarded into the entity_changes snapshot log so every
-  // write records who did it (any change must have an audit trail).
-  const ctx = req => ({
-    actor: req.auth?.actor || 'unknown',
-    actorKind: req.auth?.kind || null,
-    requestId: req.get('x-request-id') || null,
-  });
 
   // ---------------------------------------------------------------------------
   // Organization catalog (parishes / schools)
@@ -208,6 +202,15 @@ function build({ db, secrets, includePii }) {
         ...ctx(req),
       });
       if (!code) return res.status(404).json({ error: 'not found' });
+      if (code === organizations.ALREADY_ENDED) {
+        // 409, not 204: replying success here would also write an audit
+        // row claiming the caller's reason/date were applied when the
+        // row kept its original values.
+        return res.status(409).json({
+          error: 'affiliation already ended',
+          detail: 'the row keeps its original reason and date; corrections are an operator workflow',
+        });
+      }
       audit.record(db, {
         action: 'affiliation_end',
         actor: req.auth?.actor || 'unknown',

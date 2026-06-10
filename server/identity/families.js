@@ -302,7 +302,7 @@ function merge(db, secrets, loserCode, winnerCode, opts = {}) {
     // Parish registrations are family-level; carry them onto the merge
     // winner the same way whole-family ministry rosters survive.
     const organizations = require('./organizations');
-    organizations.repointFamilyAffiliations(db, loser, winner);
+    organizations.repointFamilyAffiliations(db, loser, winner, opts);
 
     db.prepare(
       `UPDATE families SET status = 'merged', merged_into = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`
