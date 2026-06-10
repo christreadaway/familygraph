@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const apiKeys = require('./api-keys');
+const accounts = require('./accounts');
 const log = require('../log');
 
 // Compact fingerprint we can log to identify a token without revealing it.
@@ -110,6 +111,48 @@ function bearerAuth(secrets, opts = {}) {
         error: 'unauthorized',
         detail: 'invalid or revoked token',
         reason: 'unknown_or_revoked_scoped_token',
+      });
+    }
+    // Staff session tokens (st_…) resolve through admin_sessions exactly
+    // where sk_ keys resolve through api_keys. The actor is the named
+    // staff member, so audit rows attribute changes to a person.
+    if (db && token.startsWith('st_')) {
+      const sess = accounts.lookupSession(db, token);
+      if (sess) {
+        if (required && !apiKeys.authorizes(sess.scopes, required)) {
+          log.warn('auth.reject', {
+            ...ctx,
+            reason: 'missing_scope',
+            actor: sess.display_name,
+            account_code: sess.account_code,
+            scopes: sess.scopes,
+          });
+          return res.status(403).json({
+            error: 'forbidden',
+            detail: `missing scope: ${Array.isArray(required) ? required.join(',') : required}`,
+            reason: 'missing_scope',
+          });
+        }
+        req.auth = {
+          kind: 'staff',
+          scopes: sess.scopes,
+          actor: sess.display_name,
+          account_code: sess.account_code,
+          session_code: sess.session_code,
+          org_code: sess.org_code,
+        };
+        log.debug('auth.ok', { ...ctx, kind: 'staff', actor: sess.display_name, account_code: sess.account_code });
+        return next();
+      }
+      log.warn('auth.reject', {
+        ...ctx,
+        reason: 'unknown_or_expired_session',
+        token_fp: tokenFingerprint(token),
+      });
+      return res.status(401).json({
+        error: 'unauthorized',
+        detail: 'invalid or expired session',
+        reason: 'unknown_or_expired_session',
       });
     }
     // Some other bearer string that didn't match the master token.

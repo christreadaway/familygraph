@@ -2,6 +2,7 @@
 
 
 const { userFacingMessage } = require('./_errors');
+const { auditCtx: ctx } = require('./_ctx');
 const express = require('express');
 const people = require('../identity/people');
 const contacts = require('../identity/contacts');
@@ -11,6 +12,7 @@ const { isValidCode } = require('../crypto/identifiers');
 
 function build({ db, secrets, includePii }) {
   const r = express.Router();
+
 
   r.get('/', (req, res) => {
     const list = people.list(db, secrets, {
@@ -24,7 +26,7 @@ function build({ db, secrets, includePii }) {
   r.post('/', (req, res) => {
     let code;
     try {
-      code = people.create(db, secrets, req.body || {});
+      code = people.create(db, secrets, req.body || {}, ctx(req));
     } catch (e) {
       return res.status(400).json({ error: userFacingMessage(e) });
     }
@@ -60,7 +62,7 @@ function build({ db, secrets, includePii }) {
     }
     let code;
     try {
-      code = people.update(db, secrets, req.params.code, req.body || {});
+      code = people.update(db, secrets, req.params.code, req.body || {}, ctx(req));
     } catch (e) {
       return res.status(400).json({ error: userFacingMessage(e) });
     }
@@ -79,7 +81,7 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(winner_code, 'person') || !isValidCode(req.params.code, 'person')) {
       return res.status(400).json({ error: 'invalid codes' });
     }
-    const code = people.merge(db, secrets, req.params.code, winner_code);
+    const code = people.merge(db, secrets, req.params.code, winner_code, ctx(req));
     audit.record(db, {
       action: 'person_merge',
       actor: req.auth?.actor || 'unknown',

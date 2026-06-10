@@ -16,7 +16,7 @@ test('identifiers > newCode produces correct prefix and length', () => {
 test('identifiers > kindOf disambiguates addr_ from a_', () => {
   const a = newCode('address');
   assert.equal(kindOf(a), 'address');
-  assert.match(a, /^addr_[0-9a-f]{8}$/);
+  assert.match(a, /^addr_[0-9a-f]{16}$/);
 });
 
 test('identifiers > newCode rejects unknown kinds', () => {
@@ -30,6 +30,11 @@ test('identifiers > isValidCode rejects malformed codes', () => {
   assert.equal(isValidCode(null), false);
 });
 
+test('identifiers > legacy 8-hex codes still validate', () => {
+  assert.equal(isValidCode('f_3fa9c2d1', 'family'), true);
+  assert.equal(isValidCode('p_0123abcd'), true);
+});
+
 test('identifiers > isValidCode mismatched kind', () => {
   const f = newCode('family');
   assert.equal(isValidCode(f, 'family'), true);
@@ -41,6 +46,6 @@ test('identifiers > codes are non-semantic (no person initials leaked)', () => {
   for (let i = 0; i < 200; i++) codes.add(newCode('person'));
   assert.ok(codes.size > 195, 'codes should be effectively unique');
   for (const c of codes) {
-    assert.match(c, /^p_[0-9a-f]{8}$/);
+    assert.match(c, /^p_[0-9a-f]{16}$/);
   }
 });

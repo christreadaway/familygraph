@@ -2754,4 +2754,287 @@ builds clean (302 KB JS / 22 KB CSS).
 
 ---
 
+## Follow-up: identifier suffix widened to 16 hex chars
+
+The operator asked whether person and family identifiers could collide at
+school/diocese scale. They can: the old suffix was 4 random bytes (8 hex
+chars, 32 bits), which hits 50% birthday-collision odds around 77k codes
+of one kind, and `newCode` has no retry — a collision would surface as a
+primary-key insert failure. Widened to 8 random bytes (16 hex chars, 64
+bits) in `server/crypto/identifiers.js`; the 50% bound moves to ~5 billion
+codes per kind, which closes the question for good. `isValidCode` accepts
+both 16-hex (current) and 8-hex (legacy) suffixes so codes already issued
+keep validating; no migration needed because codes are opaque TEXT keys
+everywhere. Tests updated, plus a new legacy-format case. 491 tests, 490
+pass, 0 fail, 1 skip (pre-existing EACCES skip).
+
+SFW_BYPASS=1 was used for `npm ci` in this session: the sfw binary host is
+unreachable from this container's network policy. Exact pinned lockfile,
+ephemeral environment — same situation as the previous entry.
+
+Design discussion, not yet built: organization-level codes (parish,
+school) and dated person/family-to-organization affiliations, on the model
+of the existing `memberships` table. The operator's framing: school
+affiliation is temporal (kids graduate), and so is parish affiliation
+(people move, die, stop attending). Conclusion so far is that "parish,
+school, or both" should never be a stored flag — it should be a query over
+affiliation rows with `started_at`/`ended_at`, so leaving a community is
+an end-date, not a delete. Today `school_contexts.school_id` is a bare
+TEXT id from the external app; a future `organizations` table would give
+those a real `org_` code to reference.
+
+---
+
+## Follow-up: organizations + affiliations + rolling verification shipped
+
+The design discussion above got the operator's green light in the same
+session, so it shipped. Migration 0014 (schema version 14) adds three
+tables: `organizations` (parish/school, `org_` codes, soft FK to
+dioceses), `affiliations` (person OR family per row, the
+ministry_assignments pattern, with started/ended/reason and a
+`last_verified_at` high-water mark), and `affiliation_verifications`
+(append-only trail; methods are registration, sacrament, liturgy,
+ministry, giving, communication, connector_sync, attestation, other —
+the operator's own list of how a parish actually sees that a family is
+still alive, plus "mail still lands").
+
+The two decisions worth remembering. First, "parish, school, or both"
+is computed from active affiliations, never stored — a graduation ends
+the school row and leaves the parish registration untouched, and the
+tests assert exactly that. Second, verification refreshes confidence
+but never gates existence: a quiet family surfaces on
+`GET /api/organizations/:code/stale?days=N` for a human to confirm, and
+nothing auto-expires. Backdated verifications (late giving batches) land
+in the trail without moving the marker backwards. Person and family
+merges re-point affiliations like ministry assignments, ending
+duplicates rather than colliding.
+
+Surface mounted at `/api/organizations` with the ministries scope
+posture (pii.read / pii.write). Default role for a family at a parish is
+'registered'; 'student' requires a person — a family can't be enrolled
+in third grade. README gained a section; product_spec deliberately not
+churned (its route table predates ministries too — if it gets refreshed,
+do both at once).
+
+New requirement captured but NOT built: church-admin login with accounts
+verified by the parish web site's domain. Today the dashboard is
+master-token-only; per-user accounts are a real auth-surface change and
+get their own session and PRD. Sketch lives in
+`IDENTITY_MODEL_SUMMARY.md`, which also records this whole line of
+thinking with a date stamp at the operator's request.
+
+12 new tests in `tests/organizations.test.js`. New total: 503 tests,
+502 pass, 0 fail, 1 pre-existing skip.
+
+---
+
+## Follow-up: entity_changes coverage for the organizations surface
+
+The operator stated a hard rule mid-session: ANY change to a FamilyGraph
+record must have an audit trail. Re-checking the just-shipped
+organizations surface against that rule found a gap — every write logged
+an `audit_events` row (actor + action + metadata) but none wrote the
+richer `entity_changes` before/after snapshots that persons, families,
+and dioceses get. Fixed: `organization`, `affiliation`, and
+`affiliation_verification` are now known entity kinds in
+`identity/history.js`, and every write path in
+`identity/organizations.js` (create/update/archive org, affiliate,
+re-affiliate, end, verify) records a snapshot inside its transaction,
+with actor / actor_kind / request_id forwarded from the HTTP layer.
+Ending an affiliation logs as operation 'archive' — the closest fit in
+the existing operation vocabulary, since the row survives dated and
+inactive. A new test drives every write shape through the API and
+asserts each one landed a snapshot with the right actor and before/after
+payloads.
+
+Also captured in `IDENTITY_MODEL_SUMMARY.md` from the same exchange:
+precedence and write-back must be configurable per connector (safe
+defaults: manual-wins, write-back off); read/write should be possible
+both in and out of FamilyGraph; and the end state the operator wants is
+FamilyGraph as THE source of truth, with the config switches as the
+migration path while FG earns that role.
+
+New total: 504 tests, 503 pass, 0 fail, 1 pre-existing skip.
+
+---
+
+## Follow-up: staff accounts with domain-verified login (migration 0015)
+
+The operator green-lit building the login. PRD first
+(`STAFF_ACCOUNTS_PRD.md`, written to the CLAUDE.md section order with
+the logging-infrastructure section), then the build, partly via
+parallel agents (one built `server/auth/domains.js` + the org domain
+routes, one drafted the README section, while the core auth wiring,
+routers, and tests happened in the main session).
+
+What shipped. Organizations carry a web domain + verification token;
+the institution proves control via DNS TXT (`familygraph-verify=<token>`)
+or a well-known file, and changing the domain always clears
+verification. Staff accounts are invite-only (master token), and the
+invite is refused unless the email's domain matches a verified domain
+on an active org — that's the trust chain, and it's re-checked at every
+link request and redeem, so un-verifying a domain or archiving the org
+stops logins immediately. Login is passwordless: single-use 15-minute
+magic link through the existing notifications queue (response never
+reveals account existence; max 3 outstanding links), redeeming into a
+12-hour `st_` session. The middleware resolves `st_` tokens right where
+it resolves `sk_` keys; scopes reuse the api_keys vocabulary with `*`
+not grantable. Disabling an account revokes its sessions and pending
+links in the same transaction. Tokens land in tables only as SHA-256
+hashes; emails are encrypted with an HMAC lookup hash; logs carry
+fingerprints, never tokens or full emails.
+
+A real pre-existing bug surfaced by the new tests: `api/people.js` and
+`api/families.js` never forwarded the HTTP actor into
+`people.create/update/merge` and `families.create/update/merge`, so
+every entity_changes snapshot from the dashboard said actor 'system'
+even though the audit_events row had the right actor. The domain
+functions had accepted an audit param all along — the API just never
+passed it. Fixed in both routers; the staff-attribution test now proves
+a "Parish Secretary" session shows up by name in the snapshot log.
+
+Operator rules captured during the build: duplicate/merge resolution is
+a HUMAN judgment call, never automated (the resolver may auto-link an
+incoming import row on definitive signals only; collapsing two existing
+records always goes through the conflicts queue); and the human who
+knows varies — parish secretary, pastor, business manager, principal,
+or school staff — so resolution is open to any write-scoped account and
+routable via the existing conflict-assignment feature. Both rules live
+in the PRD's business rules.
+
+9 new tests in `tests/staff-accounts.test.js`. New total: 513 tests,
+512 pass, 0 fail, 1 pre-existing skip.
+
+---
+
+## Follow-up: alumni, departure classes, participation years (migration 0016)
+
+Three operator rules from the tail of the session. One: leaving the
+student role doesn't mean leaving the community — graduating or
+transferring kids become ALUMNI via `POST
+/api/organizations/affiliations/:code/transition`, which ends the
+student row (dated, classified) and opens an ongoing alumni affiliation
+where it ended, both in one transaction with paired entity_changes
+rows. Two: nobody is ever removed — departure is an end-date that may
+be approximate (`2025`, `2025-08`, or a full date) plus a high-level
+reason class (`graduated` / `transferred` / `moved` / `deceased` /
+`withdrew` / `inactive` / `merge` / `other`) with free-text
+`reason_detail` for the story. The class is what reports aggregate on.
+Three: each year in the community is notable — verification rows carry
+an optional `period` label (`2025-2026` school year, `2026` parish
+year) and the verifications endpoint returns the distinct `periods`,
+which answers "years attended" for a student and "years of
+participation" for a roster family with the same query.
+
+Migration 0016 is a rename-and-rebuild (SQLite CHECKs can't be altered
+in place): `affiliations` is rebuilt with the `alumni` role and the
+reason-class CHECK + `reason_detail`, and `affiliation_verifications`
+is rebuilt against the new parent with `period`. The runner executes
+migrations inside a transaction with foreign keys ON, so the rebuild
+leans on SQLite's rename-updates-child-FKs behaviour and drops the old
+indexes explicitly (index names survive a table rename). Verified
+against a populated v15-shaped database: free-text reasons map to
+'other' with the original text preserved in reason_detail, 'merge'
+stays a class, the verification trail survives, zero FK violations.
+
+4 new tests. New total: 517 tests, 516 pass, 0 fail, 1 pre-existing
+skip.
+
+---
+
+## Follow-up: collision vs. duplication, and the multi-community test
+
+The operator's closing question: are unique codes purely probabilistic,
+or combined with family/parish context? Answer recorded in
+`IDENTITY_MODEL_SUMMARY.md`: collisions are prevented by 64-bit
+randomness PLUS the primary-key constraint (a clash fails loudly,
+never silently fuses records) PLUS prefix namespacing — and codes are
+deliberately NOT derived from family/parish context, because context
+changes and identity must not. The realistic risk is duplication (one
+person entering through two doors), which is the resolver + conflicts
+queue + human judgment + merge-with-alias pipeline, not a hex problem.
+
+The operator's likely scenarios — dad in a golf tournament at one
+school while his kid attends another; a kid alumni of one school and
+enrolled at a nearby one; a family moving parish to parish — are all
+one identity with multiple dated affiliations, and now pinned by the
+"multi-community" test: two simultaneous active affiliations at
+different orgs never conflict (uniqueness is per-org), and a parish
+move leaves dated history at both ends.
+
+1 new test. New total: 518 tests, 517 pass, 0 fail, 1 pre-existing
+skip.
+
+---
+
+## Follow-up: dashboard UI + seven-angle code review with fixes
+
+The operator asked for the remaining unbuilt features plus a code
+review. The biggest unbuilt piece was the dashboard UI — everything
+this branch added was API-complete but invisible. Built via three
+parallel agents on disjoint files while the main session wired shared
+files: **Parishes & schools** (catalog + org detail with the
+affiliation roster, inline verify/transition/end forms, verification
+trail with years, stale report, domain management), **Staff accounts**
+(invite / scopes / disable / re-enable), **/login** (magic-link request
++ redeem, StrictMode-safe single-use redemption, URL scrubbed after
+redeem, account-existence never revealed), and read-only **Communities**
+panels on person/family detail. SFW_BYPASS=1 used once more for the
+client `npm ci` — same unreachable-sfw-host condition as earlier
+entries.
+
+Deliberately NOT built, with reasons: OIDC (needs a real IdP; magic
+links are the stated v1 floor), per-org data scoping (single-institution
+deployments), write-back + precedence config flags (dead code until an
+upstream write API integration exists — the decision is captured in
+IDENTITY_MODEL_SUMMARY.md and waits for that work).
+
+Then the review: seven parallel finder angles over the full branch diff
+(~4,960 lines), ~32 candidates, verified and fixed in-session. Full
+findings with status live in `CODE_REVIEW_2026-06-10.md` — that file is
+the deliverable the operator asked to read later; this entry is just
+the journal pointer. Headlines: org reads omitted the domain fields the
+new UI was built on (verification could never complete from the
+dashboard — tests had only exercised the POST side); unvalidated
+verified_at could lexicographically pin last_verified_at forever; bare
+re-affiliation wiped notes and downgraded roles; re-ending an ended
+affiliation 204'd and wrote a false audit row (now 409); transition
+bypassed the archived-org guard; merge repointing wrote no
+entity_changes snapshots (audit-rule violation); a parish and school
+sharing one domain could lock each other's staff out (invites now take
+org_code, login trust keys off the account's own org); un-verifying a
+domain or archiving an org left live sessions valid for up to 12h (now
+revoked transactionally); a 403 missing_scope logged staff out of the
+dashboard (now only 401 clears the credential); migration 0016 rebuilt
+tables on every fresh init (now guarded like 0015); the
+notifications-template PII tripwire had gone vacuous for 16-hex codes;
+product_spec's published identifier validators still said 8-hex only.
+Plus cleanup: shared auditCtx helper replaces four copies, accounts
+hashing reuses apiKeys.hash, session last_used_at writes debounced to
+1/min, affiliation rows now carry joined org_name/org_kind so the
+Communities panels stopped downloading the whole org catalog per page.
+
+PRD got its as-built Appendix (UI shipped same-day; trust breaks revoke
+sessions, stronger than the PRD's "login requests refused"; shared
+domains first-class; 403 ≠ logout). README updated to match.
+
+11 new regression tests. New total: 529 tests, 528 pass, 0 fail, 1
+pre-existing skip. Client builds clean.
+
+---
+
+## Follow-up: CDCF submission baseline marked before merge
+
+Before merging this branch to main, the operator asked for a provenance
+marker: main as of commit `d4b5306` (the merge of PR #21) is exactly
+what was submitted to the Catholic Digital Commons Foundation (CDCF).
+Every commit on this branch postdates that submission — the CDCF
+reviewed none of it. A "Provenance note" section now sits near the top
+of README.md naming the commit, what came after, and where the
+post-submission decision history lives. If a future session needs to
+reproduce the CDCF copy, `git checkout d4b5306` is the snapshot; don't
+re-litigate why main moved past it.
+
+---
+
 *End of session notes*

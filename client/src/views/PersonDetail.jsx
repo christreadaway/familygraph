@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api.js';
 import IdCode from '../components/IdCode.jsx';
 import TagEditor from '../components/TagEditor.jsx';
@@ -17,6 +17,8 @@ export default function PersonDetail() {
   const [ministryCatalog, setMinistryCatalog] = useState([]);
   const [newAssignmentMinistry, setNewAssignmentMinistry] = useState('');
   const [newAssignmentRole, setNewAssignmentRole] = useState('member');
+  const [affiliations, setAffiliations] = useState([]);
+  const [affiliationsError, setAffiliationsError] = useState(null);
 
   function load() {
     api
@@ -44,6 +46,16 @@ export default function PersonDetail() {
     api.listMinistries().then(d => setMinistryCatalog(d.items || [])).catch(() => {});
   }
   useEffect(load, [code]);
+
+  useEffect(() => {
+    setAffiliationsError(null);
+    // Affiliation rows carry org_name/org_kind from the server-side
+    // join — no need to download the whole organization catalog here.
+    api
+      .affiliationsForPerson(code, { status: 'all' })
+      .then(d => setAffiliations(d.items || []))
+      .catch(e => setAffiliationsError(e.message));
+  }, [code]);
 
   if (error) return <div className="panel error">Error: {error}</div>;
   if (!person) return <div className="muted">Loading…</div>;
@@ -288,6 +300,52 @@ export default function PersonDetail() {
             <button>Add</button>
           </form>
         </div>
+      </div>
+
+      <div className="panel">
+        <h3>Communities</h3>
+        {affiliationsError ? (
+          <p className="muted" style={{ fontSize: 13 }}>Could not load affiliations: {affiliationsError}</p>
+        ) : affiliations.length === 0 ? (
+          <p className="muted" style={{ fontSize: 13 }}>No parish or school affiliations recorded.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>Organization</th><th>Role</th><th>Started</th><th>Ended</th><th>Reason</th><th>Last verified</th></tr>
+            </thead>
+            <tbody>
+              {affiliations
+                .slice()
+                .sort((a, b) => {
+                  const activeDiff = (a.ended_at ? 1 : 0) - (b.ended_at ? 1 : 0);
+                  if (activeDiff !== 0) return activeDiff;
+                  return (b.started_at || '').localeCompare(a.started_at || '');
+                })
+                .map(a => {
+                  return (
+                    <tr key={a.code}>
+                      <td>
+                        <Link to={`/organizations/${a.org_code}`}>{a.org_name || a.org_code}</Link>
+                        {a.org_kind && <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>({a.org_kind})</span>}
+                      </td>
+                      <td>{a.role || <span className="muted">—</span>}</td>
+                      <td className="muted">{a.started_at ? a.started_at.slice(0, 10) : '—'}</td>
+                      <td className="muted">
+                        {a.ended_at
+                          ? a.ended_at.slice(0, 10)
+                          : <span style={{ background: 'rgba(31,122,31,.12)', color: '#1f7a1f', padding: '1px 6px', borderRadius: 4, fontSize: 12 }}>active</span>}
+                      </td>
+                      <td>
+                        {a.reason || <span className="muted">—</span>}
+                        {a.reason_detail && <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>{a.reason_detail}</span>}
+                      </td>
+                      <td className="muted">{a.last_verified_at ? a.last_verified_at.slice(0, 10) : '—'}</td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="panel">

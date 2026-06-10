@@ -98,13 +98,17 @@ auditors.
 
 | Entity | Prefix | Example | Validator |
 |---|---|---|---|
-| Family | `f_` | `f_a7b3c91d` | `^f_[0-9a-f]{8}$` |
-| Person | `p_` | `p_e4d2f8a1` | `^p_[0-9a-f]{8}$` |
-| Email | `e_` | `e_b91c4f23` | `^e_[0-9a-f]{8}$` |
-| Phone | `ph_` | `ph_2d8a5e91` | `^ph_[0-9a-f]{8}$` |
-| Address | `addr_` | `addr_4c7f2a91` | `^addr_[0-9a-f]{8}$` |
-| Relationship | `r_` | `r_7d2f12a3` | `^r_[0-9a-f]{8}$` |
-| Membership | `m_` | `m_5e8a13b4` | `^m_[0-9a-f]{8}$` |
+| Family | `f_` | `f_a7b3c91d` | `^f_[0-9a-f]{8}(?:[0-9a-f]{8})?$` |
+| Person | `p_` | `p_e4d2f8a1` | `^p_[0-9a-f]{8}(?:[0-9a-f]{8})?$` |
+| Email | `e_` | `e_b91c4f23` | `^e_[0-9a-f]{8}(?:[0-9a-f]{8})?$` |
+| Phone | `ph_` | `ph_2d8a5e91` | `^ph_[0-9a-f]{8}(?:[0-9a-f]{8})?$` |
+| Address | `addr_` | `addr_4c7f2a91` | `^addr_[0-9a-f]{8}(?:[0-9a-f]{8})?$` |
+| Relationship | `r_` | `r_7d2f12a3` | `^r_[0-9a-f]{8}(?:[0-9a-f]{8})?$` |
+| Membership | `m_` | `m_5e8a13b4` | `^m_[0-9a-f]{8}(?:[0-9a-f]{8})?$` |
+
+Codes minted since the 64-bit widening carry 16 hex chars; 8-hex codes
+are the legacy width and remain valid. Validators must accept both —
+exactly 8 or exactly 16, nothing between.
 | Source record | `src_` | `src_3a1f8d2b` | |
 | Conflict | `conf_` | `conf_b1c2d3e4` | |
 | Token set | `tk_` | `tk_a1b2c3d4` | |

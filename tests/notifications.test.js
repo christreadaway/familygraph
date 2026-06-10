@@ -313,8 +313,8 @@ test('notify > body never contains family/person codes (check assign template)',
     assignee: 'a@b.c',
     ttlHours: 24,
   });
-  assert.doesNotMatch(t.text, /\bp_[0-9a-f]{8}\b/);
-  assert.doesNotMatch(t.text, /\bf_[0-9a-f]{8}\b/);
-  assert.doesNotMatch(t.html, /\bp_[0-9a-f]{8}\b/);
-  assert.doesNotMatch(t.html, /\bf_[0-9a-f]{8}\b/);
+  assert.doesNotMatch(t.text, /\bp_[0-9a-f]{8}(?:[0-9a-f]{8})?\b/);
+  assert.doesNotMatch(t.text, /\bf_[0-9a-f]{8}(?:[0-9a-f]{8})?\b/);
+  assert.doesNotMatch(t.html, /\bp_[0-9a-f]{8}(?:[0-9a-f]{8})?\b/);
+  assert.doesNotMatch(t.html, /\bf_[0-9a-f]{8}(?:[0-9a-f]{8})?\b/);
 });

@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { auditCtx: ctx } = require('./_ctx');
 const families = require('../identity/families');
 const contacts = require('../identity/contacts');
 const tagsLib = require('../identity/tags');
@@ -36,7 +37,7 @@ function build({ db, secrets, includePii }) {
   });
 
   r.post('/', (req, res) => {
-    const code = families.create(db, secrets, req.body || {});
+    const code = families.create(db, secrets, req.body || {}, ctx(req));
     audit.record(db, {
       action: 'family_create',
       actor: req.auth?.actor || 'unknown',
@@ -69,7 +70,7 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(req.params.code, 'family')) {
       return res.status(400).json({ error: 'invalid family code' });
     }
-    const updated = families.update(db, secrets, req.params.code, req.body || {});
+    const updated = families.update(db, secrets, req.params.code, req.body || {}, ctx(req));
     if (!updated) return res.status(404).json({ error: 'not found' });
     audit.record(db, {
       action: 'family_update',
@@ -157,7 +158,7 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(winner_code, 'family') || !isValidCode(req.params.code, 'family')) {
       return res.status(400).json({ error: 'invalid codes' });
     }
-    const code = families.merge(db, secrets, req.params.code, winner_code);
+    const code = families.merge(db, secrets, req.params.code, winner_code, ctx(req));
     audit.record(db, {
       action: 'family_merge',
       actor: req.auth?.actor || 'unknown',

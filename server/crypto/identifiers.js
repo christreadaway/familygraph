@@ -20,6 +20,12 @@ const PREFIXES = {
   ministry_assignment: 'ma_',
   diocese: 'dio_',
   entity_change: 'chg_',
+  organization: 'org_',
+  affiliation: 'aff_',
+  affiliation_verification: 'av_',
+  admin_account: 'acct_',
+  admin_login_token: 'mlt_',
+  admin_session: 'asn_',
 };
 
 const PREFIX_TO_KIND = Object.fromEntries(
@@ -29,7 +35,10 @@ const PREFIX_TO_KIND = Object.fromEntries(
 function newCode(kind) {
   const prefix = PREFIXES[kind];
   if (!prefix) throw new Error(`Unknown identifier kind: ${kind}`);
-  return prefix + crypto.randomBytes(4).toString('hex');
+  // 8 random bytes = 16 hex chars = 64 bits. Collision odds stay negligible
+  // even at diocese scale (50% birthday bound is ~5 billion codes per kind).
+  // Codes minted before this change carry 8 hex chars and remain valid.
+  return prefix + crypto.randomBytes(8).toString('hex');
 }
 
 function kindOf(code) {
@@ -43,14 +52,25 @@ function kindOf(code) {
   return null;
 }
 
+// Kinds that existed before the suffix widening (8 → 16 hex) and may
+// therefore have legacy 8-hex codes in real databases. Kinds minted
+// after the widening have only ever been 16 hex; accepting 8 for them
+// would turn an operator's truncated paste into a confusing 404
+// instead of the 400 the validation exists to give.
+const LEGACY_8HEX_KINDS = new Set([
+  'family', 'person', 'email', 'phone', 'address', 'relationship',
+  'membership', 'source', 'conflict', 'token_set', 'audit', 'rule',
+  'profile', 'ministry', 'ministry_assignment', 'diocese', 'entity_change',
+]);
+
 function isValidCode(code, kind = null) {
   if (typeof code !== 'string') return false;
   const k = kindOf(code);
   if (!k) return false;
   if (kind && k !== kind) return false;
-  // Hex suffix length is fixed at 8 chars after the prefix.
   const suffix = code.slice(PREFIXES[k].length);
-  return /^[0-9a-f]{8}$/.test(suffix);
+  if (/^[0-9a-f]{16}$/.test(suffix)) return true;
+  return LEGACY_8HEX_KINDS.has(k) && /^[0-9a-f]{8}$/.test(suffix);
 }
 
 module.exports = {

@@ -19,6 +19,20 @@ in [`product_spec.md`](./product_spec.md). The decision history lives in
 lives in
 [`ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md`](./ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md).
 
+## Provenance note: CDCF submission baseline
+
+The codebase as of commit `d4b5306` is exactly what was submitted to
+the Catholic Digital Commons Foundation (CDCF). Everything after that
+commit — organizations and dated affiliations, rolling verification,
+alumni transitions and departure classes, staff accounts with
+domain-verified login, the dashboard UI for all of it, and the
+2026-06-10 code-review fixes — postdates the initial submission and is
+NOT part of what the CDCF reviewed. If the CDCF copy ever needs to be
+reproduced, `git checkout d4b5306` is that snapshot; the decision
+history for everything since lives in `session_notes.md`,
+`IDENTITY_MODEL_SUMMARY.md`, `STAFF_ACCOUNTS_PRD.md`, and
+`CODE_REVIEW_2026-06-10.md`.
+
 ---
 
 ## Security requirement: Socket Firewall
@@ -464,6 +478,136 @@ Notes on the catalog:
   empty (clears). `eim_completed_on` and `eim_expires_on` must be
   ISO-8601 dates (`YYYY-MM-DD`). Bad input gets a 400 with a
   message naming the offending field.
+
+### Organizations + affiliations (parish / school membership)
+
+Community membership is temporal — kids graduate, families move, people
+die or stop attending. So "is this family at the parish, the school, or
+both?" is never a stored flag in Family Graph. It's a query over dated
+affiliation rows, the same way household composition works: leaving a
+community is an end-date with a reason, not a delete.
+
+Organizations are first-class entities with their own `org_` codes
+(`kind` = `parish` / `school` / `other`, optional `diocese_code`). An
+affiliation links a person OR a family (exactly one) to an organization
+with a role and a lifespan. Parish registration is family-level by
+convention (default role `registered` for a family at a parish); school
+enrollment is person-level (`student` requires a person).
+
+Every affiliation carries a rolling `last_verified_at` marker plus an
+append-only verification trail. Verification refreshes confidence — it
+never gates existence. Each piece of observed activity (a registration
+form, a sacrament, liturgy or ministry participation, giving, mail and
+email still landing, a connector sync returning the record, an explicit
+operator attestation) appends a row and bumps the marker. A family that
+goes quiet simply stops accruing rows and surfaces on the staleness
+report for a human to confirm; nothing auto-expires.
+
+- `GET /api/organizations` / `?kind=parish|school` / `?status=all` — catalog.
+- `POST /api/organizations` — create (`name`, `kind`, optional `diocese_code`).
+- `GET /api/organizations/:code` — organization + active affiliations.
+- `PATCH /api/organizations/:code` — edit. `DELETE` — archive.
+- `POST /api/organizations/:code/affiliations` — affiliate a person OR a
+  family (exactly one of `person_code`, `family_code`; optional `role`).
+- `DELETE /api/organizations/affiliations/:code` — end an affiliation.
+  `reason` is a high-level class (`graduated` / `transferred` / `moved`
+  / `deceased` / `withdrew` / `inactive` / `other`); the story behind it
+  goes in `reason_detail`, and `ended_at` may be approximate (`2025`,
+  `2025-08`, or a full date) for departures noticed after the fact.
+  Nothing is ever removed — leaving is always an end-date.
+- `POST /api/organizations/affiliations/:code/transition` — end the
+  current role and open a successor in one transaction. The canonical
+  case is student → alumni at graduation or transfer (default
+  `to_role: "alumni"`, default reason `graduated`): leaving the student
+  role doesn't mean leaving the community.
+- `POST /api/organizations/affiliations/:code/verify` — record observed
+  activity (`method` = `registration` / `sacrament` / `liturgy` /
+  `ministry` / `giving` / `communication` / `connector_sync` /
+  `attestation` / `other`, optional `source`, optional backdated
+  `verified_at` — the marker only moves forward, and an optional
+  `period` label like `2025-2026` or `2026` notes the participation
+  year).
+- `GET /api/organizations/affiliations/:code/verifications` — the
+  trail, plus `periods`: the distinct years a student attended or a
+  family participated on the parish roster.
+- `GET /api/organizations/:code/stale?days=N` — the rolling-verification
+  work queue: active affiliations nothing has confirmed in N days
+  (default 365).
+- `GET /api/organizations/by-person/:code` / `by-family/:code` — the
+  computed "parish, school, or both" answer for one person or family.
+  Affiliation rows carry joined `org_name` / `org_kind` so consumers
+  don't need the organization catalog to label them.
+
+Re-affiliating someone already active updates the row in place instead
+of stacking duplicates (only the fields you actually send are touched —
+a bare re-confirm never downgrades a role or clears notes); leaving and
+returning produces a second dated row so history survives; re-ending an
+already-ended affiliation is a 409 and the row keeps its original
+reason and date. Person and family merges carry affiliations onto the
+winning code, ending duplicates rather than colliding, with
+entity_changes snapshots for every row the merge touches.
+
+The dashboard surfaces all of this under **Parishes & schools**:
+catalog + create, per-organization detail with the affiliation roster
+(verify / transition / end inline), the verification trail with years
+of participation, the stale report, and domain management. Person and
+family detail pages each gain a read-only **Communities** panel, and
+**Staff accounts** + **/login** cover account administration and staff
+sign-in.
+
+### Staff accounts (domain-verified login)
+
+Named, passwordless accounts for parish and school staff. Eligibility
+is proven by the institution's own web domain: an account can only be
+invited on a domain the organization has verified. Staff sign in with
+a magic link sent to their institutional email; redeeming it issues a
+`st_…` bearer token that rides the same scope system as every other
+caller. Every staff write lands in both audit logs (`audit_events` +
+`entity_changes`) attributed to the person, not a shared key.
+
+Domain verification lives on the organization record. The operator
+sets the org's domain, FamilyGraph issues a token, and the parish or
+school proves control either with a DNS TXT record
+(`familygraph-verify=<token>`) or a well-known file at
+`https://<domain>/.well-known/familygraph-verify.txt`. Changing the
+domain always requires re-verification. Un-verifying or changing the
+domain, or archiving the organization, doesn't just stop new logins —
+it revokes the org's live staff sessions and pending links in the same
+transaction, because that's the moment the operator means "stop
+trusting this domain NOW".
+
+Login is invite-only — no self-signup; the master token provisions
+accounts. Staff POST their email; if an active account exists, a
+single-use 15-minute link goes out through the notifications queue,
+and the response never reveals whether the account exists. Redeeming
+the link yields a 12-hour session. Disabling an account kills its
+sessions immediately. Magic-link and session tokens are stored only as
+SHA-256 hashes and never logged.
+
+- `POST /api/organizations/:code/domain` — master only; body
+  `{domain}` (null clears); returns the verification token plus
+  instructions.
+- `POST /api/organizations/:code/domain/verify` — master only; body
+  `{method: "dns" | "http"}`.
+- `GET /api/accounts` / `POST /api/accounts` /
+  `PATCH /api/accounts/:code` / `DELETE /api/accounts/:code` — master
+  only. POST body `{email, display_name, scopes?, org_code?}` (scopes
+  from the existing vocabulary, `*` not grantable; default
+  `["pii.read"]`; `org_code` disambiguates when a parish and its school
+  legitimately share one verified domain). DELETE disables the account
+  (revokes sessions immediately).
+- `POST /api/auth/request-link` — open + rate-limited; body `{email}`;
+  always returns `{ok: true}`.
+- `POST /api/auth/redeem` — body `{token}`; returns
+  `{token, expires_at, account}` or 401.
+- `GET /api/auth/me` — session bearer; returns the account context.
+- `POST /api/auth/logout` — session bearer; revokes the session.
+
+Duplicate/merge decisions remain a human judgment call made by whoever
+actually knows the family — secretary, pastor, business manager,
+principal, or school staff — via the conflicts queue and its
+assignment feature; see
+[`STAFF_ACCOUNTS_PRD.md`](./STAFF_ACCOUNTS_PRD.md).
 
 ### External-app identity API
 

@@ -723,7 +723,7 @@ CREATE INDEX IF NOT EXISTS person_consent_overrides_school_idx
 
 CREATE TABLE IF NOT EXISTS entity_changes (
   code          TEXT PRIMARY KEY,
-  entity_kind   TEXT NOT NULL,           -- person | family | membership | consent | consent_override | school_context | eim_certification | diocese | webhook_subscription
+  entity_kind   TEXT NOT NULL,           -- person | family | membership | consent | consent_override | school_context | eim_certification | diocese | webhook_subscription | organization | affiliation | affiliation_verification
   entity_code   TEXT NOT NULL,
   operation     TEXT NOT NULL,           -- create | update | archive | reinstate | merge | split | delete
   before_json   TEXT,
@@ -739,3 +739,150 @@ CREATE INDEX IF NOT EXISTS entity_changes_entity_idx     ON entity_changes (enti
 CREATE INDEX IF NOT EXISTS entity_changes_created_at_idx ON entity_changes (created_at);
 CREATE INDEX IF NOT EXISTS entity_changes_operation_idx  ON entity_changes (operation);
 CREATE INDEX IF NOT EXISTS entity_changes_actor_idx      ON entity_changes (actor);
+
+-------------------------------------------------------------------------------
+-- Organizations and affiliations (migration 0014)
+-------------------------------------------------------------------------------
+-- Community membership is temporal: kids graduate, families move, people
+-- die or stop attending. "Parish, school, or both" is therefore never a
+-- stored flag; it's a query over affiliation rows with started_at /
+-- ended_at, the same way `memberships` treats household composition.
+-- Leaving a community is an end-date with a reason, not a delete.
+--
+-- `last_verified_at` is a rolling freshness marker. Verification
+-- refreshes confidence, never gates existence: a stale affiliation is a
+-- dashboard signal for the operator, not an auto-expiry. The
+-- append-only `affiliation_verifications` trail records WHY we believe
+-- the affiliation is alive (registration form, sacrament, liturgy or
+-- ministry participation, giving, connector sync, operator attestation).
+
+CREATE TABLE IF NOT EXISTS organizations (
+  code         TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  kind         TEXT NOT NULL,             -- parish | school | other
+  diocese_code TEXT,                      -- soft FK to dioceses.code
+  notes_ct     BLOB,
+  -- Domain verification (migration 0015): proves the institution
+  -- controls its web domain, which is what makes staff-account
+  -- invitations on that domain trustworthy.
+  domain                     TEXT,
+  domain_verification_token  TEXT,
+  domain_verified_at         TEXT,
+  domain_verification_method TEXT,        -- dns | http
+  status       TEXT NOT NULL DEFAULT 'active',
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (kind IN ('parish','school','other')),
+  CHECK (status IN ('active','archived'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS organizations_kind_name_active_uniq
+  ON organizations (kind, name) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS organizations_kind_idx       ON organizations (kind);
+CREATE INDEX IF NOT EXISTS organizations_status_idx     ON organizations (status);
+CREATE INDEX IF NOT EXISTS organizations_updated_at_idx ON organizations (updated_at);
+CREATE INDEX IF NOT EXISTS organizations_domain_idx     ON organizations (domain);
+
+-- One row affiliates a person OR a family (exactly one, the
+-- ministry_assignments pattern). Parish registration is family-level by
+-- convention; school enrollment is person-level.
+CREATE TABLE IF NOT EXISTS affiliations (
+  code             TEXT PRIMARY KEY,
+  org_code         TEXT NOT NULL REFERENCES organizations(code) ON DELETE CASCADE,
+  person_code      TEXT REFERENCES persons(code)  ON DELETE CASCADE,
+  family_code      TEXT REFERENCES families(code) ON DELETE CASCADE,
+  role             TEXT NOT NULL DEFAULT 'member',
+  started_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  ended_at         TEXT,                  -- null while active; may be approximate (operator-supplied)
+  reason           TEXT,                  -- high-level departure class, see CHECK
+  reason_detail    TEXT,                  -- free-text story behind the class
+  last_verified_at TEXT,                  -- refreshed by each verification row
+  notes_ct         BLOB,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (role IN ('registered','parishioner','student','alumni','staff','volunteer','clergy','member','other')),
+  CHECK (reason IS NULL OR reason IN ('graduated','transferred','moved','deceased','withdrew','inactive','merge','other')),
+  CHECK (
+    (person_code IS NOT NULL AND family_code IS NULL)
+    OR (person_code IS NULL AND family_code IS NOT NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS affiliations_org_idx      ON affiliations (org_code);
+CREATE INDEX IF NOT EXISTS affiliations_person_idx   ON affiliations (person_code);
+CREATE INDEX IF NOT EXISTS affiliations_family_idx   ON affiliations (family_code);
+CREATE INDEX IF NOT EXISTS affiliations_active_idx   ON affiliations (org_code, ended_at);
+CREATE INDEX IF NOT EXISTS affiliations_verified_idx ON affiliations (org_code, last_verified_at);
+CREATE UNIQUE INDEX IF NOT EXISTS affiliations_active_person_uniq
+  ON affiliations (org_code, person_code) WHERE ended_at IS NULL AND person_code IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS affiliations_active_family_uniq
+  ON affiliations (org_code, family_code) WHERE ended_at IS NULL AND family_code IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS affiliation_verifications (
+  code             TEXT PRIMARY KEY,
+  affiliation_code TEXT NOT NULL REFERENCES affiliations(code) ON DELETE CASCADE,
+  method           TEXT NOT NULL,         -- registration | sacrament | liturgy | ministry | giving | communication | connector_sync | attestation | other
+  source           TEXT,                  -- connector / app / operator label
+  period           TEXT,                  -- participation-year label ('2025-2026' school year, '2026' parish year)
+  verified_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  notes_ct         BLOB,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (method IN ('registration','sacrament','liturgy','ministry','giving','communication','connector_sync','attestation','other'))
+);
+CREATE INDEX IF NOT EXISTS affiliation_verifications_affiliation_idx
+  ON affiliation_verifications (affiliation_code, verified_at);
+CREATE INDEX IF NOT EXISTS affiliation_verifications_period_idx
+  ON affiliation_verifications (affiliation_code, period);
+
+-------------------------------------------------------------------------------
+-- Staff accounts with domain-verified login (migration 0015)
+-------------------------------------------------------------------------------
+-- See STAFF_ACCOUNTS_PRD.md. Accounts are invited (no self-signup) and
+-- only for emails whose domain matches a verified domain on an active
+-- organization. Login is passwordless: a single-use magic link (15 min)
+-- redeems into a 12-hour `st_…` bearer session that the standard auth
+-- middleware resolves alongside master and `sk_` keys. Raw tokens are
+-- never stored — SHA-256 hashes only. Email is encrypted with an HMAC
+-- lookup hash; never plaintext.
+-- (Domain verification columns live on `organizations`, added by the
+-- migration via ALTER TABLE: domain, domain_verification_token,
+-- domain_verified_at, domain_verification_method.)
+
+CREATE TABLE IF NOT EXISTS admin_accounts (
+  code          TEXT PRIMARY KEY,
+  email_ct      BLOB NOT NULL,
+  email_hash    TEXT NOT NULL,
+  display_name  TEXT NOT NULL,
+  org_code      TEXT NOT NULL REFERENCES organizations(code),
+  scopes        TEXT NOT NULL,               -- JSON array, api_keys vocabulary, '*' not grantable
+  status        TEXT NOT NULL DEFAULT 'active',
+  last_login_at TEXT,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (status IN ('active','disabled'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS admin_accounts_email_active_uniq
+  ON admin_accounts (email_hash) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS admin_accounts_org_idx    ON admin_accounts (org_code);
+CREATE INDEX IF NOT EXISTS admin_accounts_status_idx ON admin_accounts (status);
+
+CREATE TABLE IF NOT EXISTS admin_login_tokens (
+  code         TEXT PRIMARY KEY,
+  account_code TEXT NOT NULL REFERENCES admin_accounts(code) ON DELETE CASCADE,
+  token_hash   TEXT NOT NULL UNIQUE,
+  expires_at   TEXT NOT NULL,
+  used_at      TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS admin_login_tokens_account_idx
+  ON admin_login_tokens (account_code, expires_at);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  code         TEXT PRIMARY KEY,
+  account_code TEXT NOT NULL REFERENCES admin_accounts(code) ON DELETE CASCADE,
+  token_hash   TEXT NOT NULL UNIQUE,
+  expires_at   TEXT NOT NULL,
+  revoked_at   TEXT,
+  last_used_at TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS admin_sessions_account_idx
+  ON admin_sessions (account_code, expires_at);

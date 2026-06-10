@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { api, getToken, setToken, validateToken } from './api.js';
 import StatusRail from './components/StatusRail.jsx';
 import Header from './components/Header.jsx';
@@ -22,6 +22,9 @@ import ExportView from './views/Export.jsx';
 import Notifications from './views/Notifications.jsx';
 import { ConnectorsList, ConnectorDetail } from './views/Connectors.jsx';
 import Ministries from './views/Ministries.jsx';
+import { OrganizationsList, OrganizationDetail } from './views/Organizations.jsx';
+import Accounts from './views/Accounts.jsx';
+import Login from './views/Login.jsx';
 
 const REASON_HINT = {
   no_bearer: 'No token sent. Paste your Bearer token below.',
@@ -87,6 +90,11 @@ function NavItem({ to, children, badge }) {
 }
 
 export default function App() {
+  const location = useLocation();
+  // /login is the staff magic-link surface: it must work with no token
+  // at all (the link in the email IS the credential), so the operator
+  // token banner stays out of the way there.
+  const onLoginRoute = location.pathname === '/login';
   const [tokenOk, setTokenOk] = useState(false);
   const [health, setHealth] = useState(null);
   const [tokenBusy, setTokenBusy] = useState(false);
@@ -117,6 +125,12 @@ export default function App() {
 
   useEffect(() => {
     function onAuthFailed(e) {
+      // 403 missing_scope means the CREDENTIAL is fine — the surface is
+      // just beyond its scopes. That's a normal click for a read-only
+      // staff session (the sidebar shows every link); wiping the token
+      // here would log staff out and dead-end them in master-token
+      // instructions. Only a 401 (dead/unknown credential) clears it.
+      if (e.detail?.reason === 'missing_scope') return;
       setTokenOk(false);
       setLastReason(e.detail?.reason || null);
       setLastError(e.detail?.detail || null);
@@ -169,6 +183,7 @@ export default function App() {
             </NavItem>
             <NavItem to="/rules">Resolution rules</NavItem>
             <NavItem to="/ministries">Ministries &amp; EIM</NavItem>
+            <NavItem to="/organizations">Parishes &amp; schools</NavItem>
           </nav>
           <div className="sidebar-eyebrow" style={{ marginTop: 12 }}>Egress</div>
           <nav>
@@ -181,6 +196,7 @@ export default function App() {
             <NavItem to="/notifications">Notifications</NavItem>
             <NavItem to="/profiles">Profiles</NavItem>
             <NavItem to="/keys">API keys</NavItem>
+            <NavItem to="/accounts">Staff accounts</NavItem>
             <NavItem to="/settings">Settings</NavItem>
             <NavItem to="/settings/connectors">Connectors</NavItem>
           </nav>
@@ -224,7 +240,7 @@ export default function App() {
         </aside>
         <main className="main">
           <TokenBanner
-            ok={tokenOk}
+            ok={tokenOk || onLoginRoute}
             busy={tokenBusy}
             lastReason={lastReason}
             lastError={lastError}
@@ -232,6 +248,7 @@ export default function App() {
           />
           <Routes>
             <Route path="/" element={<Navigate to="/import" replace />} />
+            <Route path="/login" element={<Login onSession={() => setTokenOk(true)} />} />
             <Route path="/search" element={<Search />} />
             <Route path="/families" element={<Families />} />
             <Route path="/families/:code" element={<FamilyDetail />} />
@@ -240,6 +257,9 @@ export default function App() {
             <Route path="/conflicts" element={<Conflicts />} />
             <Route path="/rules" element={<Rules />} />
             <Route path="/ministries" element={<Ministries />} />
+            <Route path="/organizations" element={<OrganizationsList />} />
+            <Route path="/organizations/:code" element={<OrganizationDetail />} />
+            <Route path="/accounts" element={<Accounts />} />
             <Route path="/import" element={<ImportView />} />
             <Route path="/imports" element={<ImportsList />} />
             <Route path="/imports/:code" element={<ImportDetail />} />
