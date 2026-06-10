@@ -102,6 +102,47 @@ verification trail, the backdated high-water mark, the stale report,
 both merge directions, and the auth posture. Suite total: 503 tests,
 502 pass, 1 pre-existing skip.
 
+## Collision vs. duplication (operator question, answered 2026-06-10)
+
+Are we relying on probability for unique codes? Two different risks,
+two different answers:
+
+- **Collision** (two people minted the SAME code): prevented by 64-bit
+  randomness AND the primary-key constraint (a one-in-billions clash
+  fails loudly at insert, never silently fuses records) AND prefix
+  namespacing (`p_` can never collide with `f_`). Codes are NOT derived
+  from family/parish context — deliberately, since context changes and
+  identity must not.
+- **Duplication** (one person entering through two doors and getting
+  TWO codes — e.g. dad plays a golf tournament at one school while his
+  kid attends another): not a hex problem, an identity-resolution
+  problem. One human = one `p_` code deployment-wide; appearing in two
+  communities is ONE person with TWO affiliations. The resolver links
+  definitive matches; uncertain matches go to the conflicts queue for
+  human judgment; merged duplicates leave a permanent alias and all
+  affiliations repoint losslessly. The weak spot is sparse rosters
+  (name-only signups) — which is what the cross-source conflicts queue
+  and staff assignment exist for.
+- Caveat on "across the system": codes are unique per FamilyGraph
+  deployment. Cross-install identity (same family in two parishes'
+  separate installs) would be diocese-level federation, deliberately
+  not designed yet.
+
+The operator's likely scenarios, all expressed as one identity with
+multiple dated affiliations and covered by a test
+("multi-community" in `tests/organizations.test.js`):
+
+- Dad volunteers at a golf tournament at one school while his kid
+  attends another → one `p_` code, a `volunteer` affiliation at
+  School A and family/student affiliations at School B.
+- A kid is an alumnus of one school and a current student at another
+  nearby → two simultaneous ACTIVE affiliations (`alumni` at A,
+  `student` at B); the per-org uniqueness rule never conflicts across
+  organizations.
+- A family moves from one parish to another → end-dated registration
+  (reason `moved`, approximate date allowed) at Parish A, fresh
+  registration at Parish B, history preserved at both.
+
 ## Added later the same day: alumni, departure classes, participation years
 
 Three more operator rules, all shipped (migration 0016):

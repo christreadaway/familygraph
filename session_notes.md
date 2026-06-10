@@ -2942,4 +2942,29 @@ skip.
 
 ---
 
+## Follow-up: collision vs. duplication, and the multi-community test
+
+The operator's closing question: are unique codes purely probabilistic,
+or combined with family/parish context? Answer recorded in
+`IDENTITY_MODEL_SUMMARY.md`: collisions are prevented by 64-bit
+randomness PLUS the primary-key constraint (a clash fails loudly,
+never silently fuses records) PLUS prefix namespacing — and codes are
+deliberately NOT derived from family/parish context, because context
+changes and identity must not. The realistic risk is duplication (one
+person entering through two doors), which is the resolver + conflicts
+queue + human judgment + merge-with-alias pipeline, not a hex problem.
+
+The operator's likely scenarios — dad in a golf tournament at one
+school while his kid attends another; a kid alumni of one school and
+enrolled at a nearby one; a family moving parish to parish — are all
+one identity with multiple dated affiliations, and now pinned by the
+"multi-community" test: two simultaneous active affiliations at
+different orgs never conflict (uniqueness is per-org), and a parish
+move leaves dated history at both ends.
+
+1 new test. New total: 518 tests, 517 pass, 0 fail, 1 pre-existing
+skip.
+
+---
+
 *End of session notes*

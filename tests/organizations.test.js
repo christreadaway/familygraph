@@ -447,6 +447,63 @@ test('periods > verification rows carry year labels; distinct years listed for s
   assert.equal(famTrail.body.items[0].period, '2026');
 });
 
+test('multi-community > alumni of one school, student at another; family moves parishes', async t => {
+  const { port, secrets } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}` };
+  const { family, person, parish, school } = await seed(port, auth);
+  const school2 = (await req(port, {
+    method: 'POST', path: '/api/organizations', headers: auth,
+    body: { name: '[School Name 2]', kind: 'school' },
+  })).body.code;
+  const parish2 = (await req(port, {
+    method: 'POST', path: '/api/organizations', headers: auth,
+    body: { name: '[Parish Name 2]', kind: 'parish' },
+  })).body.code;
+
+  // Kid attends School 1, transfers: alumni there, student at School 2.
+  const enrollment = (await req(port, {
+    method: 'POST', path: `/api/organizations/${school}/affiliations`, headers: auth,
+    body: { person_code: person, role: 'student' },
+  })).body.code;
+  await req(port, {
+    method: 'POST', path: `/api/organizations/affiliations/${enrollment}/transition`, headers: auth,
+    body: { reason: 'transferred' },
+  });
+  await req(port, {
+    method: 'POST', path: `/api/organizations/${school2}/affiliations`, headers: auth,
+    body: { person_code: person, role: 'student' },
+  });
+
+  const kid = await req(port, { path: `/api/organizations/by-person/${person}`, headers: auth });
+  assert.equal(kid.body.items.length, 2, 'one person, two simultaneous active affiliations');
+  const byOrg = Object.fromEntries(kid.body.items.map(a => [a.org_code, a.role]));
+  assert.equal(byOrg[school], 'alumni');
+  assert.equal(byOrg[school2], 'student');
+
+  // Family moves from Parish 1 to Parish 2; history survives at both.
+  const reg1 = (await req(port, {
+    method: 'POST', path: `/api/organizations/${parish}/affiliations`, headers: auth,
+    body: { family_code: family },
+  })).body.code;
+  await req(port, {
+    method: 'DELETE', path: `/api/organizations/affiliations/${reg1}`, headers: auth,
+    body: { reason: 'moved', reason_detail: 'registered at [Parish Name 2]', ended_at: '2026-01' },
+  });
+  await req(port, {
+    method: 'POST', path: `/api/organizations/${parish2}/affiliations`, headers: auth,
+    body: { family_code: family },
+  });
+
+  const famActive = await req(port, { path: `/api/organizations/by-family/${family}`, headers: auth });
+  assert.equal(famActive.body.items.length, 1);
+  assert.equal(famActive.body.items[0].org_code, parish2, 'active registration at the new parish');
+  const famAll = await req(port, { path: `/api/organizations/by-family/${family}?status=all`, headers: auth });
+  assert.equal(famAll.body.items.length, 2, 'the old parish keeps its dated history row');
+  const old = famAll.body.items.find(a => a.org_code === parish);
+  assert.equal(old.reason, 'moved');
+  assert.equal(old.ended_at, '2026-01');
+});
+
 // ---------------------------------------------------------------------------
 // Merge integration
 // ---------------------------------------------------------------------------
