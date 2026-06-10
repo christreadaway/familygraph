@@ -25,6 +25,7 @@
 const enc = require('../crypto/encryption');
 const { newCode, isValidCode } = require('../crypto/identifiers');
 const aliases = require('./aliases');
+const history = require('./history');
 
 const KINDS = new Set(['parish', 'school', 'other']);
 const ROLES = new Set(['registered', 'parishioner', 'student', 'staff', 'volunteer', 'clergy', 'member', 'other']);
@@ -84,7 +85,7 @@ function row2verification(row, secrets, { includePii = false } = {}) {
 // Organization catalog
 // ---------------------------------------------------------------------------
 
-function createOrganization(db, secrets, input = {}) {
+function createOrganization(db, secrets, input = {}, audit = {}) {
   if (!input.name || !String(input.name).trim()) {
     throw new Error('organization name is required');
   }
@@ -96,17 +97,26 @@ function createOrganization(db, secrets, input = {}) {
     throw new Error('invalid diocese_code');
   }
   const code = newCode('organization');
-  db.prepare(
-    `INSERT INTO organizations (code, name, kind, diocese_code, notes_ct)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(
-    code,
-    String(input.name).trim(),
-    kind,
-    input.diocese_code || null,
-    enc.encrypt(secrets, input.notes),
-  );
-  return code;
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO organizations (code, name, kind, diocese_code, notes_ct)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(
+      code,
+      String(input.name).trim(),
+      kind,
+      input.diocese_code || null,
+      enc.encrypt(secrets, input.notes),
+    );
+    const row = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(code);
+    history.record(db, {
+      entityKind: 'organization', entityCode: code, operation: 'create',
+      before: null, after: row,
+      actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+    });
+    return code;
+  });
+  return tx();
 }
 
 function listOrganizations(db, { status = 'active', kind = null } = {}) {
@@ -123,7 +133,7 @@ function getOrganization(db, code) {
   return row2org(db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(code));
 }
 
-function updateOrganization(db, secrets, code, patch = {}) {
+function updateOrganization(db, secrets, code, patch = {}, audit = {}) {
   if (!isValidCode(code, 'organization')) return null;
   const existing = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(code);
   if (!existing) return null;
@@ -149,23 +159,33 @@ function updateOrganization(db, secrets, code, patch = {}) {
     status = patch.status;
   }
   const notesCt = 'notes' in patch ? enc.encrypt(secrets, patch.notes) : existing.notes_ct;
-  db.prepare(
-    `UPDATE organizations SET name = ?, kind = ?, diocese_code = ?, status = ?, notes_ct = ?,
-       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-     WHERE code = ?`
-  ).run(name, kind, dioceseCode, status, notesCt, code);
-  return code;
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE organizations SET name = ?, kind = ?, diocese_code = ?, status = ?, notes_ct = ?,
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE code = ?`
+    ).run(name, kind, dioceseCode, status, notesCt, code);
+    const after = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(code);
+    history.record(db, {
+      entityKind: 'organization', entityCode: code,
+      operation: audit.operation || 'update',
+      before: existing, after,
+      actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+    });
+    return code;
+  });
+  return tx();
 }
 
-function archiveOrganization(db, secrets, code) {
-  return updateOrganization(db, secrets, code, { status: 'archived' });
+function archiveOrganization(db, secrets, code, audit = {}) {
+  return updateOrganization(db, secrets, code, { status: 'archived' }, { ...audit, operation: 'archive' });
 }
 
 // ---------------------------------------------------------------------------
 // Affiliations
 // ---------------------------------------------------------------------------
 
-function affiliate(db, secrets, orgCode, input = {}) {
+function affiliate(db, secrets, orgCode, input = {}, audit = {}) {
   if (!isValidCode(orgCode, 'organization')) throw new Error('invalid organization code');
   const org = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(orgCode);
   if (!org) throw new Error('organization not found');
@@ -211,33 +231,63 @@ function affiliate(db, secrets, orgCode, input = {}) {
       : `SELECT * FROM affiliations WHERE org_code = ? AND family_code = ? AND ended_at IS NULL`
   ).get(orgCode, resolvedPerson || resolvedFamily);
   if (existingActive) {
-    db.prepare(
-      `UPDATE affiliations SET role = ?, notes_ct = ?,
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE code = ?`
-    ).run(role, enc.encrypt(secrets, input.notes), existingActive.code);
-    return existingActive.code;
+    const tx = db.transaction(() => {
+      db.prepare(
+        `UPDATE affiliations SET role = ?, notes_ct = ?,
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE code = ?`
+      ).run(role, enc.encrypt(secrets, input.notes), existingActive.code);
+      const after = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(existingActive.code);
+      history.record(db, {
+        entityKind: 'affiliation', entityCode: existingActive.code, operation: 'update',
+        before: existingActive, after,
+        actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+      });
+      return existingActive.code;
+    });
+    return tx();
   }
 
   const code = newCode('affiliation');
-  db.prepare(
-    `INSERT INTO affiliations (code, org_code, person_code, family_code, role, notes_ct)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(code, orgCode, resolvedPerson, resolvedFamily, role, enc.encrypt(secrets, input.notes));
-  return code;
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO affiliations (code, org_code, person_code, family_code, role, notes_ct)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(code, orgCode, resolvedPerson, resolvedFamily, role, enc.encrypt(secrets, input.notes));
+    const row = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
+    history.record(db, {
+      entityKind: 'affiliation', entityCode: code, operation: 'create',
+      before: null, after: row,
+      actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+    });
+    return code;
+  });
+  return tx();
 }
 
-function endAffiliation(db, code, { reason } = {}) {
+function endAffiliation(db, code, { reason, actor, actorKind, requestId } = {}) {
   if (!isValidCode(code, 'affiliation')) throw new Error('invalid affiliation code');
   const row = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
   if (!row) return null;
   if (row.ended_at) return code;
-  db.prepare(
-    `UPDATE affiliations SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-       reason = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-     WHERE code = ?`
-  ).run(reason ? String(reason) : null, code);
-  return code;
+  const tx = db.transaction(() => {
+    db.prepare(
+      `UPDATE affiliations SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         reason = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE code = ?`
+    ).run(reason ? String(reason) : null, code);
+    const after = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
+    history.record(db, {
+      // 'archive' is the closest fit in the entity_changes operation
+      // vocabulary: the row survives, dated and inactive.
+      entityKind: 'affiliation', entityCode: code, operation: 'archive',
+      before: row, after,
+      actor: actor || 'system', actorKind, requestId,
+      reason: reason ? String(reason) : null,
+    });
+    return code;
+  });
+  return tx();
 }
 
 // Record one observed piece of activity that demonstrates the
@@ -245,7 +295,7 @@ function endAffiliation(db, code, { reason } = {}) {
 // transaction. verified_at may be supplied for backfilled activity
 // (e.g. a giving batch imported a week late); last_verified_at only
 // moves forward.
-function verify(db, secrets, affiliationCode, input = {}) {
+function verify(db, secrets, affiliationCode, input = {}, audit = {}) {
   if (!isValidCode(affiliationCode, 'affiliation')) {
     throw new Error('invalid affiliation code');
   }
@@ -262,13 +312,19 @@ function verify(db, secrets, affiliationCode, input = {}) {
       `INSERT INTO affiliation_verifications (code, affiliation_code, method, source, verified_at, notes_ct)
        VALUES (?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now')), ?)`
     ).run(code, affiliationCode, method, input.source ? String(input.source) : null, verifiedAt, enc.encrypt(secrets, input.notes));
-    const v = db.prepare(`SELECT verified_at FROM affiliation_verifications WHERE code = ?`).get(code);
+    const v = db.prepare(`SELECT * FROM affiliation_verifications WHERE code = ?`).get(code);
     db.prepare(
       `UPDATE affiliations
           SET last_verified_at = MAX(COALESCE(last_verified_at, ''), ?),
               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
         WHERE code = ?`
     ).run(v.verified_at, affiliationCode);
+    history.record(db, {
+      entityKind: 'affiliation_verification', entityCode: code, operation: 'create',
+      before: null, after: v,
+      actor: audit.actor || 'system', actorKind: audit.actorKind, requestId: audit.requestId,
+      relatedCodes: [affiliationCode],
+    });
     return code;
   });
   return tx();

@@ -398,3 +398,49 @@ test('organizations > surface requires a bearer token', async t => {
   const noAuth = await req(port, { path: '/api/organizations' });
   assert.equal(noAuth.status, 401);
 });
+
+// ---------------------------------------------------------------------------
+// Audit trail: any change must leave one
+// ---------------------------------------------------------------------------
+
+test('audit > every organization/affiliation write lands an entity_changes snapshot', async t => {
+  const { port, secrets, db } = await makeServer(t);
+  const auth = { authorization: `Bearer ${secrets.master}`, 'x-family-graph-actor': 'test_admin' };
+  const { family, parish } = await seed(port, auth);
+
+  const aff = (await req(port, {
+    method: 'POST', path: `/api/organizations/${parish}/affiliations`, headers: auth,
+    body: { family_code: family },
+  })).body.code;
+  await req(port, {
+    method: 'POST', path: `/api/organizations/affiliations/${aff}/verify`, headers: auth,
+    body: { method: 'giving' },
+  });
+  await req(port, {
+    method: 'DELETE', path: `/api/organizations/affiliations/${aff}`, headers: auth,
+    body: { reason: 'moved' },
+  });
+  await req(port, { method: 'DELETE', path: `/api/organizations/${parish}`, headers: auth });
+
+  const changes = db.prepare(
+    `SELECT entity_kind, operation, actor, before_json, after_json FROM entity_changes
+      WHERE entity_kind IN ('organization','affiliation','affiliation_verification')
+      ORDER BY created_at`
+  ).all();
+  const shapes = changes.map(c => `${c.entity_kind}:${c.operation}`);
+  for (const expected of [
+    'organization:create',      // seed created the parish (and school)
+    'affiliation:create',
+    'affiliation_verification:create',
+    'affiliation:archive',      // end = dated archive, row survives
+    'organization:archive',
+  ]) {
+    assert.ok(shapes.includes(expected), `expected a ${expected} change row, got ${shapes.join(', ')}`);
+  }
+  for (const c of changes) {
+    assert.equal(c.actor, 'test_admin', 'actor recorded on every change row');
+    assert.ok(c.after_json, 'after snapshot present');
+  }
+  const ended = changes.find(c => c.entity_kind === 'affiliation' && c.operation === 'archive');
+  assert.ok(ended.before_json, 'end records the before snapshot');
+});

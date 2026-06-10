@@ -9,6 +9,14 @@ const { isValidCode } = require('../crypto/identifiers');
 function build({ db, secrets, includePii }) {
   const r = express.Router();
 
+  // Audit context forwarded into the entity_changes snapshot log so every
+  // write records who did it (any change must have an audit trail).
+  const ctx = req => ({
+    actor: req.auth?.actor || 'unknown',
+    actorKind: req.auth?.kind || null,
+    requestId: req.get('x-request-id') || null,
+  });
+
   // ---------------------------------------------------------------------------
   // Organization catalog (parishes / schools)
   // ---------------------------------------------------------------------------
@@ -24,7 +32,7 @@ function build({ db, secrets, includePii }) {
 
   r.post('/', (req, res) => {
     try {
-      const code = organizations.createOrganization(db, secrets, req.body || {});
+      const code = organizations.createOrganization(db, secrets, req.body || {}, ctx(req));
       audit.record(db, {
         action: 'organization_create',
         actor: req.auth?.actor || 'unknown',
@@ -57,7 +65,7 @@ function build({ db, secrets, includePii }) {
       return res.status(400).json({ error: 'invalid organization code' });
     }
     try {
-      const code = organizations.updateOrganization(db, secrets, req.params.code, req.body || {});
+      const code = organizations.updateOrganization(db, secrets, req.params.code, req.body || {}, ctx(req));
       if (!code) return res.status(404).json({ error: 'not found' });
       audit.record(db, {
         action: 'organization_update',
@@ -75,7 +83,7 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(req.params.code, 'organization')) {
       return res.status(400).json({ error: 'invalid organization code' });
     }
-    const code = organizations.archiveOrganization(db, secrets, req.params.code);
+    const code = organizations.archiveOrganization(db, secrets, req.params.code, ctx(req));
     if (!code) return res.status(404).json({ error: 'not found' });
     audit.record(db, {
       action: 'organization_archive',
@@ -116,7 +124,7 @@ function build({ db, secrets, includePii }) {
       return res.status(400).json({ error: 'invalid organization code' });
     }
     try {
-      const code = organizations.affiliate(db, secrets, req.params.code, req.body || {});
+      const code = organizations.affiliate(db, secrets, req.params.code, req.body || {}, ctx(req));
       audit.record(db, {
         action: 'affiliation_create',
         actor: req.auth?.actor || 'unknown',
@@ -139,7 +147,7 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(req.params.code, 'affiliation')) {
       return res.status(400).json({ error: 'invalid affiliation code' });
     }
-    const code = organizations.endAffiliation(db, req.params.code, { reason: req.body?.reason });
+    const code = organizations.endAffiliation(db, req.params.code, { reason: req.body?.reason, ...ctx(req) });
     if (!code) return res.status(404).json({ error: 'not found' });
     audit.record(db, {
       action: 'affiliation_end',
@@ -156,7 +164,7 @@ function build({ db, secrets, includePii }) {
       return res.status(400).json({ error: 'invalid affiliation code' });
     }
     try {
-      const code = organizations.verify(db, secrets, req.params.code, req.body || {});
+      const code = organizations.verify(db, secrets, req.params.code, req.body || {}, ctx(req));
       if (!code) return res.status(404).json({ error: 'not found' });
       audit.record(db, {
         action: 'affiliation_verify',

@@ -129,3 +129,55 @@ domain of the church's web site**. Sketch for the next session:
 This is a meaningful feature with security surface area; it deserves
 its own session and PRD (including the logging-infrastructure section
 CLAUDE.md requires) rather than riding along at the end of this one.
+
+### Source-of-truth rules once staff can edit (decided 2026-06-10)
+
+Staff edits make FamilyGraph a peer source alongside the connectors,
+so the PRD must encode these decisions:
+
+1. FamilyGraph-native data (affiliations, verifications, ministry
+   rosters, EIM notes, consents, merges) has no ambiguity — FG is the
+   source of truth, nothing upstream holds it.
+2. For connector-mapped fields, truth is per-observation, not
+   per-system. Every field value remembers its source (the existing
+   `provenance` / `source_records` machinery); a manual staff edit is
+   one more source kind with high default credibility.
+3. Manual edits outrank connector data by default, but a NEWER
+   connector value that contradicts a manual edit opens a conflict
+   ("upstream disagrees with a manual correction") rather than
+   silently winning or losing. Precedence is per-field, never
+   per-record.
+4. **Precedence and write-back are configurable either way** (operator
+   decision, 2026-06-10). Per connector, the operator chooses whether
+   manual FG edits or connector values win by default, and whether
+   corrections write back upstream. Safe defaults: manual-wins,
+   write-back OFF. Write-back, when enabled, requires upstream API
+   credentials with write scope, a dry-run preview mode, and its own
+   audit events.
+   Direction of travel (operator decision, 2026-06-10): **read/write
+   should be possible both in and out of FamilyGraph.** Bidirectional
+   flow is a product goal, not a reluctant add-on — FG reads from and
+   writes to the upstream systems, and sibling apps read from and
+   write to FG. What keeps this from becoming a sync loop is that
+   every inbound value goes through the resolver and every
+   disagreement surfaces as a conflict instead of an overwrite.
+   The end state (operator decision, 2026-06-10): **FamilyGraph is
+   ideally THE source of truth.** FACTS / MP are feeds and consumers;
+   FG holds the canonical record, arbitrates disagreements, and — when
+   write-back is enabled — propagates its truth outward. The
+   configurability in this point is the migration path: a parish starts
+   with FG downstream (write-back off), builds trust, then flips the
+   per-connector switches as FG earns the canonical role.
+5. Every change to any record in FamilyGraph — staff edit, connector
+   sync, write-back push, merge, archive — must leave an audit trail
+   recording who/what/when/before/after (operator requirement,
+   2026-06-10, stated as a hard rule: ANY change must have an audit
+   trail). The foundations exist: `audit_events` (tier-1/2) and the
+   `entity_changes` before/after snapshot log from migration 0013.
+   Partially enforced already: the same day this rule was stated, the
+   new organizations / affiliations / verifications surface was found
+   to be writing `audit_events` but not `entity_changes` snapshots, and
+   was wired up (with a test asserting every write shape lands a
+   snapshot with actor and before/after). The PRD's job is to guarantee
+   coverage everywhere else — no write path may bypass either log,
+   including future staff-account sessions and write-back.

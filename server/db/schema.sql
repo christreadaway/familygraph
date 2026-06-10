@@ -723,7 +723,7 @@ CREATE INDEX IF NOT EXISTS person_consent_overrides_school_idx
 
 CREATE TABLE IF NOT EXISTS entity_changes (
   code          TEXT PRIMARY KEY,
-  entity_kind   TEXT NOT NULL,           -- person | family | membership | consent | consent_override | school_context | eim_certification | diocese | webhook_subscription
+  entity_kind   TEXT NOT NULL,           -- person | family | membership | consent | consent_override | school_context | eim_certification | diocese | webhook_subscription | organization | affiliation | affiliation_verification
   entity_code   TEXT NOT NULL,
   operation     TEXT NOT NULL,           -- create | update | archive | reinstate | merge | split | delete
   before_json   TEXT,

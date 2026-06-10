@@ -26,6 +26,9 @@ const KNOWN_KINDS = new Set([
   'eim_certification',
   'diocese',
   'webhook_subscription',
+  'organization',
+  'affiliation',
+  'affiliation_verification',
 ]);
 
 const KNOWN_OPERATIONS = new Set([

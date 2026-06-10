@@ -2828,4 +2828,34 @@ thinking with a date stamp at the operator's request.
 
 ---
 
+## Follow-up: entity_changes coverage for the organizations surface
+
+The operator stated a hard rule mid-session: ANY change to a FamilyGraph
+record must have an audit trail. Re-checking the just-shipped
+organizations surface against that rule found a gap — every write logged
+an `audit_events` row (actor + action + metadata) but none wrote the
+richer `entity_changes` before/after snapshots that persons, families,
+and dioceses get. Fixed: `organization`, `affiliation`, and
+`affiliation_verification` are now known entity kinds in
+`identity/history.js`, and every write path in
+`identity/organizations.js` (create/update/archive org, affiliate,
+re-affiliate, end, verify) records a snapshot inside its transaction,
+with actor / actor_kind / request_id forwarded from the HTTP layer.
+Ending an affiliation logs as operation 'archive' — the closest fit in
+the existing operation vocabulary, since the row survives dated and
+inactive. A new test drives every write shape through the API and
+asserts each one landed a snapshot with the right actor and before/after
+payloads.
+
+Also captured in `IDENTITY_MODEL_SUMMARY.md` from the same exchange:
+precedence and write-back must be configurable per connector (safe
+defaults: manual-wins, write-back off); read/write should be possible
+both in and out of FamilyGraph; and the end state the operator wants is
+FamilyGraph as THE source of truth, with the config switches as the
+migration path while FG earns that role.
+
+New total: 504 tests, 503 pass, 0 fail, 1 pre-existing skip.
+
+---
+
 *End of session notes*
