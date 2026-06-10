@@ -29,7 +29,10 @@ const PREFIX_TO_KIND = Object.fromEntries(
 function newCode(kind) {
   const prefix = PREFIXES[kind];
   if (!prefix) throw new Error(`Unknown identifier kind: ${kind}`);
-  return prefix + crypto.randomBytes(4).toString('hex');
+  // 8 random bytes = 16 hex chars = 64 bits. Collision odds stay negligible
+  // even at diocese scale (50% birthday bound is ~5 billion codes per kind).
+  // Codes minted before this change carry 8 hex chars and remain valid.
+  return prefix + crypto.randomBytes(8).toString('hex');
 }
 
 function kindOf(code) {
@@ -48,9 +51,9 @@ function isValidCode(code, kind = null) {
   const k = kindOf(code);
   if (!k) return false;
   if (kind && k !== kind) return false;
-  // Hex suffix length is fixed at 8 chars after the prefix.
+  // Hex suffix is exactly 16 chars (current) or 8 chars (legacy, pre-widening).
   const suffix = code.slice(PREFIXES[k].length);
-  return /^[0-9a-f]{8}$/.test(suffix);
+  return /^(?:[0-9a-f]{16}|[0-9a-f]{8})$/.test(suffix);
 }
 
 module.exports = {

@@ -2754,4 +2754,35 @@ builds clean (302 KB JS / 22 KB CSS).
 
 ---
 
+## Follow-up: identifier suffix widened to 16 hex chars
+
+The operator asked whether person and family identifiers could collide at
+school/diocese scale. They can: the old suffix was 4 random bytes (8 hex
+chars, 32 bits), which hits 50% birthday-collision odds around 77k codes
+of one kind, and `newCode` has no retry — a collision would surface as a
+primary-key insert failure. Widened to 8 random bytes (16 hex chars, 64
+bits) in `server/crypto/identifiers.js`; the 50% bound moves to ~5 billion
+codes per kind, which closes the question for good. `isValidCode` accepts
+both 16-hex (current) and 8-hex (legacy) suffixes so codes already issued
+keep validating; no migration needed because codes are opaque TEXT keys
+everywhere. Tests updated, plus a new legacy-format case. 491 tests, 490
+pass, 0 fail, 1 skip (pre-existing EACCES skip).
+
+SFW_BYPASS=1 was used for `npm ci` in this session: the sfw binary host is
+unreachable from this container's network policy. Exact pinned lockfile,
+ephemeral environment — same situation as the previous entry.
+
+Design discussion, not yet built: organization-level codes (parish,
+school) and dated person/family-to-organization affiliations, on the model
+of the existing `memberships` table. The operator's framing: school
+affiliation is temporal (kids graduate), and so is parish affiliation
+(people move, die, stop attending). Conclusion so far is that "parish,
+school, or both" should never be a stored flag — it should be a query over
+affiliation rows with `started_at`/`ended_at`, so leaving a community is
+an end-date, not a delete. Today `school_contexts.school_id` is a bare
+TEXT id from the external app; a future `organizations` table would give
+those a real `org_` code to reference.
+
+---
+
 *End of session notes*
