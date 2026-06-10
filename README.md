@@ -514,6 +514,55 @@ of stacking duplicates; leaving and returning produces a second dated
 row so history survives. Person and family merges carry affiliations
 onto the winning code, ending duplicates rather than colliding.
 
+### Staff accounts (domain-verified login)
+
+Named, passwordless accounts for parish and school staff. Eligibility
+is proven by the institution's own web domain: an account can only be
+invited on a domain the organization has verified. Staff sign in with
+a magic link sent to their institutional email; redeeming it issues a
+`st_…` bearer token that rides the same scope system as every other
+caller. Every staff write lands in both audit logs (`audit_events` +
+`entity_changes`) attributed to the person, not a shared key.
+
+Domain verification lives on the organization record. The operator
+sets the org's domain, FamilyGraph issues a token, and the parish or
+school proves control either with a DNS TXT record
+(`familygraph-verify=<token>`) or a well-known file at
+`https://<domain>/.well-known/familygraph-verify.txt`. Changing the
+domain always requires re-verification, and un-verifying the domain or
+archiving the organization stops logins for its accounts.
+
+Login is invite-only — no self-signup; the master token provisions
+accounts. Staff POST their email; if an active account exists, a
+single-use 15-minute link goes out through the notifications queue,
+and the response never reveals whether the account exists. Redeeming
+the link yields a 12-hour session. Disabling an account kills its
+sessions immediately. Magic-link and session tokens are stored only as
+SHA-256 hashes and never logged.
+
+- `POST /api/organizations/:code/domain` — master only; body
+  `{domain}` (null clears); returns the verification token plus
+  instructions.
+- `POST /api/organizations/:code/domain/verify` — master only; body
+  `{method: "dns" | "http"}`.
+- `GET /api/accounts` / `POST /api/accounts` /
+  `PATCH /api/accounts/:code` / `DELETE /api/accounts/:code` — master
+  only. POST body `{email, display_name, scopes?}` (scopes from the
+  existing vocabulary, `*` not grantable; default `["pii.read"]`).
+  DELETE disables the account (revokes sessions immediately).
+- `POST /api/auth/request-link` — open + rate-limited; body `{email}`;
+  always returns `{ok: true}`.
+- `POST /api/auth/redeem` — body `{token}`; returns
+  `{token, expires_at, account}` or 401.
+- `GET /api/auth/me` — session bearer; returns the account context.
+- `POST /api/auth/logout` — session bearer; revokes the session.
+
+Duplicate/merge decisions remain a human judgment call made by whoever
+actually knows the family — secretary, pastor, business manager,
+principal, or school staff — via the conflicts queue and its
+assignment feature; see
+[`STAFF_ACCOUNTS_PRD.md`](./STAFF_ACCOUNTS_PRD.md).
+
 ### External-app identity API
 
 Consuming apps bring in their own domain data (donations, engagement

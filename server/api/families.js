@@ -11,6 +11,15 @@ const { isValidCode } = require('../crypto/identifiers');
 function build({ db, secrets, includePii }) {
   const r = express.Router();
 
+  // Audit context forwarded into the entity_changes snapshot log so the
+  // before/after row names the human or app that made the change, not
+  // 'system' (any change must have an audit trail — with attribution).
+  const ctx = req => ({
+    actor: req.auth?.actor || 'unknown',
+    actorKind: req.auth?.kind || null,
+    requestId: req.get('x-request-id') || null,
+  });
+
   r.get('/', (req, res) => {
     const all = families.list(db, secrets, {
       limit: req.query.limit ? Number(req.query.limit) : 50,
@@ -36,7 +45,7 @@ function build({ db, secrets, includePii }) {
   });
 
   r.post('/', (req, res) => {
-    const code = families.create(db, secrets, req.body || {});
+    const code = families.create(db, secrets, req.body || {}, ctx(req));
     audit.record(db, {
       action: 'family_create',
       actor: req.auth?.actor || 'unknown',
@@ -69,7 +78,7 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(req.params.code, 'family')) {
       return res.status(400).json({ error: 'invalid family code' });
     }
-    const updated = families.update(db, secrets, req.params.code, req.body || {});
+    const updated = families.update(db, secrets, req.params.code, req.body || {}, ctx(req));
     if (!updated) return res.status(404).json({ error: 'not found' });
     audit.record(db, {
       action: 'family_update',
@@ -157,7 +166,7 @@ function build({ db, secrets, includePii }) {
     if (!isValidCode(winner_code, 'family') || !isValidCode(req.params.code, 'family')) {
       return res.status(400).json({ error: 'invalid codes' });
     }
-    const code = families.merge(db, secrets, req.params.code, winner_code);
+    const code = families.merge(db, secrets, req.params.code, winner_code, ctx(req));
     audit.record(db, {
       action: 'family_merge',
       actor: req.auth?.actor || 'unknown',

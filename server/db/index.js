@@ -30,7 +30,9 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //       and households be reinstated.
 //  14 — organizations (parish/school) + dated affiliations with the
 //       rolling last_verified_at marker + affiliation_verifications trail.
-const SCHEMA_VERSION = 14;
+//  15 — staff accounts: organizations domain-verification columns +
+//       admin_accounts / admin_login_tokens / admin_sessions.
+const SCHEMA_VERSION = 15;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

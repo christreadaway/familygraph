@@ -2858,4 +2858,53 @@ New total: 504 tests, 503 pass, 0 fail, 1 pre-existing skip.
 
 ---
 
+## Follow-up: staff accounts with domain-verified login (migration 0015)
+
+The operator green-lit building the login. PRD first
+(`STAFF_ACCOUNTS_PRD.md`, written to the CLAUDE.md section order with
+the logging-infrastructure section), then the build, partly via
+parallel agents (one built `server/auth/domains.js` + the org domain
+routes, one drafted the README section, while the core auth wiring,
+routers, and tests happened in the main session).
+
+What shipped. Organizations carry a web domain + verification token;
+the institution proves control via DNS TXT (`familygraph-verify=<token>`)
+or a well-known file, and changing the domain always clears
+verification. Staff accounts are invite-only (master token), and the
+invite is refused unless the email's domain matches a verified domain
+on an active org — that's the trust chain, and it's re-checked at every
+link request and redeem, so un-verifying a domain or archiving the org
+stops logins immediately. Login is passwordless: single-use 15-minute
+magic link through the existing notifications queue (response never
+reveals account existence; max 3 outstanding links), redeeming into a
+12-hour `st_` session. The middleware resolves `st_` tokens right where
+it resolves `sk_` keys; scopes reuse the api_keys vocabulary with `*`
+not grantable. Disabling an account revokes its sessions and pending
+links in the same transaction. Tokens land in tables only as SHA-256
+hashes; emails are encrypted with an HMAC lookup hash; logs carry
+fingerprints, never tokens or full emails.
+
+A real pre-existing bug surfaced by the new tests: `api/people.js` and
+`api/families.js` never forwarded the HTTP actor into
+`people.create/update/merge` and `families.create/update/merge`, so
+every entity_changes snapshot from the dashboard said actor 'system'
+even though the audit_events row had the right actor. The domain
+functions had accepted an audit param all along — the API just never
+passed it. Fixed in both routers; the staff-attribution test now proves
+a "Parish Secretary" session shows up by name in the snapshot log.
+
+Operator rules captured during the build: duplicate/merge resolution is
+a HUMAN judgment call, never automated (the resolver may auto-link an
+incoming import row on definitive signals only; collapsing two existing
+records always goes through the conflicts queue); and the human who
+knows varies — parish secretary, pastor, business manager, principal,
+or school staff — so resolution is open to any write-scoped account and
+routable via the existing conflict-assignment feature. Both rules live
+in the PRD's business rules.
+
+9 new tests in `tests/staff-accounts.test.js`. New total: 513 tests,
+512 pass, 0 fail, 1 pre-existing skip.
+
+---
+
 *End of session notes*

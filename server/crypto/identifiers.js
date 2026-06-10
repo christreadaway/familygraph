@@ -23,6 +23,9 @@ const PREFIXES = {
   organization: 'org_',
   affiliation: 'aff_',
   affiliation_verification: 'av_',
+  admin_account: 'acct_',
+  admin_login_token: 'mlt_',
+  admin_session: 'asn_',
 };
 
 const PREFIX_TO_KIND = Object.fromEntries(

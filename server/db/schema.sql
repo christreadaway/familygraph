@@ -762,6 +762,13 @@ CREATE TABLE IF NOT EXISTS organizations (
   kind         TEXT NOT NULL,             -- parish | school | other
   diocese_code TEXT,                      -- soft FK to dioceses.code
   notes_ct     BLOB,
+  -- Domain verification (migration 0015): proves the institution
+  -- controls its web domain, which is what makes staff-account
+  -- invitations on that domain trustworthy.
+  domain                     TEXT,
+  domain_verification_token  TEXT,
+  domain_verified_at         TEXT,
+  domain_verification_method TEXT,        -- dns | http
   status       TEXT NOT NULL DEFAULT 'active',
   created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -773,6 +780,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS organizations_kind_name_active_uniq
 CREATE INDEX IF NOT EXISTS organizations_kind_idx       ON organizations (kind);
 CREATE INDEX IF NOT EXISTS organizations_status_idx     ON organizations (status);
 CREATE INDEX IF NOT EXISTS organizations_updated_at_idx ON organizations (updated_at);
+CREATE INDEX IF NOT EXISTS organizations_domain_idx     ON organizations (domain);
 
 -- One row affiliates a person OR a family (exactly one, the
 -- ministry_assignments pattern). Parish registration is family-level by
@@ -818,3 +826,58 @@ CREATE TABLE IF NOT EXISTS affiliation_verifications (
 );
 CREATE INDEX IF NOT EXISTS affiliation_verifications_affiliation_idx
   ON affiliation_verifications (affiliation_code, verified_at);
+
+-------------------------------------------------------------------------------
+-- Staff accounts with domain-verified login (migration 0015)
+-------------------------------------------------------------------------------
+-- See STAFF_ACCOUNTS_PRD.md. Accounts are invited (no self-signup) and
+-- only for emails whose domain matches a verified domain on an active
+-- organization. Login is passwordless: a single-use magic link (15 min)
+-- redeems into a 12-hour `st_…` bearer session that the standard auth
+-- middleware resolves alongside master and `sk_` keys. Raw tokens are
+-- never stored — SHA-256 hashes only. Email is encrypted with an HMAC
+-- lookup hash; never plaintext.
+-- (Domain verification columns live on `organizations`, added by the
+-- migration via ALTER TABLE: domain, domain_verification_token,
+-- domain_verified_at, domain_verification_method.)
+
+CREATE TABLE IF NOT EXISTS admin_accounts (
+  code          TEXT PRIMARY KEY,
+  email_ct      BLOB NOT NULL,
+  email_hash    TEXT NOT NULL,
+  display_name  TEXT NOT NULL,
+  org_code      TEXT NOT NULL REFERENCES organizations(code),
+  scopes        TEXT NOT NULL,               -- JSON array, api_keys vocabulary, '*' not grantable
+  status        TEXT NOT NULL DEFAULT 'active',
+  last_login_at TEXT,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (status IN ('active','disabled'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS admin_accounts_email_active_uniq
+  ON admin_accounts (email_hash) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS admin_accounts_org_idx    ON admin_accounts (org_code);
+CREATE INDEX IF NOT EXISTS admin_accounts_status_idx ON admin_accounts (status);
+
+CREATE TABLE IF NOT EXISTS admin_login_tokens (
+  code         TEXT PRIMARY KEY,
+  account_code TEXT NOT NULL REFERENCES admin_accounts(code) ON DELETE CASCADE,
+  token_hash   TEXT NOT NULL UNIQUE,
+  expires_at   TEXT NOT NULL,
+  used_at      TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS admin_login_tokens_account_idx
+  ON admin_login_tokens (account_code, expires_at);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  code         TEXT PRIMARY KEY,
+  account_code TEXT NOT NULL REFERENCES admin_accounts(code) ON DELETE CASCADE,
+  token_hash   TEXT NOT NULL UNIQUE,
+  expires_at   TEXT NOT NULL,
+  revoked_at   TEXT,
+  last_used_at TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS admin_sessions_account_idx
+  ON admin_sessions (account_code, expires_at);

@@ -37,6 +37,8 @@ const buildIdentityApi = require('./api/identity');
 const buildConnectors = require('./api/connectors');
 const buildMinistries = require('./api/ministries');
 const buildOrganizations = require('./api/organizations');
+const buildAuthApi = require('./api/auth');
+const buildAdminAccounts = require('./api/admin-accounts');
 const connectorScheduler = require('./connectors/scheduler');
 const eim = require('./identity/eim');
 const entityHistory = require('./identity/history');
@@ -197,6 +199,12 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   // verification trail. Same scope posture as ministries: reads gated on
   // pii.read because affiliation notes carry operator commentary.
   app.use('/api/organizations', method2scope(bearerRead, bearerWrite), piiRateLimit, buildOrganizations({ db, secrets, includePii: true }));
+  // Staff login surface. request-link/redeem are unauthenticated by
+  // design (they're how a session comes to exist) and sit behind a
+  // tight rate limit; account management is master-only like /api/keys.
+  const authRateLimit = rateLimit.build({ capacity: 10, refillPerSec: 0.2, name: 'auth' });
+  app.use('/api/auth', authRateLimit, buildAuthApi({ db, secrets }));
+  app.use('/api/accounts', bearerMaster, piiRateLimit, buildAdminAccounts({ db, secrets }));
 
   // FamilyGraph Integration API surface (FAMILYGRAPH_INTEGRATION.md
   // v0.1). All routes live under /v1/... so the URL shape matches the

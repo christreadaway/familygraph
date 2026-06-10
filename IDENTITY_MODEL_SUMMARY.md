@@ -102,7 +102,18 @@ verification trail, the backdated high-water mark, the stale report,
 both merge directions, and the auth posture. Suite total: 503 tests,
 502 pass, 1 pre-existing skip.
 
-## Captured requirement, not yet built: church-admin login
+> **Update, same day:** the login below got built. See
+> `STAFF_ACCOUNTS_PRD.md` for the contract and the session notes for
+> what shipped (migration 0015: domain verification on organizations,
+> invited `acct_` staff accounts, magic-link login, `st_` sessions on
+> the existing scope system). Two operator rules captured during the
+> build: duplicate/merge decisions are a HUMAN judgment call, never
+> automated — and the human who knows varies (parish secretary, pastor,
+> business manager, principal, school staff), so conflict resolution is
+> open to any staff account with write scope and routable via the
+> existing conflict-assignment feature.
+
+## Captured requirement, built same day: church-admin login
 
 Church administration needs to log in and edit records directly. Today
 FamilyGraph has no per-user accounts: the dashboard is driven by the

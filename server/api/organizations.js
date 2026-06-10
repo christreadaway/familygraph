@@ -3,6 +3,7 @@
 const { userFacingMessage } = require('./_errors');
 const express = require('express');
 const organizations = require('../identity/organizations');
+const domains = require('../auth/domains');
 const audit = require('../audit');
 const { isValidCode } = require('../crypto/identifiers');
 
@@ -113,6 +114,58 @@ function build({ db, secrets, includePii }) {
         includePii,
       }),
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Domain verification (STAFF_ACCOUNTS_PRD.md) — master-only. Verified
+  // domains are what make staff-account invitations trustworthy, so
+  // only the operator's master token may set or verify one.
+  // ---------------------------------------------------------------------------
+
+  r.post('/:code/domain', (req, res) => {
+    if (req.auth?.kind !== 'master') {
+      return res.status(403).json({ error: 'forbidden', detail: 'domain management requires the master token' });
+    }
+    if (!isValidCode(req.params.code, 'organization')) {
+      return res.status(400).json({ error: 'invalid organization code' });
+    }
+    try {
+      const result = domains.setDomain(db, req.params.code, req.body?.domain ?? null, ctx(req));
+      if (!result) return res.status(404).json({ error: 'not found' });
+      audit.record(db, {
+        action: 'organization_domain_set',
+        actor: req.auth?.actor || 'unknown',
+        entityCode: req.params.code,
+        entityKind: 'organization',
+        metadata: { domain: req.body?.domain || null },
+      });
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: userFacingMessage(e) });
+    }
+  });
+
+  r.post('/:code/domain/verify', async (req, res) => {
+    if (req.auth?.kind !== 'master') {
+      return res.status(403).json({ error: 'forbidden', detail: 'domain management requires the master token' });
+    }
+    if (!isValidCode(req.params.code, 'organization')) {
+      return res.status(400).json({ error: 'invalid organization code' });
+    }
+    try {
+      const result = await domains.verifyDomain(db, req.params.code, { method: req.body?.method }, ctx(req));
+      if (!result) return res.status(404).json({ error: 'not found' });
+      audit.record(db, {
+        action: 'organization_domain_verify',
+        actor: req.auth?.actor || 'unknown',
+        entityCode: req.params.code,
+        entityKind: 'organization',
+        metadata: { method: req.body?.method, verified: result.verified },
+      });
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: userFacingMessage(e) });
+    }
   });
 
   // ---------------------------------------------------------------------------
