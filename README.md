@@ -19,6 +19,20 @@ in [`product_spec.md`](./product_spec.md). The decision history lives in
 lives in
 [`ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md`](./ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md).
 
+## Provenance note: CDCF submission baseline
+
+The codebase as of commit `d4b5306` is exactly what was submitted to
+the Catholic Digital Commons Foundation (CDCF). Everything after that
+commit — organizations and dated affiliations, rolling verification,
+alumni transitions and departure classes, staff accounts with
+domain-verified login, the dashboard UI for all of it, and the
+2026-06-10 code-review fixes — postdates the initial submission and is
+NOT part of what the CDCF reviewed. If the CDCF copy ever needs to be
+reproduced, `git checkout d4b5306` is that snapshot; the decision
+history for everything since lives in `session_notes.md`,
+`IDENTITY_MODEL_SUMMARY.md`, `STAFF_ACCOUNTS_PRD.md`, and
+`CODE_REVIEW_2026-06-10.md`.
+
 ---
 
 ## Security requirement: Socket Firewall

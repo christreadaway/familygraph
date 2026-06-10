@@ -3023,4 +3023,18 @@ pre-existing skip. Client builds clean.
 
 ---
 
+## Follow-up: CDCF submission baseline marked before merge
+
+Before merging this branch to main, the operator asked for a provenance
+marker: main as of commit `d4b5306` (the merge of PR #21) is exactly
+what was submitted to the Catholic Digital Commons Foundation (CDCF).
+Every commit on this branch postdates that submission — the CDCF
+reviewed none of it. A "Provenance note" section now sits near the top
+of README.md naming the commit, what came after, and where the
+post-submission decision history lives. If a future session needs to
+reproduce the CDCF copy, `git checkout d4b5306` is the snapshot; don't
+re-litigate why main moved past it.
+
+---
+
 *End of session notes*
