@@ -1344,3 +1344,101 @@ outbox processing per kind (including sealed-input handling and the
 document.fetch stub), a full mocked check-in cycle, and scheduler dormancy
 with no enabled pairing. PP's HTTP endpoints are mocked via an injected
 fetch. The full suite went from 544 → 569 passing (1 skipped, as before).
+
+---
+
+# Appendix — Canonical FG ↔ PP Wire Contract v1
+
+This appendix is the SINGLE canonical record of the bytes on the wire between
+FamilyGraph (FG) and ParentPoint (PP). It is mirrored verbatim in PP at
+`trackerdocs/specs/FG_PP_WIRE_CONTRACT.md`. Change BOTH copies AND the matching
+fixture tests (FG `tests/integration-pp-wire-fixtures.test.js`, PP
+`netlify/functions/_lib/familyGraphWire.fixtures.test.ts`) together — those
+fixtures pin the exact bytes so the two sides can never silently re-diverge.
+
+## A. Envelope (sealed value)
+
+```json
+{ "enc": "aes-256-gcm", "iv": "<base64 12B>", "tag": "<base64 16B>", "ct": "<base64>" }
+```
+
+`ct` = AES-256-GCM of the UTF-8 JSON of the wrapped value. A value with NO `enc`
+field is CLEARTEXT and passes through. Key = 32 bytes as 64 hex chars (both
+sides accept hex; PP also accepts base64). A value that looks like an envelope
+but fails to decrypt is a HARD error (fail closed).
+
+FG: `server/integration/envelope.js` (`seal`/`open`/`isSealed`). The marker is
+`enc: "aes-256-gcm"` (NOT the old `__fg_enc`+`alg`).
+
+Cross-language fixture (asserted in BOTH repos):
+
+```
+key (hex): 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+blob: { "enc":"aes-256-gcm",
+        "iv":"I0OQY6BAXR1itJgI",
+        "tag":"tzwOz/xGnfjobN0KVYtuog==",
+        "ct":"utgnlmMIVOeKSDvOEFGJB7CvNhb+BhBZ61wQso4QHnK8lhGcmqIgBJCSLibJfBVOy32rDDnhJ/sM" }
+plaintext: { "text":"Amanda Lee", "personId":"fg_p_1", "items":[1,2,3] }
+```
+
+## B. Sync push — `POST {pp}/familygraph-sync?tenant=<sid>`
+
+Request: `{ "tenant", "sinceCursor": <cursor|null>, "cursor": <newHighWater>,
+"changes": ENVELOPE([ ChangeEvent, ... ]) }`.
+
+ChangeEvent = the webhook event shape `{ "type", "data": {…} }`;
+`type` ∈ `person.updated | person.deleted | household.updated |
+household.deleted | consent.updated`. Deletes are tombstones
+`{ "type": "...deleted", "id": "<code>" }`.
+
+Response 200: `{ "ok": true, "ackedCursor": <cursor>, "applied": <int>,
+"skipped": <int> }`. PP applies each event through the SAME apply +
+freshness/idempotency logic the webhook uses and does NOT advance past a failed
+event. FG: `assembleBatch`/`pushBatch` in `server/integration/outbound-agent.js`
+— builds ChangeEvents from the changed feed (same `{type,data}` the webhook
+emits; tombstones for deletes), seals the array as `changes`, sends
+`sinceCursor`.
+
+## C. Outbox fetch — `GET {pp}/familygraph-outbox?tenant=<sid>&max=N`
+
+Response 200: `{ "ok": true, "items": [ { "id", "kind", "payload":
+ENVELOPE-or-plain, "requestId" } ] }`.
+
+payload plaintext per kind: `sanitize {text}`; `desanitize {text, tokenSetId}`;
+`identity.resolve {record:{…}}`; `schoolContext {schoolId, personCode,
+schoolYear?, grade?, classroomId?, classroomName?, homeroomTeacherPersonId?,
+activities?, allergies?}`; `document.fetch` reserved/stub. FG `processItem`
+reads `item.payload` (opens if sealed via `isSealed`), then the kind fields off
+the opened object.
+
+## D. Inbox return — `POST {pp}/familygraph-inbox?tenant=<sid>` (BATCH)
+
+Request: `{ "tenant", "results": [ { "id", "kind", "ok": bool, "result":
+ENVELOPE-or-plain, "error"? } ] }`.
+
+result per kind: `sanitize {sanitized, tokenSetId}` CLEARTEXT (codes + opaque
+ref only); `desanitize` ENVELOPE `{text}`; `identity.resolve` ENVELOPE `{code,
+action, score, reasons}`; `schoolContext` ENVELOPE `{schoolContext}`.
+
+Response 200: `{ "ok": true, "applied": <int> }`. FG `returnInbox` already
+batches under `{tenant, results}`.
+
+## E. De-anonymization map stays INSIDE FamilyGraph
+
+FG NEVER returns the codes→names mapping to PP. The sanitize RESULT is
+`{ sanitized, tokenSetId }` where `tokenSetId` is an OPAQUE reference to the
+token set FG persists in its OWN encrypted `token_sets` store
+(`token_sets.mappings_ct`). Desanitize looks the mapping up BY `tokenSetId`
+from that store — the desanitize payload carries `tokenSetId`, never the
+mapping. PP stores only `tokenSetId` + the sanitized (coded) text, never names.
+
+## 6. Headers (on every FG → PP call)
+
+```
+Authorization:          Bearer <fgCredential>
+X-FG-Signature:         sha256=HMAC-SHA256(rawBody, webhookSecret)
+X-Source-Tenant:        <sid>   (must agree with ?tenant=)
+X-FG-Contract-Version:  v0.2
+X-Family-Graph-Actor:   familygraph
+X-Request-Id:           <id>    (on writes)
+```

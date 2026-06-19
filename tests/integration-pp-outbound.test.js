@@ -107,12 +107,17 @@ test('pairing > cursor and check-in bookkeeping round-trips', t => {
 // Envelope encryption
 // ---------------------------------------------------------------------------
 
-test('envelope > seal/open round-trips an object', () => {
+test('envelope > seal/open round-trips an object (CANONICAL enc shape)', () => {
   const value = { name: '[Name]', personId: 'p_abc', nested: { a: [1, 2, 3] } };
   const wire = envelope.seal(EKEY, value);
   assert.equal(envelope.isSealed(wire), true);
-  assert.equal(wire.__fg_enc, 'v1');
-  assert.equal(wire.alg, 'aes-256-gcm');
+  // Canonical wire shape shared with ParentPoint: { enc, iv, tag, ct }.
+  assert.equal(wire.enc, 'aes-256-gcm');
+  assert.equal('__fg_enc' in wire, false);
+  assert.equal('alg' in wire, false);
+  assert.equal(typeof wire.iv, 'string');
+  assert.equal(typeof wire.tag, 'string');
+  assert.equal(typeof wire.ct, 'string');
   // ciphertext does not contain the plaintext
   assert.equal(JSON.stringify(wire).includes('[Name]'), false);
   const back = envelope.open(EKEY, wire);
@@ -172,9 +177,15 @@ test('agent > assembleBatch collects changed persons and advances cursor', t => 
   people.create(db, secrets, { given_name: 'Bob', family_name: 'Jones' });
   const cfg = pairing.load(db, secrets, 'st-marys');
   const batch = agent.assembleBatch(db, secrets, cfg, {});
-  assert.equal(batch.persons.length >= 2, true);
+  // Canonical: a flat ChangeEvent array, not separate persons/households.
+  assert.ok(Array.isArray(batch.changes));
+  assert.equal(batch.changes.length >= 2, true);
+  assert.equal(batch.count, batch.changes.length);
   assert.ok(batch.cursor);
-  // PII items must be sealed when pushed
+  // Every event is a canonical person.* / household.* ChangeEvent.
+  for (const ev of batch.changes) {
+    assert.match(ev.type, /^(person|household)\.(updated|deleted)$/);
+  }
 });
 
 test('agent > pushBatch seals the payload and persists acked cursor', async t => {
@@ -187,10 +198,18 @@ test('agent > pushBatch seals the payload and persists acked cursor', async t =>
     return { ok: true, status: 200, json: async () => ({ ackedCursor: 'CURSOR-1' }) };
   };
   await agent.pushBatch(db, secrets, pairing.load(db, secrets, 'st-marys'), { fetchImpl: fakeFetch });
-  // payload is sealed (PII), cursor + tenant cleartext
+  // CANONICAL: changes array is sealed (PII); sinceCursor + cursor + tenant cleartext
   assert.equal(sentBody.tenant, 'st-marys');
-  assert.equal(envelope.isSealed(sentBody.payload), true);
+  assert.equal('sinceCursor' in sentBody, true);
+  assert.equal(typeof sentBody.cursor, 'string');
+  assert.equal(envelope.isSealed(sentBody.changes), true);
   assert.equal(JSON.stringify(sentBody).includes('Smith'), false);
+  // opened changes are canonical ChangeEvents { type, data } / tombstones { type, id }
+  const events = envelope.open(EKEY, sentBody.changes);
+  assert.ok(Array.isArray(events));
+  assert.ok(events.length >= 1);
+  assert.match(events[0].type, /^(person|household)\.(updated|deleted)$/);
+  assert.ok(events[0].data || events[0].id);
   // acked cursor persisted
   assert.equal(pairing.load(db, secrets, 'st-marys').lastAckedCursor, 'CURSOR-1');
 });
@@ -204,13 +223,14 @@ test('agent > processItem sanitize returns cleartext codes (not sealed)', t => {
   configurePairing(db, secrets, 'st-marys');
   const cfg = pairing.load(db, secrets, 'st-marys');
   const res = agent.processItem(db, secrets, cfg, {
-    id: 'item-1', kind: 'sanitize', text: 'Call Bob Jones at bob@example.org',
+    id: 'item-1', kind: 'sanitize', payload: { text: 'Call Bob Jones at bob@example.org' },
   });
   assert.equal(res.ok, true);
   assert.equal(res.id, 'item-1');
-  // sanitize result is code-only → NOT sealed
+  // sanitize result is code-only → NOT sealed; carries an OPAQUE tokenSetId
   assert.equal(envelope.isSealed(res.result), false);
-  assert.ok(res.result.token_set);
+  assert.ok(res.result.tokenSetId);
+  assert.equal('mappings' in res.result, false); // de-anon map NEVER on the wire
   assert.equal(typeof res.result.sanitized, 'string');
 });
 
@@ -221,7 +241,7 @@ test('agent > processItem desanitize returns SEALED text', t => {
   // First sanitize to create a token set
   const out = sanitize.sanitizeText(db, secrets, 'email me at jane@example.org', { actor: 'pp:st-marys' });
   const res = agent.processItem(db, secrets, cfg, {
-    id: 'd-1', kind: 'desanitize', text: out.sanitized, token_set: out.tokenSet,
+    id: 'd-1', kind: 'desanitize', payload: { text: out.sanitized, tokenSetId: out.tokenSet },
   });
   assert.equal(res.ok, true);
   // result carries restored names/PII → must be sealed
@@ -236,7 +256,7 @@ test('agent > processItem identity.resolve returns SEALED result', t => {
   const cfg = pairing.load(db, secrets, 'st-marys');
   const res = agent.processItem(db, secrets, cfg, {
     id: 'r-1', kind: 'identity.resolve',
-    record: { first_name: 'Carol', last_name: 'Newperson', email: 'carol@example.org' },
+    payload: { record: { first_name: 'Carol', last_name: 'Newperson', email: 'carol@example.org' } },
   });
   assert.equal(res.ok, true);
   assert.equal(envelope.isSealed(res.result), true);
@@ -249,9 +269,10 @@ test('agent > processItem identity.resolve opens a SEALED input record', t => {
   const { db, secrets } = setup(t);
   configurePairing(db, secrets, 'st-marys');
   const cfg = pairing.load(db, secrets, 'st-marys');
-  const sealedRecord = envelope.seal(EKEY, { first_name: 'Dan', last_name: 'Sealed' });
+  // Canonical: the whole payload { record } is sealed; processItem opens it.
+  const sealedPayload = envelope.seal(EKEY, { record: { first_name: 'Dan', last_name: 'Sealed' } });
   const res = agent.processItem(db, secrets, cfg, {
-    id: 'r-2', kind: 'identity.resolve', record: sealedRecord,
+    id: 'r-2', kind: 'identity.resolve', payload: sealedPayload,
   });
   assert.equal(res.ok, true);
   const opened = envelope.open(EKEY, res.result);
@@ -265,7 +286,7 @@ test('agent > processItem schoolContext applies snapshot via existing engine', t
   const child = people.create(db, secrets, { given_name: 'Kid', family_name: 'Smith', kind: 'child' });
   const res = agent.processItem(db, secrets, cfg, {
     id: 'sc-1', kind: 'schoolContext',
-    snapshot: { personId: child, schoolId: 'st-marys', grade: '3', classroomName: 'Room 3A' },
+    payload: { personCode: child, schoolId: 'st-marys', grade: '3', classroomName: 'Room 3A' },
   });
   assert.equal(res.ok, true);
   assert.equal(envelope.isSealed(res.result), true);
@@ -308,7 +329,7 @@ test('agent > checkInOnce runs sync, outbox, process, inbox', async t => {
     }
     if (url.includes('/familygraph-outbox')) {
       return { ok: true, status: 200, json: async () => ({ items: [
-        { id: 'o1', kind: 'sanitize', text: 'hi Ann Smith' },
+        { id: 'o1', kind: 'sanitize', payload: { text: 'hi Ann Smith' } },
       ] }) };
     }
     if (url.includes('/familygraph-inbox')) {

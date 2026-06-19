@@ -158,11 +158,30 @@ function _agentError(reason, message) {
 // Step 1 — reconciliation batch push
 // ---------------------------------------------------------------------------
 
+// Map a changed person/household object into the CANONICAL ChangeEvent shape —
+// the SAME `{ type, data }` (or tombstone `{ type, id }`) the webhook emits, so
+// the sync push and the real-time webhook are byte-identical on PP's side.
+//
+// A tombstone object from the changed feed is `{ personId|householdId, active:
+// false, ... }`; the contract carries it as `{ type: '...deleted', id }`.
+function _personChangeEvent(obj) {
+  if (obj.active === false) {
+    return { type: 'person.deleted', id: obj.personId };
+  }
+  return { type: 'person.updated', data: obj };
+}
+function _householdChangeEvent(obj) {
+  if (obj.active === false) {
+    return { type: 'household.deleted', id: obj.householdId };
+  }
+  return { type: 'household.updated', data: obj };
+}
+
 // Assemble the batch of person + household changes since PP's last-acked
 // cursor, reusing the existing changed-feed machinery. The cursor is an ISO
-// timestamp (the changed feed's own cursor shape). Person/household objects
-// carry PII fields, so the items array is SEALED with the envelope key. The
-// cursor and tenant stay cleartext.
+// timestamp (the changed feed's own cursor shape). Each change becomes a
+// canonical ChangeEvent; the array is SEALED with the envelope key (it carries
+// PII). The cursor and tenant stay cleartext.
 function assembleBatch(db, secrets, pairingCfg, { limit = DEFAULT_BATCH_LIMIT } = {}) {
   const since = pairingCfg.lastAckedCursor || null;
   const persons = changes.listChangedPersons(db, secrets, since, { limit });
@@ -173,26 +192,26 @@ function assembleBatch(db, secrets, pairingCfg, { limit = DEFAULT_BATCH_LIMIT } 
     .filter(Boolean)
     .sort()
     .pop() || (since || '1970-01-01T00:00:00.000Z');
+  const changeEvents = [
+    ...persons.items.map(_personChangeEvent),
+    ...households.items.map(_householdChangeEvent),
+  ];
   return {
-    persons: persons.items,
-    households: households.items,
+    changes: changeEvents,
     cursor,
-    count: persons.items.length + households.items.length,
+    count: changeEvents.length,
   };
 }
 
 async function pushBatch(db, secrets, pairingCfg, { limit = DEFAULT_BATCH_LIMIT, fetchImpl = null } = {}) {
   const batch = assembleBatch(db, secrets, pairingCfg, { limit });
-  // Seal the PII-bearing items; cursor + tenant stay cleartext.
+  // CANONICAL sync request: cursor + sinceCursor + tenant cleartext; the
+  // ChangeEvent array is SEALED (it carries PII) under `changes`.
   const body = {
     tenant: pairingCfg.schoolId,
-    since: pairingCfg.lastAckedCursor || null,
+    sinceCursor: pairingCfg.lastAckedCursor || null,
     cursor: batch.cursor,
-    count: batch.count,
-    payload: envelope.seal(pairingCfg.envelope_key, {
-      persons: batch.persons,
-      households: batch.households,
-    }),
+    changes: envelope.seal(pairingCfg.envelope_key, batch.changes),
   };
   const resp = await _call(pairingCfg, {
     method: 'POST', path: '/familygraph-sync',
@@ -225,30 +244,39 @@ async function fetchOutbox(pairingCfg, { max = DEFAULT_OUTBOX_MAX, fetchImpl = n
 
 // Process one outbox item with FG's existing engines. Returns a result
 // object keyed by the item's id. PII-bearing results (desanitize text,
-// identity-resolved names) are SEALED; code-only results (sanitize) stay
-// cleartext.
+// identity-resolved names, schoolContext snapshot) are SEALED; the sanitize
+// result is code-only (codes + an OPAQUE tokenSetId) → cleartext.
 //
-// Each item shape (as PP parks it):
-//   { id, kind, ...kind-specific fields }
-// `kind`-specific input fields may themselves be sealed by PP if they carry
-// PII (e.g. desanitize text). We open any sealed input before processing.
+// CANONICAL item shape (as PP parks it):
+//   { id, kind, payload: ENVELOPE-or-plain, requestId }
+// We open the payload (if sealed) ONCE, then read the kind-specific fields off
+// the opened object. payload plaintext per kind:
+//   sanitize        { text }
+//   desanitize      { text, tokenSetId }
+//   identity.resolve { record:{…} }
+//   schoolContext   { schoolId, personCode, schoolYear?, grade?, … }
 function processItem(db, secrets, pairingCfg, item) {
   const id = item && item.id;
   const kind = item && item.kind;
   const base = { id, kind };
   try {
+    const payload = _openMaybe(pairingCfg, item && item.payload) || {};
     if (kind === 'sanitize') {
-      // text → codes. Input text may be sealed (it's PII). Result contains
-      // only pseudonymous codes → cleartext.
-      const text = _openMaybe(pairingCfg, item.text);
+      // text → codes. Result is code-only (codes + an opaque token-set ref) →
+      // cleartext. The codes→names map NEVER leaves FamilyGraph; only the
+      // opaque tokenSetId travels. FG persists the map in its own encrypted
+      // token_sets store.
+      const text = payload.text;
       const out = sanitize.sanitizeText(db, secrets, String(text || ''), { actor: `pp:${pairingCfg.schoolId}` });
-      return { ...base, ok: true, result: { sanitized: out.sanitized, token_set: out.tokenSet } };
+      return { ...base, ok: true, result: { sanitized: out.sanitized, tokenSetId: out.tokenSet } };
     }
     if (kind === 'desanitize') {
-      // codes → text (authorized). Result contains names → SEALED.
-      const text = _openMaybe(pairingCfg, item.text);
-      const tokenSet = item.token_set || item.tokenSet;
-      const restored = sanitize.desanitizeText(db, secrets, String(text || ''), tokenSet, {
+      // codes → text (authorized). The map is looked up BY tokenSetId from
+      // FG's own encrypted store — PP never sent the mapping, only the id.
+      // Result contains names → SEALED.
+      const text = payload.text;
+      const tokenSetId = payload.tokenSetId;
+      const restored = sanitize.desanitizeText(db, secrets, String(text || ''), tokenSetId, {
         actor: `pp:${pairingCfg.schoolId}`,
         // PP is an authorized de-anonymization caller for its own token sets.
         authKind: 'master',
@@ -256,10 +284,9 @@ function processItem(db, secrets, pairingCfg, item) {
       return { ...base, ok: true, result: envelope.seal(pairingCfg.envelope_key, { text: restored }) };
     }
     if (kind === 'identity.resolve') {
-      // record → code/action. The incoming record carries PII → may be
-      // sealed by PP. The result code is pseudonymous, but reasons can echo
-      // matched values, so SEAL the result to be safe.
-      const record = _openMaybe(pairingCfg, item.record);
+      // record → code/action. The result code is pseudonymous, but reasons can
+      // echo matched values, so SEAL the result to be safe.
+      const record = payload.record || payload;
       const incoming = _toIncoming(record);
       const thresholds = _thresholds(db);
       const out = resolver.resolveOrCreatePerson(db, secrets, thresholds, incoming, {
@@ -269,12 +296,11 @@ function processItem(db, secrets, pairingCfg, item) {
       return { ...base, ok: true, result: envelope.seal(pairingCfg.envelope_key, out) };
     }
     if (kind === 'schoolContext') {
-      // PP-supplied child/school snapshot → apply via existing logic. The
-      // snapshot carries child PII → may be sealed. We ack with the stored
-      // shape (codes + non-PII fields) — but seal it since grade/classroom
-      // can be sensitive in aggregate.
-      const snapshot = _openMaybe(pairingCfg, item.snapshot || item.schoolContext || item);
-      const personCode = snapshot.personId || snapshot.personCode || snapshot.person_code || snapshot.person_id;
+      // PP-supplied child/school snapshot → apply via existing logic. We ack
+      // with the stored shape (codes + non-PII fields) — SEALED since
+      // grade/classroom can be sensitive in aggregate.
+      const snapshot = payload;
+      const personCode = snapshot.personCode || snapshot.personId || snapshot.person_code || snapshot.person_id;
       schoolContext.upsert(db, personCode, { ...snapshot, source_app: `pp:${pairingCfg.schoolId}` });
       const stored = schoolContext.getOne(db, personCode, snapshot.schoolId || snapshot.school_id);
       return { ...base, ok: true, result: envelope.seal(pairingCfg.envelope_key, { schoolContext: stored }) };

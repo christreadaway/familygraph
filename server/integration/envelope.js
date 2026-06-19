@@ -21,11 +21,13 @@
 //              results that contain ONLY codes. These may travel cleartext
 //              inside the TLS + HMAC envelope.
 //
-// Wire shape of a sealed value (so PP can detect-and-decrypt):
-//   { "__fg_enc": "v1", "alg": "aes-256-gcm", "iv": "<b64>",
-//     "tag": "<b64>", "ct": "<b64>" }
+// Wire shape of a sealed value (CANONICAL — so PP can detect-and-decrypt):
+//   { "enc": "aes-256-gcm", "iv": "<base64 12B>",
+//     "tag": "<base64 16B>", "ct": "<base64>" }
 // The plaintext is the UTF-8 JSON of the wrapped object. PP recognises the
-// `__fg_enc` marker, pulls iv/tag/ct, and decrypts with the shared key.
+// `enc` marker, pulls iv/tag/ct, and decrypts with the shared key. This is the
+// single canonical wire shape shared by BOTH repos
+// (see FG_PP_WIRE_CONTRACT). A value with NO `enc` field is cleartext.
 //
 // We reuse the SAME AES-256-GCM primitive family as crypto/encryption.js,
 // but with the pairing's `envelope_key` rather than the local dataKey, and
@@ -38,7 +40,8 @@ const crypto = require('crypto');
 const WIRE_VERSION = 'v1';
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12;
-const MARKER = '__fg_enc';
+// Canonical envelope marker: a sealed value carries `enc: "aes-256-gcm"`.
+const MARKER = 'enc';
 
 function _key(envelopeKeyHex) {
   if (!envelopeKeyHex || !/^[0-9a-fA-F]{64}$/.test(String(envelopeKeyHex))) {
@@ -57,17 +60,17 @@ function seal(envelopeKeyHex, value) {
   const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
   return {
-    [MARKER]: WIRE_VERSION,
-    alg: ALGO,
+    enc: ALGO,
     iv: iv.toString('base64'),
     tag: tag.toString('base64'),
     ct: ct.toString('base64'),
   };
 }
 
-// isSealed(x) → true if x looks like a seal() wrapper.
+// isSealed(x) → true if x looks like a canonical envelope (carries the `enc`
+// marker set to the AES-256-GCM algorithm id). Matches PP's `isEnvelope`.
 function isSealed(x) {
-  return !!(x && typeof x === 'object' && x[MARKER] === WIRE_VERSION
+  return !!(x && typeof x === 'object' && x[MARKER] === ALGO
     && typeof x.iv === 'string' && typeof x.tag === 'string' && typeof x.ct === 'string');
 }
 

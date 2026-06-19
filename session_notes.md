@@ -3189,4 +3189,49 @@ conventions. If the operator runs the client locally, use
 
 ---
 
+## FG<->PP wire-contract reconciliation (v1)
+
+The two repos had drifted on the bytes on the wire. We pinned a single canonical
+contract (now in the `FAMILYGRAPH_INTEGRATION.md` appendix and verbatim in PP's
+`trackerdocs/specs/FG_PP_WIRE_CONTRACT.md`) and moved FG to match it.
+
+Five mismatches, all fixed:
+
+1. Envelope. FG was emitting `{ __fg_enc:"v1", alg:"aes-256-gcm", iv, tag, ct }`;
+   PP expected the canonical `{ enc:"aes-256-gcm", iv, tag, ct }`. Changed
+   `server/integration/envelope.js` to emit `enc` and detect on it. PP was
+   already canonical, so FG moved.
+
+2. Sync push. `pushBatch` was sending `{ tenant, since, cursor, count, payload:
+   seal({persons, households}) }`. Canonical is `{ tenant, sinceCursor, cursor,
+   changes: ENVELOPE([ChangeEvent...]) }` where a ChangeEvent is the SAME
+   `{type,data}` the webhook emits (tombstones `{type,id}` for deletes). Rebuilt
+   `assembleBatch` to map each changed person/household into a ChangeEvent and
+   seal the array as `changes`. PP's `processSyncBatch` now opens that envelope
+   and maps each event through the shared `applyChange`/`claimDelivery`.
+
+3. Outbox. `processItem` was reading `item.text`/`item.record`/`item.snapshot`
+   directly. Canonical parks a single `item.payload` (sealed for PII). It now
+   opens `item.payload` once and reads the kind fields off the opened object. PP
+   seals the PII payloads server-side at the outbox function.
+
+4. Inbox. FG already batched (`{tenant, results:[...]}`) - kept. PP's inbox
+   handler was single-item; it now consumes the batch keyed by each result's
+   `id`.
+
+5. De-anon map. Sanitize result is now `{ sanitized, tokenSetId }` - an OPAQUE
+   ref to FG's own encrypted `token_sets` store, never the codes->names mapping.
+   Desanitize looks the map up by `tokenSetId`. `processItem` asserts `mappings`
+   never goes on the wire.
+
+Added `tests/integration-pp-wire-fixtures.test.js` - fixed-key envelope
+round-trip (a known sealed blob shared with PP), one sync request, one outbox
+item, one inbox batch - asserting the exact bytes. Updated
+`integration-pp-outbound.test.js` to the canonical shapes (NOT weakened - the
+old assertions encoded the pre-reconciliation contract). Full FG suite green:
+574 pass, 1 skipped (was 569 total). No npm install needed (node_modules
+present); no `sfw` invoked.
+
+---
+
 *End of session notes*
