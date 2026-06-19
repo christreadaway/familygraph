@@ -381,8 +381,8 @@ async function dispatchOne(db, secrets, row, { sender = _defaultSender } = {}) {
   const secret = enc.decrypt(secrets, row.secret_ct);
   const signature = sign(secret, row.payload);
   const headers = {
-    'x-fg-contract-version': 'v0.1',
-    'user-agent': 'familygraph-webhook/0.1',
+    'x-fg-contract-version': 'v0.2',
+    'user-agent': 'familygraph-webhook/0.2',
   };
   if (signature) headers['x-fg-signature'] = signature;
   try {

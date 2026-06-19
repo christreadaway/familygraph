@@ -651,8 +651,15 @@ Quick sketch:
 
 - Mount point: `/v1/...`. All routes require Bearer with the
   `integration` scope (master token also works).
-- Every request should send `X-FG-Contract-Version: v0.1`. Unknown
-  versions get `426 Upgrade Required`.
+- Every request should send `X-FG-Contract-Version: v0.2` (`v0.1` is
+  still accepted for back-compat). Unknown majors get `426 Upgrade
+  Required`. FG echoes `X-FG-Contract-Version: v0.2` on every response.
+- Consent and school-context writes have canonical surfaces:
+  `POST /v1/consents` (person-keyed, optional `schoolId` override) and
+  `POST /v1/schools/:schoolId/context` (school-keyed enrichment
+  snapshot). The older `POST /v1/persons/:id/photoConsent` and
+  `POST /v1/persons/:id/schoolContext` routes stay mounted and write
+  the same rows.
 - Writes (POST / PATCH) honour `X-Request-Id` for 24-hour idempotency
   and surface `X-FG-Idempotent-Replay: true` when a duplicate is hit.
 - GETs return ETag + `Cache-Control: max-age=30`. PATCHes honour

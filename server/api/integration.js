@@ -46,8 +46,12 @@ const changes = integration.changes;
 const dioceses = integration.dioceses;
 const history = require('../identity/history');
 
-const CONTRACT_VERSION = 'v0.1';
-const ACCEPTED_VERSIONS = new Set([CONTRACT_VERSION]);
+// Wire contract version. v0.2 is the current major; v0.1 stays on the
+// compatibility list so existing clients keep working (the additive
+// fields and the new canonical endpoints don't break a v0.1 caller).
+// Anything not on this set gets a 426 Upgrade Required.
+const CONTRACT_VERSION = 'v0.2';
+const ACCEPTED_VERSIONS = new Set(['v0.1', 'v0.2']);
 const READ_CACHE_SECONDS = 30;
 
 // Helper: attach ETag + Cache-Control headers to a response body and send it.
@@ -915,6 +919,131 @@ function build({ db, secrets }) {
       entityCode: req.params.code, entityKind: 'diocese',
     });
     return res.json({ diocese: dioceses.get(db, secrets, req.params.code, { includeNotes: true }), noop: !!result.noop });
+  });
+
+  // ===========================================================================
+  // CONSENTS (canonical write surface) — v0.2
+  // ===========================================================================
+
+  // POST /v1/consents — the canonical person-keyed consent write.
+  //
+  // Body: { personId | personCode, schoolId?, photo, directory, ... }
+  //   - personId / personCode   the FG person code (required)
+  //   - schoolId                 optional; when present the write targets
+  //                              the per-school override row, otherwise the
+  //                              identity-level base
+  //   - photo / photoConsent     'allow' | 'group_only' | 'deny'
+  //   - directory / directoryListing  'allow' | 'deny'
+  //
+  // Per-school override semantics are "more restrictive wins" at read
+  // time: GET /v1/persons/:id/consent?schoolId= returns override-or-base
+  // per field, and on a person merge the more-restrictive value survives
+  // (consents.js / people.merge). This endpoint is the canonical
+  // replacement for the older POST /v1/persons/:id/photoConsent route,
+  // which stays mounted for back-compat. Both write the same rows.
+  r.post('/consents', (req, res) => {
+    const body = req.body || {};
+    const personId = body.personId || body.personCode || body.person_id || body.person_code;
+    if (!personId || !isValidCode(personId, 'person')) {
+      return res.status(400).json({ error: 'invalid_person_id', detail: 'personId (or personCode) required' });
+    }
+    const schoolId = body.schoolId || body.school_id || null;
+    const photo = body.photo || body.photoConsent || body.photo_consent;
+    const directory = body.directory || body.directoryListing || body.directory_listing;
+    if (photo === undefined && directory === undefined) {
+      return res.status(400).json({ error: 'photo or directory required' });
+    }
+    const audCtx = {
+      actor: req.auth?.actor || 'integration',
+      actorKind: req.auth?.kind || null,
+      requestId: req.fgContract.requestId || null,
+    };
+    const auditMeta = { photo_consent: photo || null, directory_listing: directory || null };
+    try {
+      if (schoolId) {
+        consents.setOverride(db, personId, schoolId, {
+          photoConsent: photo, directoryListing: directory,
+        }, audCtx);
+        auditMeta.school_id = schoolId;
+        auditMeta.scope = 'school_override';
+      } else {
+        consents.set(db, personId, {
+          photoConsent: photo, directoryListing: directory,
+        }, audCtx);
+        auditMeta.scope = 'identity_base';
+      }
+    } catch (e) {
+      const m = userFacingMessage(e);
+      if (/not found/.test(m)) return res.status(404).json({ error: 'not_found' });
+      return res.status(400).json({ error: m });
+    }
+    audit.record(db, {
+      action: 'integration_consent_update',
+      actor: req.auth?.actor || 'integration',
+      entityCode: personId, entityKind: 'person',
+      metadata: auditMeta,
+    });
+    emitWebhook(db, secrets, {
+      event: 'consent.updated',
+      personCode: personId,
+      schoolHints: schoolId ? [schoolId]
+        : (req.fgContract.sourceTenant ? [req.fgContract.sourceTenant] : []),
+      extra: schoolId ? { schoolId } : null,
+    });
+    const responseConsent = objects.consentObject(db, personId, schoolId || null);
+    return res.status(201).json({ consent: responseConsent });
+  });
+
+  // ===========================================================================
+  // SCHOOL CONTEXT (canonical, school-keyed) — v0.2
+  // ===========================================================================
+
+  // POST /v1/schools/:schoolId/context — the canonical school-context
+  // snapshot endpoint. Same upsert machinery as the person-keyed
+  // POST /v1/persons/:id/schoolContext (which stays mounted for
+  // back-compat), but keyed off the schoolId in the path so a school
+  // admin app can push the whole household/child picture under its own
+  // tenant slug.
+  //
+  // Body (current state, not a log — overwrites the previous snapshot for
+  // this (person, school) pair):
+  //   { personId | personCode, schoolYear?, grade?, classroomId?,
+  //     classroomName?, homeroomTeacherPersonId?, activities?[],
+  //     allergies?[], snapshotAt? }
+  //
+  // The write is debounced on the app side (one POST per personId per
+  // 5 min per §7.3); FG simply stores the latest snapshot it receives.
+  r.post('/schools/:schoolId/context', (req, res) => {
+    const schoolId = req.params.schoolId;
+    const body = req.body || {};
+    const personId = body.personId || body.personCode || body.person_id || body.person_code;
+    if (!personId || !isValidCode(personId, 'person')) {
+      return res.status(400).json({ error: 'invalid_person_id', detail: 'personId (or personCode) required in body' });
+    }
+    // The path schoolId is authoritative; copy it into the snapshot so
+    // schoolContext.upsert keys on it (and validates the slug shape).
+    body.schoolId = schoolId;
+    body.source_app = req.fgContract.sourceApp;
+    try {
+      schoolContext.upsert(db, personId, body);
+    } catch (e) {
+      const m = userFacingMessage(e);
+      if (/not found/.test(m)) return res.status(404).json({ error: 'not_found' });
+      return res.status(400).json({ error: m });
+    }
+    audit.record(db, {
+      action: 'integration_school_context_upsert',
+      actor: req.auth?.actor || 'integration',
+      entityCode: personId, entityKind: 'person',
+      metadata: {
+        school_id: schoolId,
+        school_year: body.schoolYear || body.school_year || null,
+        grade: body.grade || null,
+        scope: 'school_keyed',
+      },
+    });
+    const stored = schoolContext.getOne(db, personId, schoolId);
+    return res.status(201).json({ schoolContext: stored });
   });
 
   // ===========================================================================

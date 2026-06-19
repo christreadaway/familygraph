@@ -79,7 +79,9 @@ test('Integration API > GET /v1/persons?email=<x> returns the matched person', a
   assert.equal(r.body.person.firstName, 'Amanda');
   assert.equal(r.body.person.kind, 'adult');
   assert.ok(r.headers.etag, 'response should carry an ETag');
-  assert.match(r.headers['x-fg-contract-version'], /v0\.1/);
+  // FG advertises the current wire contract (v0.2). v0.1 requests are still
+  // honoured, but the echoed header reflects what FG itself speaks.
+  assert.match(r.headers['x-fg-contract-version'], /v0\.2/);
 });
 
 test('Integration API > GET /v1/persons?email=<unknown> returns 404', async t => {

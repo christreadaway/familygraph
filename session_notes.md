@@ -3037,4 +3037,73 @@ re-litigate why main moved past it.
 
 ---
 
+## v0.2 wire bump: ParentPoint contract edges
+
+ParentPoint is the first app wiring into FamilyGraph for real, so this
+pass locked the `/v1` contract PP consumes. Most of it was confirmation,
+not construction. The v0.1 build already shipped every read PP needs
+(`GET /v1/persons/:id`, `?email=` equality via the `emails.norm_hash`
+HMAC, `GET /v1/households/:id`, `?personId=`, and both
+`persons/changed` / `households/changed` feeds with archived-row
+tombstones), the per-school consent overrides, and the exact five-event
+webhook taxonomy with raw-body `sha256=` HMAC signatures. Nothing needed
+renaming - the wire already said `person.updated` / `person.deleted` /
+`household.updated` / `household.deleted` / `consent.updated`.
+
+What actually shipped new: two canonical write endpoints and the wire
+version. PP's product spec asked for a person-keyed `POST /v1/consents`
+(`{ personId, schoolId?, photo, directory }` - schoolId present writes
+the per-school override, absent writes the identity base) and a
+school-keyed `POST /v1/schools/:schoolId/context` (the household/child
+enrichment snapshot keyed off the tenant slug in the path). Both
+delegate straight to the existing `consents.js` / `schoolContext.js`
+helpers, so override-merge, more-restrictive-wins on person merge,
+schoolId validation, entity_changes snapshotting, and webhook emission
+are byte-identical to the older `POST /v1/persons/:id/photoConsent` and
+`.../schoolContext` routes. Those legacy routes stay mounted and write
+the same rows - PP doesn't need a person-keyed `photoConsent`;
+`/v1/consents` is canonical. The trade-off was deliberate: adding alias
+routes rather than migrating callers keeps every existing test and
+consumer working while giving PP the cleaner contract shape.
+
+`CONTRACT_VERSION` went `v0.1` → `v0.2`, accepted set is now
+`{ v0.1, v0.2 }` so an older client keeps working, and FG echoes
+`X-FG-Contract-Version: v0.2` on every response (it reflects what FG
+speaks, not what the request declared). Unknown majors still 426. The
+outbound webhook headers moved to `v0.2` / `familygraph-webhook/0.2`.
+
+Phase 3 reachability: PP touches three surfaces - `/v1` (`integration`),
+identity resolve/match/feedback (all POSTs → `pii.write`), and
+sanitize/desanitize (`sanitize`). A single scoped key carrying
+`["integration", "sanitize", "pii.write"]` grants exactly that, so PP
+needs one key, not three. No new auth surface or scope was invented -
+all three already exist in `api-keys.js`. The exact provisioning recipe
+went into `INTEGRATION_GUIDE.md` §4.1. The only scope nuance worth
+flagging: `POST /api/identity/match` is a read-only peek but rides
+`pii.write` because the router gates the whole `/api/identity` POST
+surface on write; if a future operator wants read-only identity peeks
+split out, that's a `method2scope` change on that router, not a new
+scope.
+
+Two stale assertions hard-coded the old `v0.1` echoed header (one in
+integration-api, one in integration-webhooks); both were updated to
+`v0.2` to match the intentional bump - the tests still assert the header
+is present and correct, not weakened. 15 new cases in
+`integration-pp-contract.test.js`. New total: 544 tests, 543 pass, 0
+fail, 1 pre-existing skip.
+
+Docs: FAMILYGRAPH_INTEGRATION.md got an Appendix E (as-built, not a body
+rewrite); INTEGRATION_GUIDE.md got the v0.2 version bump, the two
+canonical endpoints in the §7.2 table, and the PP key recipe (§4.1);
+README's integration section now names v0.2 and the canonical consent /
+school-context routes.
+
+`SFW_BYPASS=1 npm install` used once this session: `sfw` was not on PATH;
+installing it globally succeeded but `sfw` could not fetch its firewall
+binary (sandboxed environment, no egress to its release host - a genuine
+unreachable-sfw outage, the sanctioned bypass condition). Needed to
+install the 208 project deps to run `node --test`.
+
+---
+
 *End of session notes*

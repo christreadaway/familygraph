@@ -1134,3 +1134,123 @@ The security pass added 26 cases in `tests/security-hardening.test.js`.
 The full suite went from 463 → 489 passing (1 skipped on root, as
 before).
 
+---
+
+## Appendix E — v0.2 wire bump: ParentPoint contract edges (2026-06-19)
+
+ParentPoint (PP) is the first app wiring into FamilyGraph for real, and
+this pass locked the `/v1` contract it consumes. The work was mostly
+confirmation - the v0.1 build already shipped the reads, the
+changed-feeds, the per-school overrides, and the five-event webhook
+taxonomy. The genuinely new pieces are the two canonical write
+endpoints PP's product spec asked for and the wire-version bump to
+`v0.2`. As before, this Appendix records what shipped; the body prose
+stays a historical record of intent.
+
+### Wire version: v0.1 → v0.2
+
+`CONTRACT_VERSION` in `server/api/integration.js` is now `v0.2`, and the
+accepted-versions allowlist is `{ v0.1, v0.2 }`. A v0.1 client keeps
+working untouched - the additive endpoints and fields don't break it -
+and FG echoes `X-FG-Contract-Version: v0.2` on every response so a
+client can see what FG itself speaks even when it declared v0.1. An
+unknown major still returns `426 Upgrade Required`. The outbound webhook
+headers moved to `x-fg-contract-version: v0.2` /
+`user-agent: familygraph-webhook/0.2`.
+
+### New canonical write endpoints
+
+| Verb + path | Purpose | Notes |
+|---|---|---|
+| `POST /v1/consents` | Canonical person-keyed consent write | Body `{ personId\|personCode, schoolId?, photo, directory }`. `schoolId` present → per-school override row; absent → identity base. Same rows the legacy `POST /v1/persons/:id/photoConsent` writes; that route stays mounted for back-compat |
+| `POST /v1/schools/:schoolId/context` | Canonical school-keyed enrichment snapshot | Body `{ personId\|personCode, schoolYear?, grade?, classroomId?, classroomName?, homeroomTeacherPersonId?, activities?[], allergies?[], snapshotAt? }`. The path `schoolId` is authoritative and overwrites the previous snapshot for the `(person, school)` pair (current state, not a log). Same rows as the legacy `POST /v1/persons/:id/schoolContext` |
+
+Both delegate to the existing helper modules (`integration/consents.js`,
+`integration/schoolContext.js`) so the override-merge, more-restrictive-
+wins-on-merge, schoolId validation, `entity_changes` snapshotting, and
+`person.updated` / `consent.updated` webhook emission are identical to
+the legacy routes. `POST /v1/consents` emits `consent.updated` (with
+`schoolId` in the payload when school-scoped); the school-context POST
+upserts the snapshot and audits as `integration_school_context_upsert`
+with `scope: 'school_keyed'`.
+
+**Consent request/response shape:**
+
+```jsonc
+// POST /v1/consents
+{
+  "personId": "p_a7b3c91d",   // or personCode
+  "schoolId": "[school-slug]",  // optional → per-school override
+  "photo": "deny",              // allow | group_only | deny  (alias: photoConsent)
+  "directory": "deny"           // allow | deny               (alias: directoryListing)
+}
+// → 201 { "consent": { personId, schoolId, photoConsent, directoryListing,
+//                       overrideApplied, basePhotoConsent?, baseDirectoryListing?, updatedAt } }
+```
+
+Per-school override semantics: the effective value for `(person,
+school)` is `override-or-base` per field, read at
+`GET /v1/persons/:id/consent?schoolId=`. On a person merge the
+more-restrictive value survives (`deny > group_only > allow` for photo;
+`deny > allow` for directory) - unchanged from Appendix C.
+
+**School-context request/response shape:**
+
+```jsonc
+// POST /v1/schools/[school-slug]/context
+{
+  "personId": "p_a7b3c91d",
+  "schoolYear": "2026-2027",
+  "grade": "3",
+  "classroomId": "3A",
+  "classroomName": "[Room] - [Teacher]",
+  "homeroomTeacherPersonId": "p_t1...",   // optional
+  "activities": [
+    { "kind": "sport",      "label": "[Team]",  "season": "2026-2027 Winter" },
+    { "kind": "after_care", "label": "MWF",     "season": "2026-2027" }
+  ],
+  "allergies": ["peanuts"]
+}
+// → 201 { "schoolContext": { schoolId, schoolYear, grade, classroomId,
+//                            classroomName, homeroomTeacherPersonId,
+//                            activities[], allergies[], snapshotAt, updatedAt } }
+```
+
+### Confirmed already-present (no change needed)
+
+- **Reads:** `GET /v1/persons/:id`, `GET /v1/persons?email=` (equality
+  via the `emails.norm_hash` HMAC - never a decrypt-and-scan),
+  `GET /v1/households/:id`, `GET /v1/households?personId=`,
+  `GET /v1/persons/changed?since=`, `GET /v1/households/changed?since=`
+  (tombstones archived households). All shipped in v0.1.
+- **Webhook taxonomy:** the five event names are exactly
+  `person.updated`, `person.deleted`, `household.updated`,
+  `household.deleted`, `consent.updated` - no rename was needed. The
+  signature is `X-FG-Signature: sha256=<HMAC-SHA256(rawBody,
+  subscription.secret)>`, computed over the exact stored payload bytes.
+  24h idempotency via `X-Request-Id`, retry/backoff
+  (30s / 2m / 10m / 1h / 6h, 5 attempts) intact.
+- **Headers honoured on `/v1`:** `X-FG-Contract-Version`,
+  `X-Family-Graph-Actor`, `X-Source-Tenant` / `X-Source-App` on writes,
+  `X-Request-Id` on writes, `If-Match` on PATCH.
+
+### Phase 3 reachability: the ParentPoint scoped key
+
+PP reaches three surfaces - `/v1` (`integration`), identity
+resolve/match/feedback (all POSTs, `pii.write`), and sanitize/desanitize
+(`sanitize`). A single scoped key carrying
+`["integration", "sanitize", "pii.write"]` grants exactly that, so PP
+needs one key, not three. No new auth surface or scope was invented -
+all three scopes already exist in `server/auth/api-keys.js`. The exact
+provisioning recipe lives in `INTEGRATION_GUIDE.md` §4.1.
+
+### Test count
+
+15 cases added in `tests/integration-pp-contract.test.js` (version
+acceptance, the two canonical write endpoints + their webhook emission
+and validation edges, and the raw-body signature check). Two stale
+expected-value assertions that hard-coded the old `v0.1` echoed header
+were updated to `v0.2` to match the intentional wire bump (the tests
+still assert the header is present and correct - not weakened). The full
+suite went from 529 → 544 passing (1 skipped on root, as before).
+
