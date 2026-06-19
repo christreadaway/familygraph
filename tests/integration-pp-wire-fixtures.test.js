@@ -184,3 +184,147 @@ test('wire > inbox return is a BATCH { tenant, results:[{ id, kind, ok, result }
     cleanup(dir);
   }
 });
+
+// ── F. Document vault wire shapes — store / fetch / document.updated ──────────
+//
+// These pin the EXACT bytes for the Document Vault contract. PP asserts the
+// identical shapes in its mirror fixture test. SEAL on store/fetch payloads
+// (bytes + PII); CLEARTEXT on the store result (opaque docRef only) and on the
+// fetch DENY result (no PII); SEALED envelope on the fetch ALLOW result.
+
+function _vaultSetup() {
+  const { newDb, newSecrets } = require('./_helpers');
+  const pairing = require('../server/integration/pairing');
+  const people = require('../server/identity/people');
+  const { db, dir } = newDb();
+  const secrets = newSecrets();
+  pairing.set(db, secrets, 'st-marys', {
+    pp_base_url: 'https://pp.example.org',
+    pp_bearer_credential: 'bearer',
+    shared_webhook_secret: 'secret',
+    envelope_key: FIXED_KEY_HEX,
+    check_in_interval_s: 20,
+    enabled: true,
+  }, { actor: 'test' });
+  const cfg = pairing.load(db, secrets, 'st-marys');
+  const personCode = people.create(db, secrets, { given_name: 'Kid', family_name: 'Smith', kind: 'child' });
+  return { db, dir, secrets, cfg, personCode };
+}
+
+test('wire > document.store: SEALED payload in, CLEARTEXT { docRef } out', () => {
+  const { newDb, newSecrets, cleanup } = require('./_helpers');
+  void newDb; void newSecrets; // referenced via _vaultSetup
+  const { db, dir, secrets, cfg, personCode } = _vaultSetup();
+  try {
+    // Canonical document.store payload (SEALED — carries bytes + PII).
+    const payload = envelope.seal(FIXED_KEY_HEX, {
+      personCode,
+      kind: 'sacramental',
+      subtype: 'baptism',
+      title: 'Baptismal Record',
+      contentType: 'application/pdf',
+      contentBase64: Buffer.from('%PDF-1.4 fake', 'utf8').toString('base64'),
+      source: 'pp',
+    });
+    const item = { id: 'fgo_doc_store', kind: 'document.store', payload, requestId: 'pp_ds' };
+    const res = agent.processItem(db, secrets, cfg, item);
+    assert.equal(res.ok, true);
+    assert.equal(res.id, 'fgo_doc_store');
+    // Result is CLEARTEXT: opaque docRef only — no envelope, no bytes, no PII.
+    assert.equal(envelope.isSealed(res.result), false);
+    assert.match(res.result.docRef, /^doc_[0-9a-f]{16}$/);
+    assert.deepEqual(Object.keys(res.result), ['docRef']);
+  } finally {
+    db.close();
+    cleanup(dir);
+  }
+});
+
+test('wire > document.fetch ALLOW: SEALED { docRef, contentType, contentBase64, expiresAt }', () => {
+  const { cleanup } = require('./_helpers');
+  const documents = require('../server/integration/documents');
+  const { db, dir, secrets, cfg, personCode } = _vaultSetup();
+  try {
+    const stored = documents.store(db, secrets, {
+      personCode, kind: 'sacramental', subtype: 'baptism',
+      title: 'Baptismal Record', contentType: 'application/pdf',
+      contentBase64: Buffer.from('%PDF-1.4 fake', 'utf8').toString('base64'),
+    });
+    // Canonical document.fetch payload (SEALED — carries the asserted viewer).
+    const payload = envelope.seal(FIXED_KEY_HEX, {
+      docRef: stored.docRef, personCode,
+      viewer: { userId: 'pp_user_1', role: 'clergy', relationship: 'staff' },
+    });
+    const res = agent.processItem(db, secrets, cfg, { id: 'fgo_doc_fetch', kind: 'document.fetch', payload });
+    assert.equal(res.ok, true);
+    // ALLOW result is a SEALED envelope of { docRef, contentType, contentBase64, expiresAt }.
+    assert.equal(envelope.isSealed(res.result), true);
+    const opened = envelope.open(FIXED_KEY_HEX, res.result);
+    assert.deepEqual(Object.keys(opened).sort(), ['contentBase64', 'contentType', 'docRef', 'expiresAt']);
+    assert.equal(opened.docRef, stored.docRef);
+    assert.equal(opened.contentType, 'application/pdf');
+    assert.equal(typeof opened.expiresAt, 'string');
+  } finally {
+    db.close();
+    cleanup(dir);
+  }
+});
+
+test('wire > document.fetch DENY: CLEARTEXT { ok:false, error } with no PII', () => {
+  const { cleanup } = require('./_helpers');
+  const documents = require('../server/integration/documents');
+  const { db, dir, secrets, cfg, personCode } = _vaultSetup();
+  try {
+    const stored = documents.store(db, secrets, {
+      personCode, kind: 'accommodation', subtype: 'iep',
+      contentType: 'application/pdf', contentBase64: Buffer.from('iep', 'utf8').toString('base64'),
+    });
+    // Parent on an accommodation doc → DENY the file.
+    const payload = envelope.seal(FIXED_KEY_HEX, {
+      docRef: stored.docRef, personCode, viewer: { userId: 'pp_parent_1', relationship: 'parent_of' },
+    });
+    const res = agent.processItem(db, secrets, cfg, { id: 'fgo_doc_deny', kind: 'document.fetch', payload });
+    assert.equal(res.ok, false);
+    assert.equal(res.error, 'forbidden');
+    assert.equal('result' in res, false);
+    assert.equal(envelope.isSealed(res), false);
+  } finally {
+    db.close();
+    cleanup(dir);
+  }
+});
+
+test('wire > document.updated ChangeEvent: metadata only, NO bytes, in sealed batch', () => {
+  const { cleanup } = require('./_helpers');
+  const documents = require('../server/integration/documents');
+  const { db, dir, secrets, cfg, personCode } = _vaultSetup();
+  try {
+    const stored = documents.store(db, secrets, {
+      personCode, kind: 'sacramental', subtype: 'baptism', title: 'Baptism',
+      contentType: 'application/pdf', contentBase64: Buffer.from('%PDF', 'utf8').toString('base64'),
+    });
+    documents.setSafetyFlags(db, secrets, personCode, { allergens: ['peanut'], severity: 'high', medication: 'EpiPen', emergencyContact: '[Parent]' });
+    const batch = agent.assembleBatch(db, secrets, cfg, { limit: 200 });
+
+    const docEv = batch.changes.find(e => e.type === 'document.updated');
+    assert.deepEqual(Object.keys(docEv).sort(), ['data', 'type']);
+    assert.deepEqual(Object.keys(docEv.data).sort(),
+      ['date', 'docRef', 'kind', 'personCode', 'policyKey', 'status', 'subtype', 'title']);
+    assert.equal(docEv.data.docRef, stored.docRef);
+    assert.equal('contentBase64' in docEv.data, false);
+
+    const sfEv = batch.changes.find(e => e.type === 'health.safetyFlags.updated');
+    assert.deepEqual(Object.keys(sfEv.data).sort(),
+      ['allergens', 'emergencyContact', 'medication', 'personCode', 'severity', 'updatedAt']);
+
+    // The full ChangeEvent array seals/opens cleanly under `changes`.
+    const wire = envelope.seal(FIXED_KEY_HEX, batch.changes);
+    assert.equal(envelope.isSealed(wire), true);
+    const back = envelope.open(FIXED_KEY_HEX, wire);
+    assert.ok(back.some(e => e.type === 'document.updated'));
+    assert.ok(back.some(e => e.type === 'health.safetyFlags.updated'));
+  } finally {
+    db.close();
+    cleanup(dir);
+  }
+});

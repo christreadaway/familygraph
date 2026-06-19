@@ -1442,3 +1442,104 @@ X-FG-Contract-Version:  v0.2
 X-Family-Graph-Actor:   familygraph
 X-Request-Id:           <id>    (on writes)
 ```
+
+## 7. Document Vault (FG is the authoritative access gate)
+
+Sensitive child documents (sacramental, learning-accommodation, health/allergy
+records) live ENCRYPTED in FG's vault and surface to PP JUST-IN-TIME over the
+SAME transport spine — no new endpoints, no inbound ports. FG makes the access
+decision and audits it (Tier-2); PP holds no document bytes at rest.
+
+AT-REST vs ON-THE-WIRE: bytes + title are encrypted at rest in FG with the
+LOCAL dataKey (`documents.content_ct` / `title_ct`, the versioned AES-256-GCM
+BLOB layout). When a fetch is AUTHORIZED, the bytes are RE-SEALED with the
+pairing ENVELOPE key for transport. `content_ct` is at-rest encryption, NOT the
+wire envelope. Health safety flags (`health_safety` table) are likewise
+encrypted at rest per `_ct` column.
+
+### 7.1 New outbox kinds (PP parks; FG `processItem` handles)
+
+`document.store` — payload SEALED (carries bytes + PII):
+```json
+{ "personCode": "p_…", "kind": "sacramental|accommodation|health|other",
+  "subtype": "baptism|first_communion|confirmation|marriage|iep|504|mtss|allergy_action_plan|health_care_plan|immunization|other",
+  "title": "…", "contentType": "application/pdf",
+  "contentBase64": "<base64 file bytes>", "source": "pp" }
+```
+result CLEARTEXT (opaque ref only — no bytes, no PII):
+```json
+{ "docRef": "doc_<16 hex>" }
+```
+FG persists to the vault (bytes encrypted at rest), derives `policyKey`, and the
+row's `updated_at` causes a `document.updated` change on the next sync tick.
+
+`document.fetch` — payload SEALED (carries the asserted viewer):
+```json
+{ "docRef": "doc_…", "personCode": "p_…",
+  "viewer": { "userId": "pp_user_1", "role": "clergy|dre|admin|learning_team|assigned_teacher|nurse|direct_care",
+              "relationship": "parent_of|staff" } }
+```
+PP owns user auth; FG TRUSTS + LOGS PP's signed assertion of who the viewer is
+within the tenant boundary. FG's job is the policy decision + audit, not
+re-authenticating PP's users. On ALLOW, result is a SEALED envelope:
+```json
+{ "docRef": "doc_…", "contentType": "application/pdf",
+  "contentBase64": "<base64>", "expiresAt": "<iso ~5 min out>" }
+```
+On DENY, result is CLEARTEXT, NO PII:
+```json
+{ "ok": false, "error": "forbidden" | "not_found" | "too_large" }
+```
+Size cap: documents over 10 MB raw never go on the wire (`too_large`). Every
+fetch and store emits a Tier-2 audit event: actor, docRef, personCode, viewer
+role/relationship, decision, reason.
+
+### 7.2 New sync ChangeEvents (METADATA ONLY — ride the sealed `changes` array)
+
+No bytes ever ride the sync batch; bytes move only on an authorized fetch.
+
+```json
+{ "type": "document.updated",
+  "data": { "docRef": "doc_…", "personCode": "p_…",
+            "kind": "sacramental", "subtype": "baptism",
+            "title": "Baptism", "date": "<iso>",
+            "status": "active", "policyKey": "sacramental" } }
+{ "type": "document.deleted", "id": "doc_…" }
+{ "type": "health.safetyFlags.updated",
+  "data": { "personCode": "p_…", "allergens": ["peanut"],
+            "severity": "high", "medication": "EpiPen",
+            "emergencyContact": "[Parent]", "updatedAt": "<iso>" } }
+{ "type": "health.safetyFlags.cleared", "id": "p_…" }
+```
+
+The safety-flag summary is released regardless of directory/photo consent
+(life-safety). The title + safety summary are PII, which is exactly why the
+whole `changes` array is sealed.
+
+### 7.3 Access matrix (FG authoritative; `server/integration/documentPolicy.js`)
+
+`policyKey` is derived from (kind, subtype) and persisted on the row.
+
+| policyKey | subtypes | staff roles allowed | parent_of |
+|---|---|---|---|
+| `sacramental` | baptism, first_communion, confirmation, marriage | clergy, dre, admin | ALLOW |
+| `accommodation` | iep, 504, mtss | learning_team, assigned_teacher, admin | DENY file (metadata only) |
+| `health_plan` | allergy_action_plan, health_care_plan | nurse, assigned_teacher, admin | ALLOW |
+| `health_record_immunization` | immunization | nurse, admin | ALLOW |
+| `health_record_other` | (health + other/medical) | nurse, admin | DENY |
+| `safety_flags` (summary, via sync) | — | nurse, assigned_teacher, direct_care, admin | ALLOW |
+
+`assigned_teacher` is asserted by PP (PP knows the roster); FG trusts + logs it.
+Unknown policy or unknown relationship FAILS CLOSED (deny).
+
+### 7.4 Operator surface
+
+`/api/documents` (master bearer, operator-only — opens NO inbound surface to
+PP): `POST /` store; `GET /person/:code` list; `GET /:docRef` metadata + title;
+`GET /:docRef/content` operator download of decrypted bytes; `DELETE /:docRef`
+archive; `PUT|GET|DELETE /safety/:code` set/read/clear health safety flags.
+
+FG: migration 0017 (`documents` + `health_safety`), `documents.js` (vault),
+`documentPolicy.js` (matrix), `outbound-agent.js` (`document.store` /
+`document.fetch` in `processItem`), `changes.js`
+(`listChangedDocuments` / `listChangedSafetyFlags`).

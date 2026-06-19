@@ -36,6 +36,7 @@ const buildScan = require('./api/scan');
 const buildIdentityApi = require('./api/identity');
 const buildConnectors = require('./api/connectors');
 const buildPpPairings = require('./api/pp-pairings');
+const buildDocuments = require('./api/documents');
 const buildMinistries = require('./api/ministries');
 const buildOrganizations = require('./api/organizations');
 const buildAuthApi = require('./api/auth');
@@ -130,6 +131,10 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/sanitize', express.json({ limit: '20mb' }));
   app.use('/api/desanitize', express.json({ limit: '20mb' }));
   app.use('/api/scan', express.json({ limit: '20mb' }));
+  // Document vault store accepts a base64 file body; the 10 MB raw cap is ~13.4
+  // MB base64, so a 16 MB JSON limit gives headroom (the byte cap is enforced
+  // in documents.store, not here).
+  app.use('/api/documents', express.json({ limit: '16mb' }));
   app.use(express.json({ limit: '256kb' }));
 
   // Structured request log: every response writes one JSON line to stderr (or
@@ -197,6 +202,11 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   // secrets for the FG→PP dialer). Configures the dialer; opens no inbound
   // surface.
   app.use('/api/pp-pairings', bearerMaster, piiRateLimit, buildPpPairings({ db, secrets }));
+  // Document Vault (operator-only — children's sacramental/accommodation/health
+  // records, the most sensitive data in the system). Bytes are encrypted at
+  // rest with the dataKey; PP reaches documents ONLY via the outbound agent's
+  // document.store/fetch transport, never this route. Opens no inbound surface.
+  app.use('/api/documents', bearerMaster, piiRateLimit, buildDocuments({ db, secrets }));
   app.use('/api/connector-runs', bearerRead, piiRateLimit, buildConnectors.buildRunsRouter({ db }));
   // Volunteer ministries + EIM. Reads are gated on pii.read because per-
   // assignment notes can contain operator commentary; writes need pii.write.

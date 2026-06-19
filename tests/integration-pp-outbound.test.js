@@ -294,14 +294,20 @@ test('agent > processItem schoolContext applies snapshot via existing engine', t
   assert.equal(opened.schoolContext.grade, '3');
 });
 
-test('agent > processItem document.fetch is a clean no-op stub', t => {
+test('agent > processItem document.fetch with no docRef denies not_found, no throw', t => {
+  // The document.fetch stub is now a real access gate (see
+  // integration-documents.test.js for the full matrix). A fetch with no/unknown
+  // docRef is a clean deny — never a throw, never PII in the result.
   const { db, secrets } = setup(t);
   configurePairing(db, secrets, 'st-marys');
   const cfg = pairing.load(db, secrets, 'st-marys');
-  const res = agent.processItem(db, secrets, cfg, { id: 'doc-1', kind: 'document.fetch', ref: 'x' });
-  assert.equal(res.ok, true);
-  assert.equal(res.deferred, true);
-  assert.equal(res.result.status, 'not_implemented');
+  const res = agent.processItem(db, secrets, cfg, {
+    id: 'doc-1', kind: 'document.fetch',
+    payload: { viewer: { role: 'admin', relationship: 'staff' } },
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'not_found');
+  assert.equal('result' in res, false);
 });
 
 test('agent > processItem unknown kind returns ok:false without throwing', t => {

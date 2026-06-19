@@ -193,6 +193,19 @@ In Option A, PP needs no scoped key against FG (it serves the public
 endpoints FG dials). The §4.1 key recipe still applies if a future
 deployment also wants PP to make direct inbound `/v1` calls.
 
+**Document Vault.** Sensitive child documents (sacramental,
+accommodation, health) live encrypted in FG and surface to PP
+just-in-time over the same outbound spine — no new endpoints. PP parks
+`document.store` (FG persists the bytes, returns an opaque `doc_…` ref)
+and `document.fetch` (FG applies the access matrix to PP's asserted
+viewer, enforces a 10 MB cap, returns sealed bytes on ALLOW or
+`{ ok:false, error }` on DENY) outbox items. Document + health-safety
+changes also flow as metadata-only ChangeEvents in the sealed sync batch.
+**FG is the authoritative access gate** — it makes the policy decision
+and writes a Tier-2 audit on every store and fetch. The operator manages
+the vault locally via `/api/documents` (master bearer). Wire shapes and
+the full access matrix are in `FAMILYGRAPH_INTEGRATION.md` §7.
+
 ## 5. Versioning
 
 `X-FG-Contract-Version: v0.2` is the active wire version. `v0.1` is

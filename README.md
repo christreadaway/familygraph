@@ -721,8 +721,9 @@ reconciliation batch since PP's last-acked cursor), `GET
 locally with FG's existing sanitize / identity-resolver / school-context
 engines, then `POST /familygraph-inbox` (return results keyed by item id
 for idempotent ack). Item kinds: `sanitize`, `desanitize`,
-`identity.resolve`, `schoolContext`, and a reserved `document.fetch`
-stub. Every call carries a bearer credential plus an `X-FG-Signature`
+`identity.resolve`, `schoolContext`, plus the Document Vault kinds
+`document.store` and `document.fetch` (see below). Every call carries a
+bearer credential plus an `X-FG-Signature`
 HMAC over the raw body. Any payload carrying PII / de-anonymized text /
 resolved names is **envelope-encrypted** with a shared key on top of TLS
 (`server/integration/envelope.js`); codes, cursors, request ids and acks
@@ -735,6 +736,37 @@ pairings it makes no outbound call. Configure pairings via the
 `pp-pairing` CLI, the operator-only `/api/pp-pairings` API (master
 bearer), or the **ParentPoint** settings tab. Disable the agent entirely
 with `FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`.
+
+### Document Vault (FG is the authoritative access gate)
+
+Sensitive child documents (sacramental, learning-accommodation,
+health/allergy records) live **encrypted in FG's vault** and surface to
+PP **just-in-time** over the same outbound spine — no new endpoints, no
+inbound ports. The file bytes and title are encrypted **at rest** with
+the local `dataKey` (AES-256-GCM); on an **authorized** fetch the bytes
+are re-sealed with the pairing envelope key for transport. PP holds no
+document bytes at rest — it asks FG per fetch and **FG makes the access
+decision and audits it** (Tier-2).
+
+PP parks two outbox kinds: `document.store` (FG persists the bytes,
+returns an opaque `doc_…` ref) and `document.fetch` (FG applies the
+access matrix to PP's asserted viewer, enforces a 10 MB cap, and returns
+the sealed bytes on ALLOW or `{ ok:false, error }` on DENY). Document and
+health-safety-flag changes also flow to PP as **metadata-only**
+ChangeEvents inside the sealed sync batch (`document.updated/deleted`,
+`health.safetyFlags.updated/cleared`) — bytes never ride the sync batch.
+The access matrix (who can see what) lives in
+`server/integration/documentPolicy.js`; the full table is in
+`FAMILYGRAPH_INTEGRATION.md` §7.
+
+Operator surface: `/api/documents` (master bearer, operator-only — opens
+no inbound surface to PP). `POST /api/documents` stores a document
+(JSON, base64 body); `GET /api/documents/person/:code` lists a person's
+documents; `GET /api/documents/:docRef` returns metadata + title; `GET
+/api/documents/:docRef/content` downloads decrypted bytes; `DELETE
+/api/documents/:docRef` archives; `PUT|GET|DELETE
+/api/documents/safety/:code` sets, reads, or clears a person's health
+safety flags (allergens, severity, medication, emergency contact).
 
 ### Auto-merge vs prompt-the-user (the matching gate)
 

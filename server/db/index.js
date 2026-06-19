@@ -34,7 +34,9 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //       admin_accounts / admin_login_tokens / admin_sessions.
 //  16 — alumni role + departure-reason classes (+ reason_detail) on
 //       affiliations, and per-year `period` labels on verifications.
-const SCHEMA_VERSION = 16;
+//  17 — document vault (documents table, at-rest encrypted bytes/title) +
+//       health_safety flags table; FG as authoritative document access gate.
+const SCHEMA_VERSION = 17;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

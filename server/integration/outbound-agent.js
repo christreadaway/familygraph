@@ -45,6 +45,8 @@ const envelope = require('./envelope');
 const pairing = require('./pairing');
 const changes = require('./changes');
 const schoolContext = require('./schoolContext');
+const documents = require('./documents');
+const documentPolicy = require('./documentPolicy');
 const sanitize = require('../sanitize');
 const resolver = require('../identity/resolver');
 const httpClient = require('../connectors/http');
@@ -177,6 +179,45 @@ function _householdChangeEvent(obj) {
   return { type: 'household.updated', data: obj };
 }
 
+// Document + safety-flag ChangeEvents. METADATA ONLY — no document bytes ever
+// ride the sync batch (bytes move only on an authorized document.fetch). These
+// ride INSIDE the already-sealed `changes` array (the title + safety summary
+// are PII, which is exactly why the whole array is sealed).
+function _documentChangeEvent(obj) {
+  if (obj.deleted === true) {
+    return { type: 'document.deleted', id: obj.docRef };
+  }
+  return {
+    type: 'document.updated',
+    data: {
+      docRef: obj.docRef,
+      personCode: obj.personCode,
+      kind: obj.kind,
+      subtype: obj.subtype,
+      title: obj.title,
+      date: obj.date,
+      status: obj.status,
+      policyKey: obj.policyKey,
+    },
+  };
+}
+function _safetyFlagChangeEvent(obj) {
+  if (obj.cleared === true) {
+    return { type: 'health.safetyFlags.cleared', id: obj.personCode };
+  }
+  return {
+    type: 'health.safetyFlags.updated',
+    data: {
+      personCode: obj.personCode,
+      allergens: obj.allergens || [],
+      severity: obj.severity || null,
+      medication: obj.medication || null,
+      emergencyContact: obj.emergencyContact || null,
+      updatedAt: obj.updatedAt,
+    },
+  };
+}
+
 // Assemble the batch of person + household changes since PP's last-acked
 // cursor, reusing the existing changed-feed machinery. The cursor is an ISO
 // timestamp (the changed feed's own cursor shape). Each change becomes a
@@ -186,15 +227,19 @@ function assembleBatch(db, secrets, pairingCfg, { limit = DEFAULT_BATCH_LIMIT } 
   const since = pairingCfg.lastAckedCursor || null;
   const persons = changes.listChangedPersons(db, secrets, since, { limit });
   const households = changes.listChangedHouseholds(db, secrets, since, { limit });
-  // The next cursor is the max of both feeds' cursors so a tick that only
-  // moved households still advances past person-only-empty windows.
-  const cursor = [persons.cursor, households.cursor]
+  const documents = changes.listChangedDocuments(db, secrets, since, { limit });
+  const safety = changes.listChangedSafetyFlags(db, secrets, since, { limit });
+  // The next cursor is the max of all feeds' cursors so a tick that only moved
+  // documents/safety flags still advances past person/household-empty windows.
+  const cursor = [persons.cursor, households.cursor, documents.cursor, safety.cursor]
     .filter(Boolean)
     .sort()
     .pop() || (since || '1970-01-01T00:00:00.000Z');
   const changeEvents = [
     ...persons.items.map(_personChangeEvent),
     ...households.items.map(_householdChangeEvent),
+    ...documents.items.map(_documentChangeEvent),
+    ...safety.items.map(_safetyFlagChangeEvent),
   ];
   return {
     changes: changeEvents,
@@ -305,10 +350,44 @@ function processItem(db, secrets, pairingCfg, item) {
       const stored = schoolContext.getOne(db, personCode, snapshot.schoolId || snapshot.school_id);
       return { ...base, ok: true, result: envelope.seal(pairingCfg.envelope_key, { schoolContext: stored }) };
     }
+    if (kind === 'document.store') {
+      // PP parks a document for the vault. payload (SEALED — it carries bytes
+      // + PII): { personCode, kind, subtype, title, contentType, contentBase64,
+      // source }. We persist to the vault (bytes encrypted at rest with the
+      // dataKey), derive the policyKey, and emit a document.updated change on
+      // the next sync tick (the row's updated_at feeds the changed-feed). The
+      // result is the cleartext opaque docRef.
+      const out = documents.store(db, secrets, {
+        personCode: payload.personCode || payload.person_code,
+        kind: payload.kind,
+        subtype: payload.subtype,
+        title: payload.title,
+        contentType: payload.contentType || payload.content_type,
+        contentBase64: payload.contentBase64 || payload.content_base64,
+        source: payload.source || `pp:${pairingCfg.schoolId}`,
+      }, { actor: `pp:${pairingCfg.schoolId}` });
+      audit.record(db, {
+        tier: 2,
+        action: 'document_store',
+        actor: `pp:${pairingCfg.schoolId}`,
+        entityCode: out.docRef,
+        entityKind: 'document',
+        destination: `pp:${pairingCfg.schoolId}`,
+        metadata: {
+          doc_ref: out.docRef, person_code: out.personCode,
+          policy_key: out.policyKey, byte_size: out.byteSize, decision: 'stored',
+        },
+      });
+      // result is cleartext: just the opaque ref (no PII, no bytes).
+      return { ...base, ok: true, result: { docRef: out.docRef } };
+    }
     if (kind === 'document.fetch') {
-      // Reserved for a later phase. Accept-and-no-op cleanly so PP can mark
-      // the item handled without it sticking in the outbox forever.
-      return { ...base, ok: true, deferred: true, result: { status: 'not_implemented' } };
+      // PP asks for a document's bytes for an ASSERTED viewer. payload:
+      // { docRef, personCode, viewer:{ userId, role, relationship } }. FG is
+      // the authoritative GATE: it applies the access matrix to the asserted
+      // viewer (PP owns user auth; FG trusts + LOGS PP's signed assertion),
+      // enforces the size cap, and on allow RE-SEALS the bytes for transport.
+      return _processDocumentFetch(db, secrets, pairingCfg, base, payload);
     }
     return { ...base, ok: false, error: 'unknown_kind' };
   } catch (e) {
@@ -318,6 +397,84 @@ function processItem(db, secrets, pairingCfg, item) {
     });
     return { ...base, ok: false, error: e.reason || 'processing_error' };
   }
+}
+
+// ParentPoint-driven document fetch. The access decision + audit live here;
+// the matrix itself is in documentPolicy.js (pure). On DENY the result is
+// cleartext and carries NO PII — just { ok:false, error }. On ALLOW the result
+// is the wire ENVELOPE (sealed bytes), expiring ~5 minutes out.
+const FETCH_TTL_MS = 5 * 60 * 1000;
+
+function _processDocumentFetch(db, secrets, pairingCfg, base, payload) {
+  const docRef = payload.docRef || payload.doc_ref;
+  const personCode = payload.personCode || payload.person_code || null;
+  const viewer = (payload.viewer && typeof payload.viewer === 'object') ? payload.viewer : {};
+  const role = viewer.role || null;
+  const relationship = viewer.relationship || null;
+  const viewerId = viewer.userId || viewer.user_id || null;
+
+  // Helper that audits the decision then returns the result. `error` null = allow.
+  const finish = (decision, reason, error, extra) => {
+    audit.record(db, {
+      tier: 2,
+      action: 'document_fetch',
+      actor: `pp:${pairingCfg.schoolId}`,
+      entityCode: docRef || null,
+      entityKind: 'document',
+      destination: `pp:${pairingCfg.schoolId}`,
+      metadata: {
+        // Viewer identity is asserted by PP; we LOG it (no name, just id/role).
+        doc_ref: docRef || null, person_code: personCode || null,
+        viewer_id: viewerId || null, viewer_role: role || null,
+        viewer_relationship: relationship || null,
+        decision, reason,
+      },
+    });
+    log.info('documents.fetch.decision', {
+      tenant: pairingCfg.schoolId, doc_ref: docRef || null,
+      viewer_role: role || null, viewer_relationship: relationship || null,
+      decision, reason,
+    });
+    if (error) return { ...base, ok: false, error };
+    return { ...base, ok: true, result: extra };
+  };
+
+  const meta = docRef ? documents.getMeta(db, docRef) : null;
+  // Not found, archived, or addressed at the wrong person → not_found (we don't
+  // leak whether a doc exists for a person the viewer didn't name correctly).
+  if (!meta || meta.status !== 'active') {
+    return finish('deny', 'not_found', 'not_found');
+  }
+  if (personCode && meta.personCode !== _resolveCode(db, personCode)) {
+    return finish('deny', 'person_mismatch', 'not_found');
+  }
+
+  const verdict = documentPolicy.decide({ policyKey: meta.policyKey, role, relationship });
+  if (!verdict.allow) {
+    return finish('deny', verdict.reason, 'forbidden');
+  }
+
+  // Size cap: never put more than MAX_BYTES on the wire even if a row slipped
+  // past the store-time cap.
+  if (meta.byteSize > documents.MAX_BYTES) {
+    return finish('deny', 'too_large', 'too_large');
+  }
+
+  const full = documents.getWithBytes(db, secrets, docRef);
+  if (!full) return finish('deny', 'not_found', 'not_found');
+
+  const sealed = envelope.seal(pairingCfg.envelope_key, {
+    docRef: full.docRef,
+    contentType: full.contentType,
+    contentBase64: full.contentBase64,
+    expiresAt: new Date(Date.now() + FETCH_TTL_MS).toISOString(),
+  });
+  return finish('allow', verdict.reason, null, sealed);
+}
+
+function _resolveCode(db, code) {
+  try { return require('../identity/aliases').resolveAlias(db, code); }
+  catch (_) { return code; }
 }
 
 function _openMaybe(pairingCfg, value) {

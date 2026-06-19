@@ -88,4 +88,80 @@ function listChangedHouseholds(db, secrets, since, { limit = 200 } = {}) {
   };
 }
 
-module.exports = { listChangedPersons, listChangedHouseholds };
+// Document vault changed feed. Documents surface to PP as METADATA-ONLY
+// ChangeEvents (no bytes ride the sync batch — bytes only move on an
+// authorized document.fetch). An archived document is tombstoned so PP can
+// drop its cached metadata; a still-active document carries its metadata +
+// decrypted title + policyKey. The bytes NEVER appear here.
+function listChangedDocuments(db, secrets, since, { limit = 200 } = {}) {
+  const documents = require('./documents');
+  const sinceIso = _parseSince(since);
+  const lim = Math.max(1, Math.min(1000, Number(limit) || 200));
+  const rows = db.prepare(
+    `SELECT code, status, updated_at FROM documents
+        WHERE updated_at > ?
+        ORDER BY updated_at ASC LIMIT ?`
+  ).all(sinceIso, lim);
+  const items = [];
+  for (const r of rows) {
+    if (r.status === 'archived') {
+      items.push({ docRef: r.code, deleted: true, updatedAt: r.updated_at });
+      continue;
+    }
+    const meta = documents.getMeta(db, r.code);
+    if (!meta) continue;
+    const title = documents.getTitle(db, secrets, r.code);
+    items.push({
+      docRef: meta.docRef,
+      personCode: meta.personCode,
+      kind: meta.kind,
+      subtype: meta.subtype,
+      title: title || null,
+      date: meta.createdAt,
+      status: meta.status,
+      policyKey: meta.policyKey,
+      updatedAt: meta.updatedAt,
+    });
+  }
+  const lastUpdated = items.length ? items[items.length - 1].updatedAt : sinceIso;
+  return { since: sinceIso, cursor: lastUpdated, items };
+}
+
+// Health safety-flag changed feed. The life-safety summary rides INSIDE the
+// already-sealed sync `changes` envelope. A 'cleared' row is tombstoned.
+function listChangedSafetyFlags(db, secrets, since, { limit = 200 } = {}) {
+  const documents = require('./documents');
+  const sinceIso = _parseSince(since);
+  const lim = Math.max(1, Math.min(1000, Number(limit) || 200));
+  const rows = db.prepare(
+    `SELECT person_code, status, updated_at FROM health_safety
+        WHERE updated_at > ?
+        ORDER BY updated_at ASC LIMIT ?`
+  ).all(sinceIso, lim);
+  const items = [];
+  for (const r of rows) {
+    if (r.status === 'cleared') {
+      items.push({ personCode: r.person_code, cleared: true, updatedAt: r.updated_at });
+      continue;
+    }
+    const flags = documents.getSafetyFlags(db, secrets, r.person_code);
+    if (!flags) continue;
+    items.push({
+      personCode: flags.personCode,
+      allergens: flags.allergens || [],
+      severity: flags.severity || null,
+      medication: flags.medication || null,
+      emergencyContact: flags.emergencyContact || null,
+      updatedAt: flags.updatedAt,
+    });
+  }
+  const lastUpdated = items.length ? items[items.length - 1].updatedAt : sinceIso;
+  return { since: sinceIso, cursor: lastUpdated, items };
+}
+
+module.exports = {
+  listChangedPersons,
+  listChangedHouseholds,
+  listChangedDocuments,
+  listChangedSafetyFlags,
+};

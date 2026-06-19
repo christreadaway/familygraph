@@ -3234,4 +3234,79 @@ present); no `sfw` invoked.
 
 ---
 
+## Document Vault — FG as the authoritative document access gate (2026-06-19)
+
+Built the Document Vault on top of the FG↔PP transport spine. The whole point:
+the most sensitive data we hold — sacramental records, IEP/504/MTSS plans,
+allergy action plans, immunization records — must NEVER sit in ParentPoint at
+rest. It lives encrypted in FG and surfaces to PP just-in-time, and FG (not PP)
+decides who gets to see each file. No new endpoints, no inbound ports. PP parks
+work on the existing outbox; FG processes it locally and audits every decision.
+
+Migration 0017 adds two tables. `documents` stores `content_ct` (the file bytes,
+AES-256-GCM at rest with the local dataKey) and `title_ct` — never a plaintext
+byte or title column. `code` is an opaque `doc_<16hex>` ref safe to hand PP.
+`policy_key` is derived from kind/subtype and persisted on the row so a stored
+doc carries its own access class. `health_safety` mirrors the life-safety
+summary (allergens/severity/medication/emergency contact), every field `_ct`.
+SCHEMA_VERSION bumped 16 → 17.
+
+The key distinction I kept hammering on in the code comments: AT-REST encryption
+(dataKey, the `_ct` BLOB layout) is a DIFFERENT thing from the WIRE envelope
+(pairing envelope_key). Bytes sit encrypted at rest; on an AUTHORIZED fetch they
+get decrypted and RE-SEALED with the envelope key for transport. content_ct is
+never the wire shape.
+
+`server/integration/documentPolicy.js` is the matrix, pure and unit-tested:
+sacramental → clergy/dre/admin + parent ALLOW; accommodation →
+learning_team/assigned_teacher/admin, parent DENY the file (PP shows
+existence/outcomes from metadata only); health_plan →
+nurse/assigned_teacher/admin + parent ALLOW; immunization → nurse/admin + parent
+ALLOW; other medical → nurse/admin, parent DENY; safety flags →
+nurse/assigned_teacher/direct_care/admin + parent, released regardless of
+directory/photo consent (life-safety). Unknown policy or relationship fails
+closed. PP owns user auth and asserts the viewer (userId/role/relationship);
+FG trusts + LOGS that assertion and makes the policy call — FG's job is the
+decision + audit, not re-authenticating PP's users.
+
+`documents.js` is the vault primitive (store/getMeta/getWithBytes/list/archive +
+safety set/get/clear) with a hard 10 MB raw byte cap enforced at store time and
+re-checked on the wire. `outbound-agent.js` `processItem` now handles
+`document.store` (persist bytes, derive policyKey, Tier-2 audit, return cleartext
+`{docRef}`) and `document.fetch` (apply matrix to the asserted viewer, enforce
+the cap, Tier-2 audit on EVERY decision, return a SEALED `{docRef, contentType,
+contentBase64, expiresAt}` on ALLOW or cleartext `{ok:false, error:
+forbidden|not_found|too_large}` on DENY — deny results carry zero PII). The old
+`document.fetch` no-op stub is gone; its test was updated to the real gate
+behavior (not weakened — the stub assertion was for unbuilt work).
+
+`changes.js` gained `listChangedDocuments` + `listChangedSafetyFlags`, and
+`assembleBatch` now folds `document.updated/deleted` and
+`health.safetyFlags.updated/cleared` into the sealed `changes` array alongside
+person/household events. These are METADATA ONLY — no document bytes ever ride
+the sync batch; bytes move only on an authorized fetch. The title + safety
+summary are PII, which is why the whole array stays sealed.
+
+Operator surface: `/api/documents` under the master bearer (operator-only, same
+gate as /api/pp-pairings — no new auth surface invented). Store/list/get/download
+/archive documents + set/read/clear safety flags. A dedicated 16 MB express.json
+parser covers the base64 store body (the 10 MB raw cap lives in the vault, not
+the parser). This route opens NO inbound surface to PP; PP reaches documents only
+through the outbound spine.
+
+Docs: appended §7 (Document Vault) to FAMILYGRAPH_INTEGRATION.md with literal
+wire JSON + the full access-matrix table (PP asserts the identical shapes);
+updated README and INTEGRATION_GUIDE operator/topology sections.
+
+Tests: new `tests/integration-documents.test.js` (19) covers at-rest
+encrypt/decrypt round-trip, the policy matrix every row allow+deny, store/fetch
+via processItem incl. forbidden/not_found/too_large + Tier-2 audit emission, and
+the new sync events (updated + tombstones) in a sealed batch. Added 4 canonical
+wire fixtures to `integration-pp-wire-fixtures.test.js` (store/fetch-allow/
+fetch-deny/document.updated) pinning exact bytes. Full FG suite green: 596 pass,
+1 skipped (EACCES-as-root, pre-existing), 597 total — was 575. FG still opens no
+inbound ports. No npm install needed (node_modules present); no `sfw` invoked.
+
+---
+
 *End of session notes*
