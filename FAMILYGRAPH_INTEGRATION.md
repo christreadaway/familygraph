@@ -1254,3 +1254,93 @@ were updated to `v0.2` to match the intentional wire bump (the tests
 still assert the header is present and correct - not weakened). The full
 suite went from 529 → 544 passing (1 skipped on root, as before).
 
+
+## Appendix F — Outbound agent: the "no open doors" topology (2026-06-19)
+
+ParentPoint (PP) is a public cloud app (Netlify + Firebase). FamilyGraph
+(FG) is a loopback-bound dialer that opens NO inbound internet ports - it
+binds `127.0.0.1` by default (`server/config.js`) and nothing in this work
+changes that. The operator chose Option A ("no open doors"): every FG↔PP
+byte is INITIATED BY FG as an outbound HTTPS call to PP's public endpoints.
+PP never calls FG. This Appendix records what shipped; the body prose stays
+the historical record of intent.
+
+### The locked inversion protocol
+
+For every configured + enabled PP tenant, FG runs an outbound check-in loop
+on a per-tenant interval (default 20s, operator-tunable 5-3600s). Each tick
+makes four OUTBOUND calls, all over HTTPS, all carrying:
+
+- `Authorization: Bearer <pp_bearer_credential>`
+- `X-FG-Signature: sha256=<HMAC-SHA256(rawBody, shared_webhook_secret)>`
+  (reuses the existing webhook `sign()` util)
+- `X-Source-Tenant: <schoolId>`
+- `X-FG-Contract-Version: v0.2`
+- `X-Family-Graph-Actor: familygraph`
+- `X-Request-Id: fg_<uuid>` on writes (sync + inbox)
+
+The four calls:
+
+| Step | Call | Body (FG → PP) | Response (PP → FG) |
+|---|---|---|---|
+| 1 | `POST {ppBaseUrl}/familygraph-sync?tenant=<schoolId>` | `{ tenant, since, cursor, count, payload }` where `payload` is the **sealed** envelope of `{ persons[], households[] }` since PP's last-acked cursor (assembled from FG's existing changed-feed machinery) | `{ ackedCursor }` - persisted per tenant so the next tick resumes there |
+| 2 | `GET {ppBaseUrl}/familygraph-outbox?tenant=<schoolId>&max=N` | (none) | `{ items: [ { id, kind, ... } ] }` - parked work items |
+| 3 | (local) process each item with FG's existing engines | - | - |
+| 4 | `POST {ppBaseUrl}/familygraph-inbox?tenant=<schoolId>` | `{ tenant, results: [ { id, kind, ok, result } ] }` keyed by each item's id for idempotent ack | `204` / `{}` |
+
+Outbox item kinds, each processed by the **existing** engine - nothing was
+reimplemented:
+
+- `sanitize` (text → codes) - `server/sanitize`. Result is code-only, NOT PII → **cleartext**.
+- `desanitize` (codes → text, authorized) - `server/sanitize`. Result carries names → **sealed**.
+- `identity.resolve` (record → code/action) - `server/identity/resolver`. Result → **sealed**.
+- `schoolContext` (PP child/school snapshot → applied via `server/integration/schoolContext`). Ack → **sealed**.
+- `document.fetch` - reserved for a later phase; accepted and cleanly no-op'd (`{ status: 'not_implemented' }`).
+
+Real-time FG→PP webhooks (`server/integration/webhooks.js`) are themselves
+outbound and stay the low-latency path; the step-1 batch is the catch-up
+backstop. Webhooks were not removed.
+
+### Envelope encryption (always-on layer)
+
+Any FG→PP payload containing PII, de-anonymized text, identity-resolved
+names, or (later) document bytes/safety-flags is envelope-encrypted with a
+shared symmetric key (`envelope_key`, 32 bytes / 64 hex) established at
+pairing, on TOP of TLS, using FG's AES-256-GCM primitive
+(`server/integration/envelope.js`, which reuses the same algorithm family as
+`server/crypto/encryption.js` but emits a self-describing JSON wire shape so
+PP can detect-and-decrypt). PP holds the same key and decrypts server-side
+only. Pseudonymous codes, cursors, request ids, and acks travel cleartext
+inside the TLS+HMAC envelope. Sealed wire shape:
+
+```jsonc
+{ "__fg_enc": "v1", "alg": "aes-256-gcm", "iv": "<b64>", "tag": "<b64>", "ct": "<b64>" }
+```
+
+### Pairing config + dormancy
+
+Per-tenant pairing config is stored encrypted in FG settings, reusing the
+connector-credential pattern (`server/integration/pairing.js`):
+`pp_base_url`, `pp_bearer_credential`, `shared_webhook_secret`,
+`envelope_key`, `school_id`, `enabled`, `check_in_interval_s`, and the
+per-tenant `last_acked_cursor`. Secrets are write-only - never echoed after
+entry, never logged (only field names are logged). Surfaces:
+`bin/family-graph.js pp-pairing <list|show|set|enable|disable|check-in|remove>`,
+the operator-only `POST/GET/PATCH/DELETE /api/pp-pairings` API (master
+bearer), and a `/settings/pp-pairings` dashboard view.
+
+The scheduler (`server/integration/outbound-scheduler.js`) is OFF unless a
+pairing is enabled AND complete. With zero enabled pairings every tick walks
+an empty list and returns - no outbound call, no port, no listener. Its
+`setInterval` handle is `unref()`'d so it never holds the process open.
+Disable entirely with `FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`.
+
+### Test count
+
+25 cases added in `tests/integration-pp-outbound.test.js`: pairing config
+storage + secret redaction, envelope seal/open round-trip + tamper/wrong-key
+rejection, HMAC signing of outbound calls, batch assembly + cursor advance,
+outbox processing per kind (including sealed-input handling and the
+document.fetch stub), a full mocked check-in cycle, and scheduler dormancy
+with no enabled pairing. PP's HTTP endpoints are mocked via an injected
+fetch. The full suite went from 544 → 569 passing (1 skipped, as before).

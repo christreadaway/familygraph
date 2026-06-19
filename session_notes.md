@@ -3106,4 +3106,87 @@ install the 208 project deps to run `node --test`.
 
 ---
 
+## Option A outbound agent: FG becomes the dialer to ParentPoint
+
+The operator locked the FG↔PP topology to "no open doors." FamilyGraph
+stays a loopback-bound dialer that opens NO inbound internet port - it
+binds `127.0.0.1` by default and nothing here changed that. PP is the
+public cloud app; FG is the sole initiator. Every FG↔PP byte is an
+outbound HTTPS call FG makes to PP's public endpoints. PP never calls
+FG. This session built FG's outbound sync agent against that locked
+inversion protocol.
+
+What shipped. Five new server modules under `server/integration/`:
+`pairing.js` (per-tenant encrypted pairing config, reusing the connector
+encrypted-credential pattern over the existing `settings` table - no
+migration needed; secrets write-only, never echoed, never logged by
+value), `envelope.js` (AES-256-GCM envelope encryption with a shared
+key, same primitive family as `crypto/encryption.js` but a
+self-describing JSON wire shape `{__fg_enc,alg,iv,tag,ct}` so PP can
+detect-and-decrypt), `outbound-agent.js` (the four-call check-in:
+`POST /familygraph-sync` → `GET /familygraph-outbox` → process locally →
+`POST /familygraph-inbox`), and `outbound-scheduler.js` (a small
+in-process loop modeled on `connectors/scheduler.js`). Plus
+`api/pp-pairings.js` (operator-only master-bearer settings API) and a
+`/settings/pp-pairings` client view, the `pp-pairing` CLI subcommand,
+and the scheduler wired into `server/index.js` boot/shutdown.
+
+The protocol, exactly. Per enabled+complete pairing, on each tick FG
+makes outbound calls carrying `Authorization: Bearer <pp cred>`,
+`X-FG-Signature: sha256=<HMAC-SHA256(rawBody, sharedSecret)>` (reuses the
+existing webhook `sign()` util), `X-Source-Tenant`,
+`X-FG-Contract-Version: v0.2`, `X-Family-Graph-Actor: familygraph`, and
+`X-Request-Id: fg_<uuid>` on writes. Step 1 pushes the reconciliation
+batch (assembled from the existing `integration/changes.js` changed-feed
+machinery) since PP's last-acked cursor; PP returns `{ackedCursor}` which
+FG persists per tenant so the next tick resumes there. Step 2 pulls
+PP's parked outbox items. Step 3 processes each with the EXISTING
+engines - `sanitize`, `identity/resolver`, `integration/schoolContext` -
+nothing reimplemented. Step 4 returns results keyed by item id for
+idempotent ack. `document.fetch` is a clean accept-and-no-op stub for a
+later phase. Webhooks (already outbound) stay the low-latency path; the
+batch is the catch-up backstop and was not removed.
+
+Envelope-encryption choice. The decision that took the most care was
+what to seal vs leave cleartext. Sealed: desanitize results (codes →
+names), identity.resolve results (reasons can echo matched values), the
+sync batch payload (person/household PII), schoolContext acks. Cleartext
+inside the TLS+HMAC envelope: pseudonymous codes, cursors, request ids,
+acks, and sanitize results (codes only, not PII). The agent also opens
+any sealed INPUT PP sends (e.g. a sealed desanitize text or resolve
+record) before processing. Tests pin all of this - a sanitize result is
+asserted NOT sealed, desanitize/resolve/schoolContext results ARE.
+
+Dormancy. The scheduler is OFF unless a pairing is enabled AND complete.
+With zero enabled pairings every tick walks an empty list and returns -
+no outbound call, no port, no listener - and its interval handle is
+`unref()`'d so it never holds the process open. Disable entirely with
+`FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`. A test asserts `dueTenants` is
+empty and `tick` makes zero fetch calls when dormant.
+
+Retry/idempotency/logging. Outbound calls retry network-class failures
+and PP 429/5xx on a jitter backoff (reusing `connectors/http.sleep`);
+PP 4xx is a contract error and surfaces immediately without leaking the
+body. Every call logs `{tenant, method, path, status, duration_ms}` -
+no PII, no secrets; the existing log redactor covers the rest.
+
+25 new tests in `tests/integration-pp-outbound.test.js` (pairing storage
++ secret redaction, envelope round-trip + tamper/wrong-key rejection,
+HMAC signing, batch assembly + cursor advance, every outbox kind
+including sealed-input and the stub, a full mocked check-in, scheduler
+dormancy). PP's HTTP is mocked via an injected fetch. No existing test
+weakened. New total: 569 tests, 568 pass, 0 fail, 1 pre-existing skip.
+
+No SFW bypass this session: project deps were already installed, so no
+`npm install` ran. The client deps were NOT installed and the client
+build was NOT run, because `sfw` is on PATH but still can't fetch its
+firewall binary in this sandbox (the same unreachable-sfw outage logged
+in prior entries). Per the standing rule I did not work around the guard
+for a build that doesn't gate the server deliverable; the new React view
+was syntax/bracket-checked and follows the existing Connectors view
+conventions. If the operator runs the client locally, use
+`SFW=1 sfw npm install` in `client/` first.
+
+---
+
 *End of session notes*

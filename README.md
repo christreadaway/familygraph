@@ -238,6 +238,11 @@ Alternatively, register a Scheduled Task that runs at logon with
 | `node bin/family-graph.js connector status` | Prints last-run timestamps + outcomes for FACTS / Ministry Platform connectors. |
 | `node bin/family-graph.js connector test <facts\|ministry_platform>` | Runs the test-connection flow without writing data. |
 | `node bin/family-graph.js connector sync <facts\|ministry_platform>` | Runs a full sync immediately (same path the scheduler uses). |
+| `node bin/family-graph.js pp-pairing list` | Lists configured ParentPoint outbound pairings (secrets masked). |
+| `node bin/family-graph.js pp-pairing set <schoolId> key=value ...` | Configures a pairing. Keys: `pp_base_url`, `pp_bearer_credential`, `shared_webhook_secret`, `envelope_key` (64 hex), `check_in_interval_s`. Secrets are stored encrypted and never echoed. |
+| `node bin/family-graph.js pp-pairing enable\|disable <schoolId>` | Toggles a pairing. `enable` requires all fields set. |
+| `node bin/family-graph.js pp-pairing check-in <schoolId>` | Runs one outbound check-in now (sync → outbox → process → inbox). |
+| `node bin/family-graph.js pp-pairing remove <schoolId>` | Deletes a pairing and clears its secrets. |
 
 `npm run start`, `npm run dev`, `npm run status`, `npm run backup`,
 `npm run rotate-secret`, and `npm test` are equivalent shortcuts and
@@ -703,6 +708,34 @@ Quick sketch:
   one back. Disable the dispatcher with
   `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS=1`.
 
+### ParentPoint outbound agent (Option A — "no open doors")
+
+ParentPoint (PP) is a public cloud app. FamilyGraph opens **no inbound
+internet port** (it binds loopback by default) — all FG↔PP traffic is
+initiated by FG as outbound HTTPS to PP's public endpoints. PP never
+calls FG. Once an operator pairs and **enables** a PP tenant, an
+in-process scheduler dials PP on a per-tenant interval (default 20s) and
+runs four calls per tick: `POST /familygraph-sync` (push the
+reconciliation batch since PP's last-acked cursor), `GET
+/familygraph-outbox` (fetch parked work items), process each item
+locally with FG's existing sanitize / identity-resolver / school-context
+engines, then `POST /familygraph-inbox` (return results keyed by item id
+for idempotent ack). Item kinds: `sanitize`, `desanitize`,
+`identity.resolve`, `schoolContext`, and a reserved `document.fetch`
+stub. Every call carries a bearer credential plus an `X-FG-Signature`
+HMAC over the raw body. Any payload carrying PII / de-anonymized text /
+resolved names is **envelope-encrypted** with a shared key on top of TLS
+(`server/integration/envelope.js`); codes, cursors, request ids and acks
+travel cleartext inside the TLS+HMAC envelope. Real-time webhooks
+(above) remain the low-latency FG→PP path; the sync batch is the
+catch-up backstop.
+
+The scheduler is dormant unless a pairing is enabled — with zero enabled
+pairings it makes no outbound call. Configure pairings via the
+`pp-pairing` CLI, the operator-only `/api/pp-pairings` API (master
+bearer), or the **ParentPoint** settings tab. Disable the agent entirely
+with `FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`.
+
 ### Auto-merge vs prompt-the-user (the matching gate)
 
 `server/identity/matching.js` ports the upstream identity engine's scoring with one
@@ -771,6 +804,7 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
 | `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
 | `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS` | unset | set to `1` to disable the integration webhook dispatcher (pending rows accumulate until re-enabled) |
+| `FAMILY_GRAPH_DISABLE_PP_OUTBOUND` | unset | set to `1` to disable the ParentPoint outbound check-in scheduler entirely. Dormant anyway when no pairing is enabled. |
 | `FAMILY_GRAPH_DISABLE_RATE_LIMIT` | unset | set to `1` to disable per-Bearer-token rate limiting on `/api` and `/v1`. Defaults: 600/min for `/api`, 1200/min for `/v1`, 60/min for `/api/sanitize`, 30/min for `/api/import`. Disable only for diagnostics; the limits are deliberately generous and shouldn't trip legitimate integration traffic. |
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |

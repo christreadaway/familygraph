@@ -164,6 +164,35 @@ identity peeks from writes later, `pii.read` covers `POST
 `pii.write`, so the single-key recipe above is the minimal grant that
 makes PP fully functional.
 
+### 4.2 Option A — the "no open doors" outbound topology (as deployed)
+
+The §4.1 recipe describes the inbound mode where PP calls FG's `/api`
+and `/v1` surfaces directly. The operator instead deployed **Option A**:
+FamilyGraph opens **no inbound internet port** (it binds loopback), and
+**FG is the sole initiator** — it dials PP's public endpoints outbound.
+PP never calls FG. The FG-side build and protocol are documented in
+`FAMILYGRAPH_INTEGRATION.md` Appendix F. The short version:
+
+- The operator pairs a PP tenant in FG (CLI `pp-pairing set/enable`,
+  the `/api/pp-pairings` API, or the **ParentPoint** dashboard tab),
+  supplying `pp_base_url`, a PP-issued bearer credential, a shared HMAC
+  webhook secret, and a 32-byte envelope key. Secrets are stored
+  encrypted and never echoed.
+- Once enabled, FG dials PP every `check_in_interval_s` (default 20s):
+  `POST {ppBaseUrl}/familygraph-sync` → `GET .../familygraph-outbox` →
+  process locally → `POST .../familygraph-inbox`. Every call carries the
+  bearer plus `X-FG-Signature: sha256=<HMAC(rawBody, sharedSecret)>`,
+  `X-Source-Tenant`, `X-FG-Contract-Version: v0.2`,
+  `X-Family-Graph-Actor: familygraph`, and (on writes) `X-Request-Id:
+  fg_<uuid>`.
+- PII-bearing payloads are envelope-encrypted on top of TLS; codes,
+  cursors, request ids and acks are cleartext inside the TLS+HMAC
+  envelope. PP holds the same envelope key and decrypts server-side.
+
+In Option A, PP needs no scoped key against FG (it serves the public
+endpoints FG dials). The §4.1 key recipe still applies if a future
+deployment also wants PP to make direct inbound `/v1` calls.
+
 ## 5. Versioning
 
 `X-FG-Contract-Version: v0.2` is the active wire version. `v0.1` is
