@@ -3309,4 +3309,30 @@ inbound ports. No npm install needed (node_modules present); no `sfw` invoked.
 
 ---
 
+## Session end — ParentPoint integration, the full arc
+
+Stepping back from the four phases (contract edges, the Option A outbound
+inversion, the v1 wire-seam reconciliation, the document vault): FamilyGraph is
+now the identity-and-sensitive-data hub for its first two consuming apps.
+ParentPoint runs communications; TeacherAIde (later) runs the AI classroom. Both
+get codes by default and pull real identity or a sealed document just-in-time.
+
+The load-bearing decision was Option A - "no open doors." FG never opened an
+inbound port; everything to ParentPoint is OUTBOUND from `outbound-agent.js`. A
+hacker on the internet cannot start a conversation with FamilyGraph, because
+there is nothing listening. The de-anonymization map never leaves FG: sanitize
+returns coded text plus an opaque `tokenSetId`, and the codes-to-names mapping
+stays in the encrypted `token_sets` store. Document bytes are encrypted at rest
+with the dataKey and re-sealed with the pairing envelope key only for an
+authorized fetch; every fetch/store is a Tier-2 audit event.
+
+Pairing is operator-driven: `family-graph pp-pairing set/enable/check-in`. The
+ParentPoint side holds the matching runbook
+(`trackerdocs/specs/FG_PP_PAIRING_RUNBOOK.md`). Nothing is live-verified yet - the
+cloud-to-local handshake needs the operator standup. Test total stands at 597
+(596 pass, 1 pre-existing skip). No FG code changed in this wrap; this entry
+closes the arc.
+
+---
+
 *End of session notes*
