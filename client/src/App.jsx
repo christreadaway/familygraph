@@ -21,6 +21,7 @@ import Search from './views/Search.jsx';
 import ExportView from './views/Export.jsx';
 import Notifications from './views/Notifications.jsx';
 import { ConnectorsList, ConnectorDetail } from './views/Connectors.jsx';
+import PpPairings from './views/PpPairings.jsx';
 import Ministries from './views/Ministries.jsx';
 import { OrganizationsList, OrganizationDetail } from './views/Organizations.jsx';
 import Accounts from './views/Accounts.jsx';
@@ -199,6 +200,7 @@ export default function App() {
             <NavItem to="/accounts">Staff accounts</NavItem>
             <NavItem to="/settings">Settings</NavItem>
             <NavItem to="/settings/connectors">Connectors</NavItem>
+            <NavItem to="/settings/pp-pairings">ParentPoint</NavItem>
           </nav>
           <div className="sidebar-footer">
             {health ? (
@@ -272,6 +274,7 @@ export default function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/settings/connectors" element={<ConnectorsList />} />
             <Route path="/settings/connectors/:name" element={<ConnectorDetail />} />
+            <Route path="/settings/pp-pairings" element={<PpPairings />} />
           </Routes>
           <footer
             style={{

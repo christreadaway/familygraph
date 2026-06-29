@@ -238,6 +238,11 @@ Alternatively, register a Scheduled Task that runs at logon with
 | `node bin/family-graph.js connector status` | Prints last-run timestamps + outcomes for FACTS / Ministry Platform connectors. |
 | `node bin/family-graph.js connector test <facts\|ministry_platform>` | Runs the test-connection flow without writing data. |
 | `node bin/family-graph.js connector sync <facts\|ministry_platform>` | Runs a full sync immediately (same path the scheduler uses). |
+| `node bin/family-graph.js pp-pairing list` | Lists configured ParentPoint outbound pairings (secrets masked). |
+| `node bin/family-graph.js pp-pairing set <schoolId> key=value ...` | Configures a pairing. Keys: `pp_base_url`, `pp_bearer_credential`, `shared_webhook_secret`, `envelope_key` (64 hex), `check_in_interval_s`. Secrets are stored encrypted and never echoed. |
+| `node bin/family-graph.js pp-pairing enable\|disable <schoolId>` | Toggles a pairing. `enable` requires all fields set. |
+| `node bin/family-graph.js pp-pairing check-in <schoolId>` | Runs one outbound check-in now (sync → outbox → process → inbox). |
+| `node bin/family-graph.js pp-pairing remove <schoolId>` | Deletes a pairing and clears its secrets. |
 
 `npm run start`, `npm run dev`, `npm run status`, `npm run backup`,
 `npm run rotate-secret`, and `npm test` are equivalent shortcuts and
@@ -651,8 +656,15 @@ Quick sketch:
 
 - Mount point: `/v1/...`. All routes require Bearer with the
   `integration` scope (master token also works).
-- Every request should send `X-FG-Contract-Version: v0.1`. Unknown
-  versions get `426 Upgrade Required`.
+- Every request should send `X-FG-Contract-Version: v0.2` (`v0.1` is
+  still accepted for back-compat). Unknown majors get `426 Upgrade
+  Required`. FG echoes `X-FG-Contract-Version: v0.2` on every response.
+- Consent and school-context writes have canonical surfaces:
+  `POST /v1/consents` (person-keyed, optional `schoolId` override) and
+  `POST /v1/schools/:schoolId/context` (school-keyed enrichment
+  snapshot). The older `POST /v1/persons/:id/photoConsent` and
+  `POST /v1/persons/:id/schoolContext` routes stay mounted and write
+  the same rows.
 - Writes (POST / PATCH) honour `X-Request-Id` for 24-hour idempotency
   and surface `X-FG-Idempotent-Replay: true` when a duplicate is hit.
 - GETs return ETag + `Cache-Control: max-age=30`. PATCHes honour
@@ -695,6 +707,80 @@ Quick sketch:
   subscriptions and use the helper module's `resubscribe()` to bring
   one back. Disable the dispatcher with
   `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS=1`.
+- **Federation push** (for consumers that can't pull): subscribe with
+  `"federationPush": true` and FamilyGraph sends FAT, hex-keyed batches
+  — the full person/household objects, not just ids — so a cloud app
+  reaching an on-prem FamilyGraph only over outbound POSTs can
+  hydrate + reconcile without ever calling back in. The first batch is
+  a full snapshot (`"hydration": true`), later batches are
+  changed-since deltas, archived records arrive as `active:false`
+  tombstones, and every record is keyed by the canonical `personId` /
+  `householdId` hex. `POST /v1/webhooks/:code/resync` resets the
+  cursors to force a re-hydrate. Federation subscriptions are excluded
+  from thin per-change webhooks (the fat batch is the only channel).
+  Batches are materialized at send time — no PII is persisted in
+  `webhook_deliveries`. Pusher runs every ~60s; disable with
+  `FAMILY_GRAPH_DISABLE_FEDERATION_PUSH=1`. See INTEGRATION_GUIDE.md §8.7.
+
+### ParentPoint outbound agent (Option A — "no open doors")
+
+ParentPoint (PP) is a public cloud app. FamilyGraph opens **no inbound
+internet port** (it binds loopback by default) — all FG↔PP traffic is
+initiated by FG as outbound HTTPS to PP's public endpoints. PP never
+calls FG. Once an operator pairs and **enables** a PP tenant, an
+in-process scheduler dials PP on a per-tenant interval (default 20s) and
+runs four calls per tick: `POST /familygraph-sync` (push the
+reconciliation batch since PP's last-acked cursor), `GET
+/familygraph-outbox` (fetch parked work items), process each item
+locally with FG's existing sanitize / identity-resolver / school-context
+engines, then `POST /familygraph-inbox` (return results keyed by item id
+for idempotent ack). Item kinds: `sanitize`, `desanitize`,
+`identity.resolve`, `schoolContext`, plus the Document Vault kinds
+`document.store` and `document.fetch` (see below). Every call carries a
+bearer credential plus an `X-FG-Signature`
+HMAC over the raw body. Any payload carrying PII / de-anonymized text /
+resolved names is **envelope-encrypted** with a shared key on top of TLS
+(`server/integration/envelope.js`); codes, cursors, request ids and acks
+travel cleartext inside the TLS+HMAC envelope. Real-time webhooks
+(above) remain the low-latency FG→PP path; the sync batch is the
+catch-up backstop.
+
+The scheduler is dormant unless a pairing is enabled — with zero enabled
+pairings it makes no outbound call. Configure pairings via the
+`pp-pairing` CLI, the operator-only `/api/pp-pairings` API (master
+bearer), or the **ParentPoint** settings tab. Disable the agent entirely
+with `FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`.
+
+### Document Vault (FG is the authoritative access gate)
+
+Sensitive child documents (sacramental, learning-accommodation,
+health/allergy records) live **encrypted in FG's vault** and surface to
+PP **just-in-time** over the same outbound spine — no new endpoints, no
+inbound ports. The file bytes and title are encrypted **at rest** with
+the local `dataKey` (AES-256-GCM); on an **authorized** fetch the bytes
+are re-sealed with the pairing envelope key for transport. PP holds no
+document bytes at rest — it asks FG per fetch and **FG makes the access
+decision and audits it** (Tier-2).
+
+PP parks two outbox kinds: `document.store` (FG persists the bytes,
+returns an opaque `doc_…` ref) and `document.fetch` (FG applies the
+access matrix to PP's asserted viewer, enforces a 10 MB cap, and returns
+the sealed bytes on ALLOW or `{ ok:false, error }` on DENY). Document and
+health-safety-flag changes also flow to PP as **metadata-only**
+ChangeEvents inside the sealed sync batch (`document.updated/deleted`,
+`health.safetyFlags.updated/cleared`) — bytes never ride the sync batch.
+The access matrix (who can see what) lives in
+`server/integration/documentPolicy.js`; the full table is in
+`FAMILYGRAPH_INTEGRATION.md` §7.
+
+Operator surface: `/api/documents` (master bearer, operator-only — opens
+no inbound surface to PP). `POST /api/documents` stores a document
+(JSON, base64 body); `GET /api/documents/person/:code` lists a person's
+documents; `GET /api/documents/:docRef` returns metadata + title; `GET
+/api/documents/:docRef/content` downloads decrypted bytes; `DELETE
+/api/documents/:docRef` archives; `PUT|GET|DELETE
+/api/documents/safety/:code` sets, reads, or clears a person's health
+safety flags (allergens, severity, medication, emergency contact).
 
 ### Auto-merge vs prompt-the-user (the matching gate)
 
@@ -764,6 +850,8 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
 | `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
 | `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS` | unset | set to `1` to disable the integration webhook dispatcher (pending rows accumulate until re-enabled) |
+| `FAMILY_GRAPH_DISABLE_FEDERATION_PUSH` | unset | set to `1` to disable the federation pusher (fat hex-keyed hydration/reconciliation batches to `federationPush` subscriptions) |
+| `FAMILY_GRAPH_DISABLE_PP_OUTBOUND` | unset | set to `1` to disable the ParentPoint outbound check-in scheduler entirely. Dormant anyway when no pairing is enabled. |
 | `FAMILY_GRAPH_DISABLE_RATE_LIMIT` | unset | set to `1` to disable per-Bearer-token rate limiting on `/api` and `/v1`. Defaults: 600/min for `/api`, 1200/min for `/v1`, 60/min for `/api/sanitize`, 30/min for `/api/import`. Disable only for diagnostics; the limits are deliberately generous and shouldn't trip legitimate integration traffic. |
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |

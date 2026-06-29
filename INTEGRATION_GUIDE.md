@@ -115,7 +115,7 @@ person's record?" by filtering the audit log.
 | Header | Required | Purpose |
 |---|---|---|
 | `Authorization: Bearer <token>` | yes | Auth |
-| `X-FG-Contract-Version: v0.1` | strongly recommended | Lets FG reject incompatible majors with `426 Upgrade Required` instead of giving you a silently-wrong response |
+| `X-FG-Contract-Version: v0.2` | strongly recommended | Lets FG reject incompatible majors with `426 Upgrade Required` instead of giving you a silently-wrong response. `v0.1` is still accepted for back-compat |
 | `X-Source-App: <your-app>` | recommended | Recorded on every audit row + write log |
 | `X-Source-Tenant: <slug>` | required on writes | Doubles as the webhook school-hint filter |
 | `X-Request-Id: <uuid>` | required on writes | 24-hour idempotency dedupe (see §9) |
@@ -124,20 +124,106 @@ The `X-Source-Tenant` value is treated as a "school slug". The
 validator accepts `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` (start with
 alphanumeric, then alphanumeric / dot / dash / underscore).
 
+### 4.1 Provisioning a key for ParentPoint (the canonical consumer recipe)
+
+ParentPoint (PP) is the first app integrating against FamilyGraph, and
+it reaches three surfaces, not just `/v1`:
+
+1. The versioned `/v1/...` contract surface — scope `integration`.
+2. Identity resolution — `POST /api/identity/resolve`,
+   `POST /api/identity/match`, `POST /api/identity/feedback`. These
+   live on the legacy `/api` surface and their **write** verbs (all
+   three are POSTs) are gated on scope `pii.write`.
+3. Anonymization round-trip — `POST /api/sanitize`,
+   `POST /api/desanitize` — gated on scope `sanitize`.
+
+A single scoped key can carry all three scopes, so PP needs exactly
+**one** key. The operator mints it from the dashboard (Keys page) or
+over the API with the master token:
+
+```sh
+curl -sS http://127.0.0.1:3500/api/keys \
+  -H "Authorization: Bearer <MASTER_TOKEN>" \
+  -H 'content-type: application/json' \
+  -d '{ "name": "parentpoint", "scopes": ["integration", "sanitize", "pii.write"] }'
+# → { "code": "sk_...", "token": "sk_xxxxxxxx", "scopes": [...] }
+```
+
+The `token` is shown **once**; store it in PP's server-side secret
+store (never the browser bundle). All of PP's FamilyGraph calls then
+ride that one `Authorization: Bearer sk_xxxxxxxx`. Because the key is
+named `parentpoint`, every audit row FG writes for PP is attributed to
+that name (scoped keys cannot spoof a different `X-Family-Graph-Actor`;
+the actor is forced to the key's name).
+
+No new auth surface or scope was needed: `integration`, `sanitize`,
+and `pii.write` already exist in the scope vocabulary
+(`server/auth/api-keys.js`). If the operator wants to split read-only
+identity peeks from writes later, `pii.read` covers `POST
+/api/identity/match` reads — but the three POSTs PP uses all require
+`pii.write`, so the single-key recipe above is the minimal grant that
+makes PP fully functional.
+
+### 4.2 Option A — the "no open doors" outbound topology (as deployed)
+
+The §4.1 recipe describes the inbound mode where PP calls FG's `/api`
+and `/v1` surfaces directly. The operator instead deployed **Option A**:
+FamilyGraph opens **no inbound internet port** (it binds loopback), and
+**FG is the sole initiator** — it dials PP's public endpoints outbound.
+PP never calls FG. The FG-side build and protocol are documented in
+`FAMILYGRAPH_INTEGRATION.md` Appendix F. The short version:
+
+- The operator pairs a PP tenant in FG (CLI `pp-pairing set/enable`,
+  the `/api/pp-pairings` API, or the **ParentPoint** dashboard tab),
+  supplying `pp_base_url`, a PP-issued bearer credential, a shared HMAC
+  webhook secret, and a 32-byte envelope key. Secrets are stored
+  encrypted and never echoed.
+- Once enabled, FG dials PP every `check_in_interval_s` (default 20s):
+  `POST {ppBaseUrl}/familygraph-sync` → `GET .../familygraph-outbox` →
+  process locally → `POST .../familygraph-inbox`. Every call carries the
+  bearer plus `X-FG-Signature: sha256=<HMAC(rawBody, sharedSecret)>`,
+  `X-Source-Tenant`, `X-FG-Contract-Version: v0.2`,
+  `X-Family-Graph-Actor: familygraph`, and (on writes) `X-Request-Id:
+  fg_<uuid>`.
+- PII-bearing payloads are envelope-encrypted on top of TLS; codes,
+  cursors, request ids and acks are cleartext inside the TLS+HMAC
+  envelope. PP holds the same envelope key and decrypts server-side.
+
+In Option A, PP needs no scoped key against FG (it serves the public
+endpoints FG dials). The §4.1 key recipe still applies if a future
+deployment also wants PP to make direct inbound `/v1` calls.
+
+**Document Vault.** Sensitive child documents (sacramental,
+accommodation, health) live encrypted in FG and surface to PP
+just-in-time over the same outbound spine — no new endpoints. PP parks
+`document.store` (FG persists the bytes, returns an opaque `doc_…` ref)
+and `document.fetch` (FG applies the access matrix to PP's asserted
+viewer, enforces a 10 MB cap, returns sealed bytes on ALLOW or
+`{ ok:false, error }` on DENY) outbox items. Document + health-safety
+changes also flow as metadata-only ChangeEvents in the sealed sync batch.
+**FG is the authoritative access gate** — it makes the policy decision
+and writes a Tier-2 audit on every store and fetch. The operator manages
+the vault locally via `/api/documents` (master bearer). Wire shapes and
+the full access matrix are in `FAMILYGRAPH_INTEGRATION.md` §7.
+
 ## 5. Versioning
 
-`X-FG-Contract-Version: v0.1` is the active wire version. Bump
-semantics:
+`X-FG-Contract-Version: v0.2` is the active wire version. `v0.1` is
+still on the compatibility allowlist, so an older client keeps working
+unchanged. Bump semantics:
 
-- **Minor** (v0.1 → v0.2) when adding fields. Existing fields stay
-  the same shape. Clients that ignore unknown keys keep working
-  without code changes.
-- **Major** (v0.1 → v1.0) when changing field semantics. FG accepts
+- **Minor** (v0.1 → v0.2) when adding fields or additive endpoints.
+  Existing fields stay the same shape. Clients that ignore unknown
+  keys keep working without code changes. v0.2 added the canonical
+  `POST /v1/consents` and `POST /v1/schools/:schoolId/context` write
+  surfaces alongside the older person-keyed routes.
+- **Major** (v0.2 → v1.0) when changing field semantics. FG accepts
   only the major versions in its allowlist; unknown majors return
   `426 Upgrade Required`. Plan ahead.
 
-FG also returns `X-FG-Contract-Version` on every response so a
-client can confirm which side of the wire it's on.
+FG also returns `X-FG-Contract-Version: v0.2` on every response so a
+client can confirm which side of the wire it's on (this reflects what
+FG itself speaks, even when the request declared `v0.1`).
 
 ## 6. Object schemas
 
@@ -347,7 +433,7 @@ All GET responses set:
 - `ETag: W/"<hash>"` (a weak validator over the response body)
 - `Cache-Control: private, max-age=<seconds>` (30 for objects, 5
   for change feeds)
-- `X-FG-Contract-Version: v0.1`
+- `X-FG-Contract-Version: v0.2`
 
 ### 7.2 Writes
 
@@ -355,10 +441,12 @@ All GET responses set:
 |---|---|
 | `POST /v1/persons` | Suggest a new identity. Returns 201 + person object |
 | `PATCH /v1/persons/:personId` | Update contact fields. Honors `If-Match` |
-| `POST /v1/persons/:personId/photoConsent` | Set identity-base OR per-school override (body / query `schoolId`) |
+| `POST /v1/consents` | **Canonical** person-keyed consent write. Body `{ personId\|personCode, schoolId?, photo, directory }`. `schoolId` present → per-school override; absent → identity base |
+| `POST /v1/persons/:personId/photoConsent` | Legacy alias for the consent write; same rows. Set identity-base OR per-school override (body / query `schoolId`) |
 | `DELETE /v1/persons/:personId/photoConsent?schoolId=...` | Clear a per-school override |
 | `POST /v1/persons/:personId/eimCertifications` | Add/extend an EIM cert |
-| `POST /v1/persons/:personId/schoolContext` | Upsert enrichment snapshot |
+| `POST /v1/schools/:schoolId/context` | **Canonical** school-keyed enrichment snapshot. Body `{ personId\|personCode, schoolYear?, grade?, classroomId?, classroomName?, homeroomTeacherPersonId?, activities?[], allergies?[] }`. Overwrites the previous snapshot for this (person, school) pair |
+| `POST /v1/persons/:personId/schoolContext` | Legacy alias for the enrichment snapshot; same rows |
 | `POST /v1/persons/:personId/archive` | Soft-delete |
 | `POST /v1/persons/:personId/reinstate` | Reverse archive |
 | `POST /v1/households` | Suggest a new household |
@@ -369,7 +457,8 @@ All GET responses set:
 | `PATCH /v1/dioceses/:code` | Update; honors `If-Match` |
 | `POST /v1/dioceses/:code/archive` | Soft-delete |
 | `POST /v1/dioceses/:code/reinstate` | Reverse archive |
-| `POST /v1/webhooks` | Subscribe |
+| `POST /v1/webhooks` | Subscribe (add `"federationPush": true` for fat hex-keyed batches — see §8.7) |
+| `POST /v1/webhooks/:code/resync` | Reset federation cursors so the next tick re-hydrates the consumer |
 | `DELETE /v1/webhooks/:code` | Soft-unsubscribe (row + secret survive) |
 
 All POST returns 201 (Created); PATCH returns 200; DELETE returns
@@ -458,6 +547,74 @@ A single FG-side event can produce multiple deliveries if your
 endpoint timed out once and FG retried. Make your handler
 idempotent — track seen delivery codes, or check whether the
 `updatedAt` is newer than your cached copy before applying.
+
+### 8.7 Federation push (for consumers that can't pull)
+
+The webhook in 8.1–8.6 is a THIN notification: it carries only the
+changed entity's id and assumes you'll `GET /v1/persons/:id` to fetch
+the record. That assumes your app can reach FamilyGraph's inbound API.
+
+If your app runs OUTSIDE FamilyGraph's network — for example a cloud
+service while FamilyGraph runs on-prem behind a firewall — you can
+receive FG's outbound POSTs but you can't reach back in to pull. A thin
+notification is useless to you: you'd hold an id you can never resolve.
+
+Subscribe with `"federationPush": true` instead. FamilyGraph then sends
+FAT batches: the full person / household objects (the same shapes
+`GET /v1/persons/:id` and the changed feed return), so you federate
+identity on the canonical hex **without ever pulling**.
+
+```http
+POST /v1/webhooks
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "url": "https://your-cloud-function.example.com/familyGraphFederation",
+  "secret": "<random-256-bit-string>",
+  "federationPush": true
+}
+```
+
+A federation subscription does NOT also receive thin `person.updated`
+notifications — the fat batch is the single channel.
+
+**Delivery shape** (signed identically: `X-FG-Signature: sha256=…`,
+`X-FG-Event: federation.sync`):
+
+```json
+{
+  "type": "federation.sync",
+  "contractVersion": "v0.1",
+  "hydration": true,
+  "generatedAt": "2026-05-15T10:31:22Z",
+  "persons":   [ { "personId": "p_a7b3c91d", "firstName": "...", "active": true, ... } ],
+  "households":[ { "householdId": "f_88a3c0d2", "members": [ { "personId": "p_...", ... } ], ... } ],
+  "cursors": { "persons": "2026-05-15T10:31:22Z", "households": "2026-05-15T10:30:00Z" }
+}
+```
+
+- **Hydration.** A brand-new federation subscription's first batch
+  carries `"hydration": true` and contains every currently-active
+  person and household. Treat it as a full snapshot (mark-and-sweep
+  your cache). Subsequent batches are changed-since deltas with
+  `"hydration": false`.
+- **Tombstones.** An archived/merged record arrives as
+  `{ "personId": "p_…", "active": false }` with no PII — purge it from
+  your cache.
+- **The hex is the join key.** Every record is keyed by the immutable
+  `personId` / `householdId` hex (8.x). That is the identifier you
+  federate every other system on; FG resolves merges to a single
+  canonical hex before it leaves the box, so you never see two ids for
+  one person.
+- **At-least-once.** A failed batch is retried on the next tick with
+  the same window; dedupe by `(personId, updatedAt)`.
+- **Recovery / re-hydrate.** `POST /v1/webhooks/:code/resync` resets
+  the subscription's cursors so the next tick re-sends the full active
+  graph. Use it if your cache is ever lost or suspected stale.
+
+Pushes run on a ~60s tick. Disable the whole pusher server-side with
+`FAMILY_GRAPH_DISABLE_FEDERATION_PUSH=1`.
 
 ## 9. Idempotency on writes
 

@@ -57,11 +57,15 @@ function _row2sub(db, secrets, row) {
     events: row.events,
     school_hint: row.school_hint || null,
     enabled: !!row.enabled,
+    federation_push: !!row.federation_push,
     created_at: row.created_at,
     updated_at: row.updated_at,
     last_delivered_at: row.last_delivered_at,
     last_status: row.last_status,
     last_error: row.last_error,
+    hydrated_at: row.hydrated_at || null,
+    reconcile_persons_cursor: row.reconcile_persons_cursor || null,
+    reconcile_households_cursor: row.reconcile_households_cursor || null,
     has_secret: !!row.secret_ct,
   };
 }
@@ -86,7 +90,7 @@ function _isLoopbackOrLinkLocal(hostname) {
   return false;
 }
 
-function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint = null } = {}) {
+function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint = null, federationPush = false } = {}) {
   if (!url || typeof url !== 'string') throw new Error('url required');
   let parsed;
   try { parsed = new URL(url); } catch (_) { throw new Error('invalid url'); }
@@ -116,9 +120,9 @@ function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint =
   const code = newCode('audit').replace(/^au_/, 'wh_');
   db.prepare(
     `INSERT INTO webhook_subscriptions
-        (code, url, secret_ct, events, school_hint, enabled)
-        VALUES (?, ?, ?, ?, ?, 1)`
-  ).run(code, url, enc.encrypt(secrets, secret), normalizedEvents, schoolHint);
+        (code, url, secret_ct, events, school_hint, enabled, federation_push)
+        VALUES (?, ?, ?, ?, ?, 1, ?)`
+  ).run(code, url, enc.encrypt(secrets, secret), normalizedEvents, schoolHint, federationPush ? 1 : 0);
   // Audit metadata records the URL with credentials and query string
   // stripped. Some operators register webhook URLs that contain inline
   // auth tokens (?token=...); we don't want those tokens preserved in
@@ -128,7 +132,7 @@ function subscribe(db, secrets, { url, secret = null, events = '*', schoolHint =
   audit.record(db, {
     action: 'integration_webhook_subscribe',
     actor: 'integration',
-    metadata: { code, url: _sanitiseUrlForLog(url), events: normalizedEvents, school_hint: schoolHint || null },
+    metadata: { code, url: _sanitiseUrlForLog(url), events: normalizedEvents, school_hint: schoolHint || null, federation_push: federationPush ? 1 : 0 },
   });
   return list(db, secrets).find(s => s.code === code);
 }
@@ -212,8 +216,11 @@ function resubscribe(db, code) {
 
 function _subscriptionsForEvent(db, event, schoolHints) {
   // Filter by enabled + event-list match + (school hint or wildcard).
+  // Federation-push subscriptions are excluded here: they receive the full
+  // hex-keyed records as fat batches (see federation.js), so re-sending a thin
+  // id-only notification for the same change would be redundant.
   const rows = db.prepare(
-    `SELECT * FROM webhook_subscriptions WHERE enabled = 1`
+    `SELECT * FROM webhook_subscriptions WHERE enabled = 1 AND federation_push = 0`
   ).all();
   return rows.filter(r => {
     if (r.events !== '*' && !r.events.split(',').includes(event)) return false;
@@ -381,8 +388,8 @@ async function dispatchOne(db, secrets, row, { sender = _defaultSender } = {}) {
   const secret = enc.decrypt(secrets, row.secret_ct);
   const signature = sign(secret, row.payload);
   const headers = {
-    'x-fg-contract-version': 'v0.1',
-    'user-agent': 'familygraph-webhook/0.1',
+    'x-fg-contract-version': 'v0.2',
+    'user-agent': 'familygraph-webhook/0.2',
   };
   if (signature) headers['x-fg-signature'] = signature;
   try {
@@ -462,6 +469,9 @@ module.exports = {
   listDeliveries,
   sign,
   start,
+  // Exposed so the federation pusher can reuse the same SSRF + DNS-rebinding
+  // guarded HTTP sender instead of duplicating the network-safety logic.
+  defaultSender: _defaultSender,
   KNOWN_EVENTS,
   MAX_ATTEMPTS,
   BACKOFF_MS,

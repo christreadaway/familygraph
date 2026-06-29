@@ -1134,3 +1134,412 @@ The security pass added 26 cases in `tests/security-hardening.test.js`.
 The full suite went from 463 → 489 passing (1 skipped on root, as
 before).
 
+---
+
+## Appendix E — v0.2 wire bump: ParentPoint contract edges (2026-06-19)
+
+ParentPoint (PP) is the first app wiring into FamilyGraph for real, and
+this pass locked the `/v1` contract it consumes. The work was mostly
+confirmation - the v0.1 build already shipped the reads, the
+changed-feeds, the per-school overrides, and the five-event webhook
+taxonomy. The genuinely new pieces are the two canonical write
+endpoints PP's product spec asked for and the wire-version bump to
+`v0.2`. As before, this Appendix records what shipped; the body prose
+stays a historical record of intent.
+
+### Wire version: v0.1 → v0.2
+
+`CONTRACT_VERSION` in `server/api/integration.js` is now `v0.2`, and the
+accepted-versions allowlist is `{ v0.1, v0.2 }`. A v0.1 client keeps
+working untouched - the additive endpoints and fields don't break it -
+and FG echoes `X-FG-Contract-Version: v0.2` on every response so a
+client can see what FG itself speaks even when it declared v0.1. An
+unknown major still returns `426 Upgrade Required`. The outbound webhook
+headers moved to `x-fg-contract-version: v0.2` /
+`user-agent: familygraph-webhook/0.2`.
+
+### New canonical write endpoints
+
+| Verb + path | Purpose | Notes |
+|---|---|---|
+| `POST /v1/consents` | Canonical person-keyed consent write | Body `{ personId\|personCode, schoolId?, photo, directory }`. `schoolId` present → per-school override row; absent → identity base. Same rows the legacy `POST /v1/persons/:id/photoConsent` writes; that route stays mounted for back-compat |
+| `POST /v1/schools/:schoolId/context` | Canonical school-keyed enrichment snapshot | Body `{ personId\|personCode, schoolYear?, grade?, classroomId?, classroomName?, homeroomTeacherPersonId?, activities?[], allergies?[], snapshotAt? }`. The path `schoolId` is authoritative and overwrites the previous snapshot for the `(person, school)` pair (current state, not a log). Same rows as the legacy `POST /v1/persons/:id/schoolContext` |
+
+Both delegate to the existing helper modules (`integration/consents.js`,
+`integration/schoolContext.js`) so the override-merge, more-restrictive-
+wins-on-merge, schoolId validation, `entity_changes` snapshotting, and
+`person.updated` / `consent.updated` webhook emission are identical to
+the legacy routes. `POST /v1/consents` emits `consent.updated` (with
+`schoolId` in the payload when school-scoped); the school-context POST
+upserts the snapshot and audits as `integration_school_context_upsert`
+with `scope: 'school_keyed'`.
+
+**Consent request/response shape:**
+
+```jsonc
+// POST /v1/consents
+{
+  "personId": "p_a7b3c91d",   // or personCode
+  "schoolId": "[school-slug]",  // optional → per-school override
+  "photo": "deny",              // allow | group_only | deny  (alias: photoConsent)
+  "directory": "deny"           // allow | deny               (alias: directoryListing)
+}
+// → 201 { "consent": { personId, schoolId, photoConsent, directoryListing,
+//                       overrideApplied, basePhotoConsent?, baseDirectoryListing?, updatedAt } }
+```
+
+Per-school override semantics: the effective value for `(person,
+school)` is `override-or-base` per field, read at
+`GET /v1/persons/:id/consent?schoolId=`. On a person merge the
+more-restrictive value survives (`deny > group_only > allow` for photo;
+`deny > allow` for directory) - unchanged from Appendix C.
+
+**School-context request/response shape:**
+
+```jsonc
+// POST /v1/schools/[school-slug]/context
+{
+  "personId": "p_a7b3c91d",
+  "schoolYear": "2026-2027",
+  "grade": "3",
+  "classroomId": "3A",
+  "classroomName": "[Room] - [Teacher]",
+  "homeroomTeacherPersonId": "p_t1...",   // optional
+  "activities": [
+    { "kind": "sport",      "label": "[Team]",  "season": "2026-2027 Winter" },
+    { "kind": "after_care", "label": "MWF",     "season": "2026-2027" }
+  ],
+  "allergies": ["peanuts"]
+}
+// → 201 { "schoolContext": { schoolId, schoolYear, grade, classroomId,
+//                            classroomName, homeroomTeacherPersonId,
+//                            activities[], allergies[], snapshotAt, updatedAt } }
+```
+
+### Confirmed already-present (no change needed)
+
+- **Reads:** `GET /v1/persons/:id`, `GET /v1/persons?email=` (equality
+  via the `emails.norm_hash` HMAC - never a decrypt-and-scan),
+  `GET /v1/households/:id`, `GET /v1/households?personId=`,
+  `GET /v1/persons/changed?since=`, `GET /v1/households/changed?since=`
+  (tombstones archived households). All shipped in v0.1.
+- **Webhook taxonomy:** the five event names are exactly
+  `person.updated`, `person.deleted`, `household.updated`,
+  `household.deleted`, `consent.updated` - no rename was needed. The
+  signature is `X-FG-Signature: sha256=<HMAC-SHA256(rawBody,
+  subscription.secret)>`, computed over the exact stored payload bytes.
+  24h idempotency via `X-Request-Id`, retry/backoff
+  (30s / 2m / 10m / 1h / 6h, 5 attempts) intact.
+- **Headers honoured on `/v1`:** `X-FG-Contract-Version`,
+  `X-Family-Graph-Actor`, `X-Source-Tenant` / `X-Source-App` on writes,
+  `X-Request-Id` on writes, `If-Match` on PATCH.
+
+### Phase 3 reachability: the ParentPoint scoped key
+
+PP reaches three surfaces - `/v1` (`integration`), identity
+resolve/match/feedback (all POSTs, `pii.write`), and sanitize/desanitize
+(`sanitize`). A single scoped key carrying
+`["integration", "sanitize", "pii.write"]` grants exactly that, so PP
+needs one key, not three. No new auth surface or scope was invented -
+all three scopes already exist in `server/auth/api-keys.js`. The exact
+provisioning recipe lives in `INTEGRATION_GUIDE.md` §4.1.
+
+### Test count
+
+15 cases added in `tests/integration-pp-contract.test.js` (version
+acceptance, the two canonical write endpoints + their webhook emission
+and validation edges, and the raw-body signature check). Two stale
+expected-value assertions that hard-coded the old `v0.1` echoed header
+were updated to `v0.2` to match the intentional wire bump (the tests
+still assert the header is present and correct - not weakened). The full
+suite went from 529 → 544 passing (1 skipped on root, as before).
+
+
+## Appendix F — Outbound agent: the "no open doors" topology (2026-06-19)
+
+ParentPoint (PP) is a public cloud app (Netlify + Firebase). FamilyGraph
+(FG) is a loopback-bound dialer that opens NO inbound internet ports - it
+binds `127.0.0.1` by default (`server/config.js`) and nothing in this work
+changes that. The operator chose Option A ("no open doors"): every FG↔PP
+byte is INITIATED BY FG as an outbound HTTPS call to PP's public endpoints.
+PP never calls FG. This Appendix records what shipped; the body prose stays
+the historical record of intent.
+
+### The locked inversion protocol
+
+For every configured + enabled PP tenant, FG runs an outbound check-in loop
+on a per-tenant interval (default 20s, operator-tunable 5-3600s). Each tick
+makes four OUTBOUND calls, all over HTTPS, all carrying:
+
+- `Authorization: Bearer <pp_bearer_credential>`
+- `X-FG-Signature: sha256=<HMAC-SHA256(rawBody, shared_webhook_secret)>`
+  (reuses the existing webhook `sign()` util)
+- `X-Source-Tenant: <schoolId>`
+- `X-FG-Contract-Version: v0.2`
+- `X-Family-Graph-Actor: familygraph`
+- `X-Request-Id: fg_<uuid>` on writes (sync + inbox)
+
+The four calls:
+
+| Step | Call | Body (FG → PP) | Response (PP → FG) |
+|---|---|---|---|
+| 1 | `POST {ppBaseUrl}/familygraph-sync?tenant=<schoolId>` | `{ tenant, since, cursor, count, payload }` where `payload` is the **sealed** envelope of `{ persons[], households[] }` since PP's last-acked cursor (assembled from FG's existing changed-feed machinery) | `{ ackedCursor }` - persisted per tenant so the next tick resumes there |
+| 2 | `GET {ppBaseUrl}/familygraph-outbox?tenant=<schoolId>&max=N` | (none) | `{ items: [ { id, kind, ... } ] }` - parked work items |
+| 3 | (local) process each item with FG's existing engines | - | - |
+| 4 | `POST {ppBaseUrl}/familygraph-inbox?tenant=<schoolId>` | `{ tenant, results: [ { id, kind, ok, result } ] }` keyed by each item's id for idempotent ack | `204` / `{}` |
+
+Outbox item kinds, each processed by the **existing** engine - nothing was
+reimplemented:
+
+- `sanitize` (text → codes) - `server/sanitize`. Result is code-only, NOT PII → **cleartext**.
+- `desanitize` (codes → text, authorized) - `server/sanitize`. Result carries names → **sealed**.
+- `identity.resolve` (record → code/action) - `server/identity/resolver`. Result → **sealed**.
+- `schoolContext` (PP child/school snapshot → applied via `server/integration/schoolContext`). Ack → **sealed**.
+- `document.fetch` - reserved for a later phase; accepted and cleanly no-op'd (`{ status: 'not_implemented' }`).
+
+Real-time FG→PP webhooks (`server/integration/webhooks.js`) are themselves
+outbound and stay the low-latency path; the step-1 batch is the catch-up
+backstop. Webhooks were not removed.
+
+### Envelope encryption (always-on layer)
+
+Any FG→PP payload containing PII, de-anonymized text, identity-resolved
+names, or (later) document bytes/safety-flags is envelope-encrypted with a
+shared symmetric key (`envelope_key`, 32 bytes / 64 hex) established at
+pairing, on TOP of TLS, using FG's AES-256-GCM primitive
+(`server/integration/envelope.js`, which reuses the same algorithm family as
+`server/crypto/encryption.js` but emits a self-describing JSON wire shape so
+PP can detect-and-decrypt). PP holds the same key and decrypts server-side
+only. Pseudonymous codes, cursors, request ids, and acks travel cleartext
+inside the TLS+HMAC envelope. Sealed wire shape:
+
+```jsonc
+{ "__fg_enc": "v1", "alg": "aes-256-gcm", "iv": "<b64>", "tag": "<b64>", "ct": "<b64>" }
+```
+
+### Pairing config + dormancy
+
+Per-tenant pairing config is stored encrypted in FG settings, reusing the
+connector-credential pattern (`server/integration/pairing.js`):
+`pp_base_url`, `pp_bearer_credential`, `shared_webhook_secret`,
+`envelope_key`, `school_id`, `enabled`, `check_in_interval_s`, and the
+per-tenant `last_acked_cursor`. Secrets are write-only - never echoed after
+entry, never logged (only field names are logged). Surfaces:
+`bin/family-graph.js pp-pairing <list|show|set|enable|disable|check-in|remove>`,
+the operator-only `POST/GET/PATCH/DELETE /api/pp-pairings` API (master
+bearer), and a `/settings/pp-pairings` dashboard view.
+
+The scheduler (`server/integration/outbound-scheduler.js`) is OFF unless a
+pairing is enabled AND complete. With zero enabled pairings every tick walks
+an empty list and returns - no outbound call, no port, no listener. Its
+`setInterval` handle is `unref()`'d so it never holds the process open.
+Disable entirely with `FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`.
+
+### Test count
+
+25 cases added in `tests/integration-pp-outbound.test.js`: pairing config
+storage + secret redaction, envelope seal/open round-trip + tamper/wrong-key
+rejection, HMAC signing of outbound calls, batch assembly + cursor advance,
+outbox processing per kind (including sealed-input handling and the
+document.fetch stub), a full mocked check-in cycle, and scheduler dormancy
+with no enabled pairing. PP's HTTP endpoints are mocked via an injected
+fetch. The full suite went from 544 → 569 passing (1 skipped, as before).
+
+---
+
+# Appendix — Canonical FG ↔ PP Wire Contract v1
+
+This appendix is the SINGLE canonical record of the bytes on the wire between
+FamilyGraph (FG) and ParentPoint (PP). It is mirrored verbatim in PP at
+`trackerdocs/specs/FG_PP_WIRE_CONTRACT.md`. Change BOTH copies AND the matching
+fixture tests (FG `tests/integration-pp-wire-fixtures.test.js`, PP
+`netlify/functions/_lib/familyGraphWire.fixtures.test.ts`) together — those
+fixtures pin the exact bytes so the two sides can never silently re-diverge.
+
+## A. Envelope (sealed value)
+
+```json
+{ "enc": "aes-256-gcm", "iv": "<base64 12B>", "tag": "<base64 16B>", "ct": "<base64>" }
+```
+
+`ct` = AES-256-GCM of the UTF-8 JSON of the wrapped value. A value with NO `enc`
+field is CLEARTEXT and passes through. Key = 32 bytes as 64 hex chars (both
+sides accept hex; PP also accepts base64). A value that looks like an envelope
+but fails to decrypt is a HARD error (fail closed).
+
+FG: `server/integration/envelope.js` (`seal`/`open`/`isSealed`). The marker is
+`enc: "aes-256-gcm"` (NOT the old `__fg_enc`+`alg`).
+
+Cross-language fixture (asserted in BOTH repos):
+
+```
+key (hex): 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+blob: { "enc":"aes-256-gcm",
+        "iv":"I0OQY6BAXR1itJgI",
+        "tag":"tzwOz/xGnfjobN0KVYtuog==",
+        "ct":"utgnlmMIVOeKSDvOEFGJB7CvNhb+BhBZ61wQso4QHnK8lhGcmqIgBJCSLibJfBVOy32rDDnhJ/sM" }
+plaintext: { "text":"Amanda Lee", "personId":"fg_p_1", "items":[1,2,3] }
+```
+
+## B. Sync push — `POST {pp}/familygraph-sync?tenant=<sid>`
+
+Request: `{ "tenant", "sinceCursor": <cursor|null>, "cursor": <newHighWater>,
+"changes": ENVELOPE([ ChangeEvent, ... ]) }`.
+
+ChangeEvent = the webhook event shape `{ "type", "data": {…} }`;
+`type` ∈ `person.updated | person.deleted | household.updated |
+household.deleted | consent.updated`. Deletes are tombstones
+`{ "type": "...deleted", "id": "<code>" }`.
+
+Response 200: `{ "ok": true, "ackedCursor": <cursor>, "applied": <int>,
+"skipped": <int> }`. PP applies each event through the SAME apply +
+freshness/idempotency logic the webhook uses and does NOT advance past a failed
+event. FG: `assembleBatch`/`pushBatch` in `server/integration/outbound-agent.js`
+— builds ChangeEvents from the changed feed (same `{type,data}` the webhook
+emits; tombstones for deletes), seals the array as `changes`, sends
+`sinceCursor`.
+
+## C. Outbox fetch — `GET {pp}/familygraph-outbox?tenant=<sid>&max=N`
+
+Response 200: `{ "ok": true, "items": [ { "id", "kind", "payload":
+ENVELOPE-or-plain, "requestId" } ] }`.
+
+payload plaintext per kind: `sanitize {text}`; `desanitize {text, tokenSetId}`;
+`identity.resolve {record:{…}}`; `schoolContext {schoolId, personCode,
+schoolYear?, grade?, classroomId?, classroomName?, homeroomTeacherPersonId?,
+activities?, allergies?}`; `document.fetch` reserved/stub. FG `processItem`
+reads `item.payload` (opens if sealed via `isSealed`), then the kind fields off
+the opened object.
+
+## D. Inbox return — `POST {pp}/familygraph-inbox?tenant=<sid>` (BATCH)
+
+Request: `{ "tenant", "results": [ { "id", "kind", "ok": bool, "result":
+ENVELOPE-or-plain, "error"? } ] }`.
+
+result per kind: `sanitize {sanitized, tokenSetId}` CLEARTEXT (codes + opaque
+ref only); `desanitize` ENVELOPE `{text}`; `identity.resolve` ENVELOPE `{code,
+action, score, reasons}`; `schoolContext` ENVELOPE `{schoolContext}`.
+
+Response 200: `{ "ok": true, "applied": <int> }`. FG `returnInbox` already
+batches under `{tenant, results}`.
+
+## E. De-anonymization map stays INSIDE FamilyGraph
+
+FG NEVER returns the codes→names mapping to PP. The sanitize RESULT is
+`{ sanitized, tokenSetId }` where `tokenSetId` is an OPAQUE reference to the
+token set FG persists in its OWN encrypted `token_sets` store
+(`token_sets.mappings_ct`). Desanitize looks the mapping up BY `tokenSetId`
+from that store — the desanitize payload carries `tokenSetId`, never the
+mapping. PP stores only `tokenSetId` + the sanitized (coded) text, never names.
+
+## 6. Headers (on every FG → PP call)
+
+```
+Authorization:          Bearer <fgCredential>
+X-FG-Signature:         sha256=HMAC-SHA256(rawBody, webhookSecret)
+X-Source-Tenant:        <sid>   (must agree with ?tenant=)
+X-FG-Contract-Version:  v0.2
+X-Family-Graph-Actor:   familygraph
+X-Request-Id:           <id>    (on writes)
+```
+
+## 7. Document Vault (FG is the authoritative access gate)
+
+Sensitive child documents (sacramental, learning-accommodation, health/allergy
+records) live ENCRYPTED in FG's vault and surface to PP JUST-IN-TIME over the
+SAME transport spine — no new endpoints, no inbound ports. FG makes the access
+decision and audits it (Tier-2); PP holds no document bytes at rest.
+
+AT-REST vs ON-THE-WIRE: bytes + title are encrypted at rest in FG with the
+LOCAL dataKey (`documents.content_ct` / `title_ct`, the versioned AES-256-GCM
+BLOB layout). When a fetch is AUTHORIZED, the bytes are RE-SEALED with the
+pairing ENVELOPE key for transport. `content_ct` is at-rest encryption, NOT the
+wire envelope. Health safety flags (`health_safety` table) are likewise
+encrypted at rest per `_ct` column.
+
+### 7.1 New outbox kinds (PP parks; FG `processItem` handles)
+
+`document.store` — payload SEALED (carries bytes + PII):
+```json
+{ "personCode": "p_…", "kind": "sacramental|accommodation|health|other",
+  "subtype": "baptism|first_communion|confirmation|marriage|iep|504|mtss|allergy_action_plan|health_care_plan|immunization|other",
+  "title": "…", "contentType": "application/pdf",
+  "contentBase64": "<base64 file bytes>", "source": "pp" }
+```
+result CLEARTEXT (opaque ref only — no bytes, no PII):
+```json
+{ "docRef": "doc_<16 hex>" }
+```
+FG persists to the vault (bytes encrypted at rest), derives `policyKey`, and the
+row's `updated_at` causes a `document.updated` change on the next sync tick.
+
+`document.fetch` — payload SEALED (carries the asserted viewer):
+```json
+{ "docRef": "doc_…", "personCode": "p_…",
+  "viewer": { "userId": "pp_user_1", "role": "clergy|dre|admin|learning_team|assigned_teacher|nurse|direct_care",
+              "relationship": "parent_of|staff" } }
+```
+PP owns user auth; FG TRUSTS + LOGS PP's signed assertion of who the viewer is
+within the tenant boundary. FG's job is the policy decision + audit, not
+re-authenticating PP's users. On ALLOW, result is a SEALED envelope:
+```json
+{ "docRef": "doc_…", "contentType": "application/pdf",
+  "contentBase64": "<base64>", "expiresAt": "<iso ~5 min out>" }
+```
+On DENY, result is CLEARTEXT, NO PII:
+```json
+{ "ok": false, "error": "forbidden" | "not_found" | "too_large" }
+```
+Size cap: documents over 10 MB raw never go on the wire (`too_large`). Every
+fetch and store emits a Tier-2 audit event: actor, docRef, personCode, viewer
+role/relationship, decision, reason.
+
+### 7.2 New sync ChangeEvents (METADATA ONLY — ride the sealed `changes` array)
+
+No bytes ever ride the sync batch; bytes move only on an authorized fetch.
+
+```json
+{ "type": "document.updated",
+  "data": { "docRef": "doc_…", "personCode": "p_…",
+            "kind": "sacramental", "subtype": "baptism",
+            "title": "Baptism", "date": "<iso>",
+            "status": "active", "policyKey": "sacramental" } }
+{ "type": "document.deleted", "id": "doc_…" }
+{ "type": "health.safetyFlags.updated",
+  "data": { "personCode": "p_…", "allergens": ["peanut"],
+            "severity": "high", "medication": "EpiPen",
+            "emergencyContact": "[Parent]", "updatedAt": "<iso>" } }
+{ "type": "health.safetyFlags.cleared", "id": "p_…" }
+```
+
+The safety-flag summary is released regardless of directory/photo consent
+(life-safety). The title + safety summary are PII, which is exactly why the
+whole `changes` array is sealed.
+
+### 7.3 Access matrix (FG authoritative; `server/integration/documentPolicy.js`)
+
+`policyKey` is derived from (kind, subtype) and persisted on the row.
+
+| policyKey | subtypes | staff roles allowed | parent_of |
+|---|---|---|---|
+| `sacramental` | baptism, first_communion, confirmation, marriage | clergy, dre, admin | ALLOW |
+| `accommodation` | iep, 504, mtss | learning_team, assigned_teacher, admin | DENY file (metadata only) |
+| `health_plan` | allergy_action_plan, health_care_plan | nurse, assigned_teacher, admin | ALLOW |
+| `health_record_immunization` | immunization | nurse, admin | ALLOW |
+| `health_record_other` | (health + other/medical) | nurse, admin | DENY |
+| `safety_flags` (summary, via sync) | — | nurse, assigned_teacher, direct_care, admin | ALLOW |
+
+`assigned_teacher` is asserted by PP (PP knows the roster); FG trusts + logs it.
+Unknown policy or unknown relationship FAILS CLOSED (deny).
+
+### 7.4 Operator surface
+
+`/api/documents` (master bearer, operator-only — opens NO inbound surface to
+PP): `POST /` store; `GET /person/:code` list; `GET /:docRef` metadata + title;
+`GET /:docRef/content` operator download of decrypted bytes; `DELETE /:docRef`
+archive; `PUT|GET|DELETE /safety/:code` set/read/clear health safety flags.
+
+FG: migration 0017 (`documents` + `health_safety`), `documents.js` (vault),
+`documentPolicy.js` (matrix), `outbound-agent.js` (`document.store` /
+`document.fetch` in `processItem`), `changes.js`
+(`listChangedDocuments` / `listChangedSafetyFlags`).

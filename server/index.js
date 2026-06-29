@@ -35,6 +35,8 @@ const buildNotifications = require('./api/notifications');
 const buildScan = require('./api/scan');
 const buildIdentityApi = require('./api/identity');
 const buildConnectors = require('./api/connectors');
+const buildPpPairings = require('./api/pp-pairings');
+const buildDocuments = require('./api/documents');
 const buildMinistries = require('./api/ministries');
 const buildOrganizations = require('./api/organizations');
 const buildAuthApi = require('./api/auth');
@@ -44,7 +46,9 @@ const eim = require('./identity/eim');
 const entityHistory = require('./identity/history');
 const buildIntegrationApi = require('./api/integration');
 const integrationWebhooks = require('./integration/webhooks');
+const integrationFederation = require('./integration/federation');
 const integrationIdempotency = require('./integration/idempotency');
+const ppOutboundScheduler = require('./integration/outbound-scheduler');
 const rateLimit = require('./auth/rate-limit');
 
 // method2scope: chooses one of two scoped middlewares depending on the HTTP
@@ -128,6 +132,10 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/sanitize', express.json({ limit: '20mb' }));
   app.use('/api/desanitize', express.json({ limit: '20mb' }));
   app.use('/api/scan', express.json({ limit: '20mb' }));
+  // Document vault store accepts a base64 file body; the 10 MB raw cap is ~13.4
+  // MB base64, so a 16 MB JSON limit gives headroom (the byte cap is enforced
+  // in documents.store, not here).
+  app.use('/api/documents', express.json({ limit: '16mb' }));
   app.use(express.json({ limit: '256kb' }));
 
   // Structured request log: every response writes one JSON line to stderr (or
@@ -191,6 +199,15 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   // delegate match/resolve to Family Graph.
   app.use('/api/identity', method2scope(bearerRead, bearerWrite), piiRateLimit, buildIdentityApi({ db, secrets, thresholds }));
   app.use('/api/connectors', bearerImport, piiRateLimit, buildConnectors({ db, secrets, thresholds }));
+  // ParentPoint outbound pairing config (operator-only — holds shared
+  // secrets for the FG→PP dialer). Configures the dialer; opens no inbound
+  // surface.
+  app.use('/api/pp-pairings', bearerMaster, piiRateLimit, buildPpPairings({ db, secrets }));
+  // Document Vault (operator-only — children's sacramental/accommodation/health
+  // records, the most sensitive data in the system). Bytes are encrypted at
+  // rest with the dataKey; PP reaches documents ONLY via the outbound agent's
+  // document.store/fetch transport, never this route. Opens no inbound surface.
+  app.use('/api/documents', bearerMaster, piiRateLimit, buildDocuments({ db, secrets }));
   app.use('/api/connector-runs', bearerRead, piiRateLimit, buildConnectors.buildRunsRouter({ db }));
   // Volunteer ministries + EIM. Reads are gated on pii.read because per-
   // assignment notes can contain operator commentary; writes need pii.write.
@@ -376,6 +393,31 @@ async function start() {
     }
   }
 
+  // Federation pusher. Wakes every 60s and ships fat, hex-keyed person /
+  // household batches to subscriptions that opted into federation_push — the
+  // hydration + reconciliation channel for consumers that can't pull (e.g. a
+  // cloud app while FamilyGraph sits on-prem). Disable via
+  // FAMILY_GRAPH_DISABLE_FEDERATION_PUSH=1.
+  let integrationFederationPusher = null;
+  try {
+    integrationFederationPusher = integrationFederation.start(db, secrets, { intervalMs: 60_000 });
+  } catch (e) {
+    log.error('federation.pusher.start_failed', { message: e.message, stack: e.stack });
+  }
+
+  // ParentPoint outbound check-in scheduler (Option A — "no open doors").
+  // FG is the sole initiator: this loop dials PP over outbound HTTPS for any
+  // ENABLED pairing. It opens NO inbound port and listens for nothing. With
+  // zero enabled pairings every tick is a no-op, so this stays fully dormant
+  // until the operator pairs and enables a tenant. Disable entirely via
+  // FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1.
+  let ppOutboundSched = null;
+  try {
+    ppOutboundSched = ppOutboundScheduler.start(db, secrets);
+  } catch (e) {
+    log.error('integration_pp.scheduler.start_failed', { message: e.message, stack: e.stack });
+  }
+
   // Idempotency-key sweeper. Runs every 6h. The lookup path lazily expires
   // its own row on read so steady-state pressure stays bounded; this sweep
   // is the belt-and-suspenders cleanup for the long tail of rows that
@@ -425,6 +467,13 @@ async function start() {
     // don't orphan a delivery mid-fetch.
     if (integrationWebhookDispatcher && integrationWebhookDispatcher.stop) {
       try { await integrationWebhookDispatcher.stop(); } catch (_) { /* swallow */ }
+    }
+    if (integrationFederationPusher && integrationFederationPusher.stop) {
+      try { await integrationFederationPusher.stop(); } catch (_) { /* swallow */ }
+    }
+    // Stop the PP outbound scheduler; await any in-flight check-in.
+    if (ppOutboundSched && ppOutboundSched.stop) {
+      try { await ppOutboundSched.stop(); } catch (_) { /* swallow */ }
     }
     clearInterval(idemSweep);
     clearInterval(tokenSetSweep);
