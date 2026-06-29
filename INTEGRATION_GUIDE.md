@@ -115,7 +115,7 @@ person's record?" by filtering the audit log.
 | Header | Required | Purpose |
 |---|---|---|
 | `Authorization: Bearer <token>` | yes | Auth |
-| `X-FG-Contract-Version: v0.1` | strongly recommended | Lets FG reject incompatible majors with `426 Upgrade Required` instead of giving you a silently-wrong response |
+| `X-FG-Contract-Version: v0.2` | strongly recommended | Lets FG reject incompatible majors with `426 Upgrade Required` instead of giving you a silently-wrong response. `v0.1` is still accepted for back-compat |
 | `X-Source-App: <your-app>` | recommended | Recorded on every audit row + write log |
 | `X-Source-Tenant: <slug>` | required on writes | Doubles as the webhook school-hint filter |
 | `X-Request-Id: <uuid>` | required on writes | 24-hour idempotency dedupe (see §9) |
@@ -124,20 +124,106 @@ The `X-Source-Tenant` value is treated as a "school slug". The
 validator accepts `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` (start with
 alphanumeric, then alphanumeric / dot / dash / underscore).
 
+### 4.1 Provisioning a key for ParentPoint (the canonical consumer recipe)
+
+ParentPoint (PP) is the first app integrating against FamilyGraph, and
+it reaches three surfaces, not just `/v1`:
+
+1. The versioned `/v1/...` contract surface — scope `integration`.
+2. Identity resolution — `POST /api/identity/resolve`,
+   `POST /api/identity/match`, `POST /api/identity/feedback`. These
+   live on the legacy `/api` surface and their **write** verbs (all
+   three are POSTs) are gated on scope `pii.write`.
+3. Anonymization round-trip — `POST /api/sanitize`,
+   `POST /api/desanitize` — gated on scope `sanitize`.
+
+A single scoped key can carry all three scopes, so PP needs exactly
+**one** key. The operator mints it from the dashboard (Keys page) or
+over the API with the master token:
+
+```sh
+curl -sS http://127.0.0.1:3500/api/keys \
+  -H "Authorization: Bearer <MASTER_TOKEN>" \
+  -H 'content-type: application/json' \
+  -d '{ "name": "parentpoint", "scopes": ["integration", "sanitize", "pii.write"] }'
+# → { "code": "sk_...", "token": "sk_xxxxxxxx", "scopes": [...] }
+```
+
+The `token` is shown **once**; store it in PP's server-side secret
+store (never the browser bundle). All of PP's FamilyGraph calls then
+ride that one `Authorization: Bearer sk_xxxxxxxx`. Because the key is
+named `parentpoint`, every audit row FG writes for PP is attributed to
+that name (scoped keys cannot spoof a different `X-Family-Graph-Actor`;
+the actor is forced to the key's name).
+
+No new auth surface or scope was needed: `integration`, `sanitize`,
+and `pii.write` already exist in the scope vocabulary
+(`server/auth/api-keys.js`). If the operator wants to split read-only
+identity peeks from writes later, `pii.read` covers `POST
+/api/identity/match` reads — but the three POSTs PP uses all require
+`pii.write`, so the single-key recipe above is the minimal grant that
+makes PP fully functional.
+
+### 4.2 Option A — the "no open doors" outbound topology (as deployed)
+
+The §4.1 recipe describes the inbound mode where PP calls FG's `/api`
+and `/v1` surfaces directly. The operator instead deployed **Option A**:
+FamilyGraph opens **no inbound internet port** (it binds loopback), and
+**FG is the sole initiator** — it dials PP's public endpoints outbound.
+PP never calls FG. The FG-side build and protocol are documented in
+`FAMILYGRAPH_INTEGRATION.md` Appendix F. The short version:
+
+- The operator pairs a PP tenant in FG (CLI `pp-pairing set/enable`,
+  the `/api/pp-pairings` API, or the **ParentPoint** dashboard tab),
+  supplying `pp_base_url`, a PP-issued bearer credential, a shared HMAC
+  webhook secret, and a 32-byte envelope key. Secrets are stored
+  encrypted and never echoed.
+- Once enabled, FG dials PP every `check_in_interval_s` (default 20s):
+  `POST {ppBaseUrl}/familygraph-sync` → `GET .../familygraph-outbox` →
+  process locally → `POST .../familygraph-inbox`. Every call carries the
+  bearer plus `X-FG-Signature: sha256=<HMAC(rawBody, sharedSecret)>`,
+  `X-Source-Tenant`, `X-FG-Contract-Version: v0.2`,
+  `X-Family-Graph-Actor: familygraph`, and (on writes) `X-Request-Id:
+  fg_<uuid>`.
+- PII-bearing payloads are envelope-encrypted on top of TLS; codes,
+  cursors, request ids and acks are cleartext inside the TLS+HMAC
+  envelope. PP holds the same envelope key and decrypts server-side.
+
+In Option A, PP needs no scoped key against FG (it serves the public
+endpoints FG dials). The §4.1 key recipe still applies if a future
+deployment also wants PP to make direct inbound `/v1` calls.
+
+**Document Vault.** Sensitive child documents (sacramental,
+accommodation, health) live encrypted in FG and surface to PP
+just-in-time over the same outbound spine — no new endpoints. PP parks
+`document.store` (FG persists the bytes, returns an opaque `doc_…` ref)
+and `document.fetch` (FG applies the access matrix to PP's asserted
+viewer, enforces a 10 MB cap, returns sealed bytes on ALLOW or
+`{ ok:false, error }` on DENY) outbox items. Document + health-safety
+changes also flow as metadata-only ChangeEvents in the sealed sync batch.
+**FG is the authoritative access gate** — it makes the policy decision
+and writes a Tier-2 audit on every store and fetch. The operator manages
+the vault locally via `/api/documents` (master bearer). Wire shapes and
+the full access matrix are in `FAMILYGRAPH_INTEGRATION.md` §7.
+
 ## 5. Versioning
 
-`X-FG-Contract-Version: v0.1` is the active wire version. Bump
-semantics:
+`X-FG-Contract-Version: v0.2` is the active wire version. `v0.1` is
+still on the compatibility allowlist, so an older client keeps working
+unchanged. Bump semantics:
 
-- **Minor** (v0.1 → v0.2) when adding fields. Existing fields stay
-  the same shape. Clients that ignore unknown keys keep working
-  without code changes.
-- **Major** (v0.1 → v1.0) when changing field semantics. FG accepts
+- **Minor** (v0.1 → v0.2) when adding fields or additive endpoints.
+  Existing fields stay the same shape. Clients that ignore unknown
+  keys keep working without code changes. v0.2 added the canonical
+  `POST /v1/consents` and `POST /v1/schools/:schoolId/context` write
+  surfaces alongside the older person-keyed routes.
+- **Major** (v0.2 → v1.0) when changing field semantics. FG accepts
   only the major versions in its allowlist; unknown majors return
   `426 Upgrade Required`. Plan ahead.
 
-FG also returns `X-FG-Contract-Version` on every response so a
-client can confirm which side of the wire it's on.
+FG also returns `X-FG-Contract-Version: v0.2` on every response so a
+client can confirm which side of the wire it's on (this reflects what
+FG itself speaks, even when the request declared `v0.1`).
 
 ## 6. Object schemas
 
@@ -347,7 +433,7 @@ All GET responses set:
 - `ETag: W/"<hash>"` (a weak validator over the response body)
 - `Cache-Control: private, max-age=<seconds>` (30 for objects, 5
   for change feeds)
-- `X-FG-Contract-Version: v0.1`
+- `X-FG-Contract-Version: v0.2`
 
 ### 7.2 Writes
 
@@ -355,10 +441,12 @@ All GET responses set:
 |---|---|
 | `POST /v1/persons` | Suggest a new identity. Returns 201 + person object |
 | `PATCH /v1/persons/:personId` | Update contact fields. Honors `If-Match` |
-| `POST /v1/persons/:personId/photoConsent` | Set identity-base OR per-school override (body / query `schoolId`) |
+| `POST /v1/consents` | **Canonical** person-keyed consent write. Body `{ personId\|personCode, schoolId?, photo, directory }`. `schoolId` present → per-school override; absent → identity base |
+| `POST /v1/persons/:personId/photoConsent` | Legacy alias for the consent write; same rows. Set identity-base OR per-school override (body / query `schoolId`) |
 | `DELETE /v1/persons/:personId/photoConsent?schoolId=...` | Clear a per-school override |
 | `POST /v1/persons/:personId/eimCertifications` | Add/extend an EIM cert |
-| `POST /v1/persons/:personId/schoolContext` | Upsert enrichment snapshot |
+| `POST /v1/schools/:schoolId/context` | **Canonical** school-keyed enrichment snapshot. Body `{ personId\|personCode, schoolYear?, grade?, classroomId?, classroomName?, homeroomTeacherPersonId?, activities?[], allergies?[] }`. Overwrites the previous snapshot for this (person, school) pair |
+| `POST /v1/persons/:personId/schoolContext` | Legacy alias for the enrichment snapshot; same rows |
 | `POST /v1/persons/:personId/archive` | Soft-delete |
 | `POST /v1/persons/:personId/reinstate` | Reverse archive |
 | `POST /v1/households` | Suggest a new household |

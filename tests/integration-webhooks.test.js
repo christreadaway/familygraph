@@ -93,7 +93,7 @@ test('webhooks > dispatchPending fires each pending row through the supplied sen
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://x.example/cb');
   assert.equal(calls[0].headers['x-fg-signature'].startsWith('sha256='), true);
-  assert.equal(calls[0].headers['x-fg-contract-version'], 'v0.1');
+  assert.equal(calls[0].headers['x-fg-contract-version'], 'v0.2');
   // Body should be valid JSON shaped per the contract.
   const body = JSON.parse(calls[0].body);
   assert.equal(body.event, 'person.updated');

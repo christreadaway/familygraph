@@ -1,6 +1,6 @@
 'use strict';
 
-// Migration 0017: Federation push mode for webhook subscriptions.
+// Migration 0018: Federation push mode for webhook subscriptions.
 //
 // The existing webhook is a THIN notification: it sends only the changed
 // entity's hex id (`personId` / `householdId`) and expects the consumer to

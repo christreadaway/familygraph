@@ -15,4 +15,9 @@ module.exports = {
   federation: require('./federation'),
   changes: require('./changes'),
   dioceses: require('./dioceses'),
+  // Option A outbound dialer (FG → ParentPoint). No inbound surface.
+  pairing: require('./pairing'),
+  envelope: require('./envelope'),
+  outboundAgent: require('./outbound-agent'),
+  outboundScheduler: require('./outbound-scheduler'),
 };
