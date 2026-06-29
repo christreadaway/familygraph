@@ -695,6 +695,20 @@ Quick sketch:
   subscriptions and use the helper module's `resubscribe()` to bring
   one back. Disable the dispatcher with
   `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS=1`.
+- **Federation push** (for consumers that can't pull): subscribe with
+  `"federationPush": true` and FamilyGraph sends FAT, hex-keyed batches
+  — the full person/household objects, not just ids — so a cloud app
+  reaching an on-prem FamilyGraph only over outbound POSTs can
+  hydrate + reconcile without ever calling back in. The first batch is
+  a full snapshot (`"hydration": true`), later batches are
+  changed-since deltas, archived records arrive as `active:false`
+  tombstones, and every record is keyed by the canonical `personId` /
+  `householdId` hex. `POST /v1/webhooks/:code/resync` resets the
+  cursors to force a re-hydrate. Federation subscriptions are excluded
+  from thin per-change webhooks (the fat batch is the only channel).
+  Batches are materialized at send time — no PII is persisted in
+  `webhook_deliveries`. Pusher runs every ~60s; disable with
+  `FAMILY_GRAPH_DISABLE_FEDERATION_PUSH=1`. See INTEGRATION_GUIDE.md §8.7.
 
 ### Auto-merge vs prompt-the-user (the matching gate)
 
@@ -764,6 +778,7 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
 | `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
 | `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS` | unset | set to `1` to disable the integration webhook dispatcher (pending rows accumulate until re-enabled) |
+| `FAMILY_GRAPH_DISABLE_FEDERATION_PUSH` | unset | set to `1` to disable the federation pusher (fat hex-keyed hydration/reconciliation batches to `federationPush` subscriptions) |
 | `FAMILY_GRAPH_DISABLE_RATE_LIMIT` | unset | set to `1` to disable per-Bearer-token rate limiting on `/api` and `/v1`. Defaults: 600/min for `/api`, 1200/min for `/v1`, 60/min for `/api/sanitize`, 30/min for `/api/import`. Disable only for diagnostics; the limits are deliberately generous and shouldn't trip legitimate integration traffic. |
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |

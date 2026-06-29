@@ -973,6 +973,16 @@ function build({ db, secrets }) {
     res.json({ items });
   });
 
+  // Federation-push recovery: reset the subscription's cursors so the next
+  // federation tick re-hydrates the consumer with the full active graph.
+  // No-op (404) for an unknown code; harmless for a thin subscription (it
+  // ignores the cursors).
+  r.post('/webhooks/:code/resync', (req, res) => {
+    const ok = integration.federation.resync(db, req.params.code);
+    if (!ok) return res.status(404).json({ error: 'not_found' });
+    res.status(202).json({ ok: true, code: req.params.code });
+  });
+
   return r;
 }
 

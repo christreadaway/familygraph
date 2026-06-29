@@ -369,7 +369,8 @@ All GET responses set:
 | `PATCH /v1/dioceses/:code` | Update; honors `If-Match` |
 | `POST /v1/dioceses/:code/archive` | Soft-delete |
 | `POST /v1/dioceses/:code/reinstate` | Reverse archive |
-| `POST /v1/webhooks` | Subscribe |
+| `POST /v1/webhooks` | Subscribe (add `"federationPush": true` for fat hex-keyed batches — see §8.7) |
+| `POST /v1/webhooks/:code/resync` | Reset federation cursors so the next tick re-hydrates the consumer |
 | `DELETE /v1/webhooks/:code` | Soft-unsubscribe (row + secret survive) |
 
 All POST returns 201 (Created); PATCH returns 200; DELETE returns
@@ -458,6 +459,74 @@ A single FG-side event can produce multiple deliveries if your
 endpoint timed out once and FG retried. Make your handler
 idempotent — track seen delivery codes, or check whether the
 `updatedAt` is newer than your cached copy before applying.
+
+### 8.7 Federation push (for consumers that can't pull)
+
+The webhook in 8.1–8.6 is a THIN notification: it carries only the
+changed entity's id and assumes you'll `GET /v1/persons/:id` to fetch
+the record. That assumes your app can reach FamilyGraph's inbound API.
+
+If your app runs OUTSIDE FamilyGraph's network — for example a cloud
+service while FamilyGraph runs on-prem behind a firewall — you can
+receive FG's outbound POSTs but you can't reach back in to pull. A thin
+notification is useless to you: you'd hold an id you can never resolve.
+
+Subscribe with `"federationPush": true` instead. FamilyGraph then sends
+FAT batches: the full person / household objects (the same shapes
+`GET /v1/persons/:id` and the changed feed return), so you federate
+identity on the canonical hex **without ever pulling**.
+
+```http
+POST /v1/webhooks
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "url": "https://your-cloud-function.example.com/familyGraphFederation",
+  "secret": "<random-256-bit-string>",
+  "federationPush": true
+}
+```
+
+A federation subscription does NOT also receive thin `person.updated`
+notifications — the fat batch is the single channel.
+
+**Delivery shape** (signed identically: `X-FG-Signature: sha256=…`,
+`X-FG-Event: federation.sync`):
+
+```json
+{
+  "type": "federation.sync",
+  "contractVersion": "v0.1",
+  "hydration": true,
+  "generatedAt": "2026-05-15T10:31:22Z",
+  "persons":   [ { "personId": "p_a7b3c91d", "firstName": "...", "active": true, ... } ],
+  "households":[ { "householdId": "f_88a3c0d2", "members": [ { "personId": "p_...", ... } ], ... } ],
+  "cursors": { "persons": "2026-05-15T10:31:22Z", "households": "2026-05-15T10:30:00Z" }
+}
+```
+
+- **Hydration.** A brand-new federation subscription's first batch
+  carries `"hydration": true` and contains every currently-active
+  person and household. Treat it as a full snapshot (mark-and-sweep
+  your cache). Subsequent batches are changed-since deltas with
+  `"hydration": false`.
+- **Tombstones.** An archived/merged record arrives as
+  `{ "personId": "p_…", "active": false }` with no PII — purge it from
+  your cache.
+- **The hex is the join key.** Every record is keyed by the immutable
+  `personId` / `householdId` hex (8.x). That is the identifier you
+  federate every other system on; FG resolves merges to a single
+  canonical hex before it leaves the box, so you never see two ids for
+  one person.
+- **At-least-once.** A failed batch is retried on the next tick with
+  the same window; dedupe by `(personId, updatedAt)`.
+- **Recovery / re-hydrate.** `POST /v1/webhooks/:code/resync` resets
+  the subscription's cursors so the next tick re-sends the full active
+  graph. Use it if your cache is ever lost or suspected stale.
+
+Pushes run on a ~60s tick. Disable the whole pusher server-side with
+`FAMILY_GRAPH_DISABLE_FEDERATION_PUSH=1`.
 
 ## 9. Idempotency on writes
 

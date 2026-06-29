@@ -44,6 +44,7 @@ const eim = require('./identity/eim');
 const entityHistory = require('./identity/history');
 const buildIntegrationApi = require('./api/integration');
 const integrationWebhooks = require('./integration/webhooks');
+const integrationFederation = require('./integration/federation');
 const integrationIdempotency = require('./integration/idempotency');
 const rateLimit = require('./auth/rate-limit');
 
@@ -376,6 +377,18 @@ async function start() {
     }
   }
 
+  // Federation pusher. Wakes every 60s and ships fat, hex-keyed person /
+  // household batches to subscriptions that opted into federation_push — the
+  // hydration + reconciliation channel for consumers that can't pull (e.g. a
+  // cloud app while FamilyGraph sits on-prem). Disable via
+  // FAMILY_GRAPH_DISABLE_FEDERATION_PUSH=1.
+  let integrationFederationPusher = null;
+  try {
+    integrationFederationPusher = integrationFederation.start(db, secrets, { intervalMs: 60_000 });
+  } catch (e) {
+    log.error('federation.pusher.start_failed', { message: e.message, stack: e.stack });
+  }
+
   // Idempotency-key sweeper. Runs every 6h. The lookup path lazily expires
   // its own row on read so steady-state pressure stays bounded; this sweep
   // is the belt-and-suspenders cleanup for the long tail of rows that
@@ -425,6 +438,9 @@ async function start() {
     // don't orphan a delivery mid-fetch.
     if (integrationWebhookDispatcher && integrationWebhookDispatcher.stop) {
       try { await integrationWebhookDispatcher.stop(); } catch (_) { /* swallow */ }
+    }
+    if (integrationFederationPusher && integrationFederationPusher.stop) {
+      try { await integrationFederationPusher.stop(); } catch (_) { /* swallow */ }
     }
     clearInterval(idemSweep);
     clearInterval(tokenSetSweep);
