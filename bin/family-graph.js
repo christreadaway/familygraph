@@ -219,20 +219,20 @@ switch (cmd) {
     })();
     break;
   }
-  case 'pp-pairing': {
-    // Configure / enable a ParentPoint (PP) outbound pairing. FG is the sole
+  case 'partner-pairing': {
+    // Configure / enable the partner app outbound pairing. FG is the sole
     // initiator (Option A — "no open doors"): this only stores the dial-out
     // target + shared secrets and toggles the pairing. It opens no port.
     //
-    //   pp-pairing list
-    //   pp-pairing show <schoolId>
-    //   pp-pairing set  <schoolId> key=value [key=value ...]
-    //   pp-pairing enable  <schoolId>
-    //   pp-pairing disable <schoolId>
-    //   pp-pairing check-in <schoolId>     (run one check-in now)
-    //   pp-pairing remove  <schoolId>
+    //   partner-pairing list
+    //   partner-pairing show <schoolId>
+    //   partner-pairing set  <schoolId> key=value [key=value ...]
+    //   partner-pairing enable  <schoolId>
+    //   partner-pairing disable <schoolId>
+    //   partner-pairing check-in <schoolId>     (run one check-in now)
+    //   partner-pairing remove  <schoolId>
     //
-    // set keys: pp_base_url, pp_bearer_credential, shared_webhook_secret,
+    // set keys: partner_base_url, partner_bearer_credential, shared_webhook_secret,
     //           envelope_key (64 hex), check_in_interval_s.
     // Secrets are stored encrypted and never echoed back.
     const sub = process.argv[3];
@@ -263,10 +263,10 @@ switch (cmd) {
         if (!items.length) { console.log('(no pairings configured)'); }
         else for (const d of items) printOne(d);
       } else if (sub === 'show') {
-        if (!schoolId) { console.error('usage: family-graph pp-pairing show <schoolId>'); process.exit(2); }
+        if (!schoolId) { console.error('usage: family-graph partner-pairing show <schoolId>'); process.exit(2); }
         printOne(pairing.describe(db, secrets, schoolId));
       } else if (sub === 'set') {
-        if (!schoolId) { console.error('usage: family-graph pp-pairing set <schoolId> key=value ...'); process.exit(2); }
+        if (!schoolId) { console.error('usage: family-graph partner-pairing set <schoolId> key=value ...'); process.exit(2); }
         const payload = {};
         for (const arg of process.argv.slice(5)) {
           const eq = arg.indexOf('=');
@@ -277,21 +277,21 @@ switch (cmd) {
         console.log(`[family-graph] pairing ${schoolId} updated`);
         printOne(d);
       } else if (sub === 'enable' || sub === 'disable') {
-        if (!schoolId) { console.error(`usage: family-graph pp-pairing ${sub} <schoolId>`); process.exit(2); }
+        if (!schoolId) { console.error(`usage: family-graph partner-pairing ${sub} <schoolId>`); process.exit(2); }
         if (!pairing.exists(db, schoolId)) { console.error(`no pairing for ${schoolId}; run set first`); process.exit(2); }
         if (sub === 'enable' && !pairing.isComplete(db, secrets, schoolId)) {
-          console.error(`pairing ${schoolId} is missing required fields; run pp-pairing show to see which`);
+          console.error(`pairing ${schoolId} is missing required fields; run partner-pairing show to see which`);
           process.exit(2);
         }
         const d = pairing.set(db, secrets, schoolId, { enabled: sub === 'enable' }, { actor: 'cli' });
         console.log(`[family-graph] pairing ${schoolId} ${sub}d`);
         printOne(d);
       } else if (sub === 'remove') {
-        if (!schoolId) { console.error('usage: family-graph pp-pairing remove <schoolId>'); process.exit(2); }
+        if (!schoolId) { console.error('usage: family-graph partner-pairing remove <schoolId>'); process.exit(2); }
         pairing.clear(db, secrets, schoolId, { actor: 'cli' });
         console.log(`[family-graph] pairing ${schoolId} removed`);
       } else if (sub === 'check-in') {
-        if (!schoolId) { console.error('usage: family-graph pp-pairing check-in <schoolId>'); process.exit(2); }
+        if (!schoolId) { console.error('usage: family-graph partner-pairing check-in <schoolId>'); process.exit(2); }
         const agent = require('../server/integration/outbound-agent');
         agent.checkInOnce(db, secrets, schoolId).then(r => {
           console.log(JSON.stringify(r, null, 2));
@@ -303,7 +303,7 @@ switch (cmd) {
         });
         break;
       } else {
-        console.error('usage: family-graph pp-pairing <list|show|set|enable|disable|check-in|remove> [schoolId] [key=value ...]');
+        console.error('usage: family-graph partner-pairing <list|show|set|enable|disable|check-in|remove> [schoolId] [key=value ...]');
         process.exit(2);
       }
     } catch (e) {
@@ -355,7 +355,7 @@ switch (cmd) {
     // eslint-disable-next-line no-console
     console.error(`unknown command: ${cmd}`);
     // eslint-disable-next-line no-console
-    console.error('commands: start | status | rotate-secret | backup [passphrase] | restore <passphrase> <src> <dest> | show-token | issue-key <name> [scopes] | list-backups | prune-backups [keep=10] | connector <test|sync|status> [name] | pp-pairing <list|show|set|enable|disable|check-in|remove> [schoolId]');
+    console.error('commands: start | status | rotate-secret | backup [passphrase] | restore <passphrase> <src> <dest> | show-token | issue-key <name> [scopes] | list-backups | prune-backups [keep=10] | connector <test|sync|status> [name] | partner-pairing <list|show|set|enable|disable|check-in|remove> [schoolId]');
     process.exit(2);
   }
 }

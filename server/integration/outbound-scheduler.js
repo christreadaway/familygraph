@@ -1,6 +1,6 @@
 'use strict';
 
-// Outbound check-in scheduler for ParentPoint pairings.
+// Outbound check-in scheduler for the partner app pairings.
 //
 // A small in-process loop (modelled on server/connectors/scheduler.js) that
 // wakes on a short cadence, asks each ENABLED + COMPLETE pairing "are you
@@ -12,7 +12,7 @@
 // When there are zero enabled pairings, every tick is a no-op — it walks an
 // empty list and returns. The loop's setInterval handle is unref()'d so it
 // never holds the process open on its own. FG remains a pure outbound dialer:
-// the only network traffic this produces is FG → PP, and only once a pairing
+// the only network traffic this produces is FG → partner, and only once a pairing
 // is explicitly enabled.
 
 const pairing = require('./pairing');
@@ -44,7 +44,7 @@ function dueTenants(db, secrets, { now = Date.now() } = {}) {
 async function tick(db, secrets, opts = {}) {
   const due = dueTenants(db, secrets, opts);
   if (due.length === 0) return [];
-  log.debug('integration_pp.scheduler.tick', { tenants_due: due });
+  log.debug('integration_partner.scheduler.tick', { tenants_due: due });
   const results = [];
   for (const schoolId of due) {
     _running.add(schoolId);
@@ -52,7 +52,7 @@ async function tick(db, secrets, opts = {}) {
       const r = await agent.checkInOnce(db, secrets, schoolId, { fetchImpl: opts.fetchImpl || null });
       results.push(r);
     } catch (e) {
-      log.error('integration_pp.scheduler.tick_error', { tenant: schoolId, reason: e.reason || String(e.message || e) });
+      log.error('integration_partner.scheduler.tick_error', { tenant: schoolId, reason: e.reason || String(e.message || e) });
       results.push({ tenant: schoolId, ok: false, error: e.reason || 'tick_error' });
     } finally {
       _running.delete(schoolId);
@@ -62,8 +62,8 @@ async function tick(db, secrets, opts = {}) {
 }
 
 function start(db, secrets, { intervalMs = TICK_MS } = {}) {
-  if (process.env.FAMILY_GRAPH_DISABLE_PP_OUTBOUND === '1') {
-    log.warn('integration_pp.scheduler.disabled', {});
+  if (process.env.FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND === '1') {
+    log.warn('integration_partner.scheduler.disabled', {});
     return { running: false, stop() {} };
   }
   let stopped = false;
@@ -71,7 +71,7 @@ function start(db, secrets, { intervalMs = TICK_MS } = {}) {
   const loop = () => {
     if (stopped) return;
     inflight = tick(db, secrets).catch(e => {
-      log.error('integration_pp.scheduler.loop_error', { message: String(e.message || e), stack: e && e.stack });
+      log.error('integration_partner.scheduler.loop_error', { message: String(e.message || e), stack: e && e.stack });
     });
   };
   // Fire once on boot so an overdue pairing checks in immediately.

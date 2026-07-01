@@ -1,15 +1,15 @@
 'use strict';
 
-// Envelope encryption for outbound FamilyGraph → ParentPoint payloads.
+// Envelope encryption for the partner-app payloads FamilyGraph sends outbound.
 //
-// "No open doors" topology means every FG→PP byte rides outbound HTTPS
+// "No open doors" topology means every FG→partner-app byte rides outbound HTTPS
 // (TLS in transit) carrying an X-FG-Signature HMAC (integrity). On TOP of
 // those, any payload containing PII — de-anonymized text, identity-resolved
 // names, document bytes/safety-flags (later phase) — is sealed with a
-// shared symmetric key established at pairing. PP holds the same key and
+// shared symmetric key established at pairing. The partner app holds the same key and
 // decrypts server-side only. This is defence-in-depth: even if TLS is
-// terminated at a proxy PP doesn't control, the PII never sits in plaintext
-// anywhere but inside PP's own process memory after it decrypts.
+// terminated at a proxy the partner app doesn't control, the PII never sits in plaintext
+// anywhere but inside the partner app's own process memory after it decrypts.
 //
 // What is sealed vs cleartext (decided in the agent, enforced here by
 // what we choose to wrap):
@@ -21,13 +21,13 @@
 //              results that contain ONLY codes. These may travel cleartext
 //              inside the TLS + HMAC envelope.
 //
-// Wire shape of a sealed value (CANONICAL — so PP can detect-and-decrypt):
+// Wire shape of a sealed value (CANONICAL — so the partner app can detect-and-decrypt):
 //   { "enc": "aes-256-gcm", "iv": "<base64 12B>",
 //     "tag": "<base64 16B>", "ct": "<base64>" }
-// The plaintext is the UTF-8 JSON of the wrapped object. PP recognises the
+// The plaintext is the UTF-8 JSON of the wrapped object. The partner app recognises the
 // `enc` marker, pulls iv/tag/ct, and decrypts with the shared key. This is the
 // single canonical wire shape shared by BOTH repos
-// (see FG_PP_WIRE_CONTRACT). A value with NO `enc` field is cleartext.
+// (see FG_PARTNER_WIRE_CONTRACT). A value with NO `enc` field is cleartext.
 //
 // We reuse the SAME AES-256-GCM primitive family as crypto/encryption.js,
 // but with the pairing's `envelope_key` rather than the local dataKey, and
@@ -68,7 +68,7 @@ function seal(envelopeKeyHex, value) {
 }
 
 // isSealed(x) → true if x looks like a canonical envelope (carries the `enc`
-// marker set to the AES-256-GCM algorithm id). Matches PP's `isEnvelope`.
+// marker set to the AES-256-GCM algorithm id). Matches the partner app's `isEnvelope`.
 function isSealed(x) {
   return !!(x && typeof x === 'object' && x[MARKER] === ALGO
     && typeof x.iv === 'string' && typeof x.tag === 'string' && typeof x.ct === 'string');

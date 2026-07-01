@@ -1,12 +1,12 @@
 'use strict';
 
-// CANONICAL FG↔PP wire-shape FIXTURE tests.
+// CANONICAL FG↔partner wire-shape FIXTURE tests.
 //
 // These lock the EXACT bytes on the wire so the two repos (FamilyGraph and
-// ParentPoint) can never silently re-diverge. The SAME fixtures
+// The partner app) can never silently re-diverge. The SAME fixtures
 // (FIXED_KEY_HEX, SEALED_BLOB, the sync / outbox / inbox example payloads) are
-// asserted in ParentPoint's `familyGraphWire.fixtures.test.ts`. If you change a
-// shape here, change it there too — see FG_PP_WIRE_CONTRACT (PP) /
+// asserted in the partner app's `familyGraphWire.fixtures.test.ts`. If you change a
+// shape here, change it there too — see FG_PARTNER_WIRE_CONTRACT (the partner app) /
 // FAMILYGRAPH_INTEGRATION.md appendix (FG).
 
 const test = require('node:test');
@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
 const envelope = require('../server/integration/envelope');
 const agent = require('../server/integration/outbound-agent');
 
-// ── Shared cross-language fixtures (identical literals in PP) ─────────────────
+// ── Shared cross-language fixtures (identical literals in the partner app) ─────────────────
 
 // 32-byte key as 64 hex chars. BOTH repos accept hex.
 const FIXED_KEY_HEX = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -47,7 +47,7 @@ test('wire > FG seal() emits the canonical { enc, iv, tag, ct } shape', () => {
   assert.deepEqual(envelope.open(FIXED_KEY_HEX, wire), FIXED_PLAINTEXT);
 });
 
-// ── B. Sync request — POST {pp}/familygraph-sync?tenant=<sid> ─────────────────
+// ── B. Sync request — POST {partner}/familygraph-sync?tenant=<sid> ─────────────────
 
 test('wire > sync request: tenant/sinceCursor/cursor cleartext, changes sealed', async () => {
   // Build a real push body via a capturing fetch.
@@ -59,8 +59,8 @@ test('wire > sync request: tenant/sinceCursor/cursor cleartext, changes sealed',
   const secrets = newSecrets();
   try {
     pairing.set(db, secrets, 'st-marys', {
-      pp_base_url: 'https://pp.example.org',
-      pp_bearer_credential: 'bearer',
+      partner_base_url: 'https://partner.example.org',
+      partner_bearer_credential: 'bearer',
       shared_webhook_secret: 'secret',
       envelope_key: FIXED_KEY_HEX,
       check_in_interval_s: 20,
@@ -95,7 +95,7 @@ test('wire > sync request: tenant/sinceCursor/cursor cleartext, changes sealed',
   }
 });
 
-// ── C. Outbox response item — GET {pp}/familygraph-outbox ────────────────────
+// ── C. Outbox response item — GET {partner}/familygraph-outbox ────────────────────
 
 test('wire > outbox item shape { id, kind, payload, requestId } is what processItem consumes', () => {
   const { newDb, newSecrets, cleanup } = require('./_helpers');
@@ -104,8 +104,8 @@ test('wire > outbox item shape { id, kind, payload, requestId } is what processI
   const secrets = newSecrets();
   try {
     pairing.set(db, secrets, 'st-marys', {
-      pp_base_url: 'https://pp.example.org',
-      pp_bearer_credential: 'bearer',
+      partner_base_url: 'https://partner.example.org',
+      partner_bearer_credential: 'bearer',
       shared_webhook_secret: 'secret',
       envelope_key: FIXED_KEY_HEX,
       check_in_interval_s: 20,
@@ -118,7 +118,7 @@ test('wire > outbox item shape { id, kind, payload, requestId } is what processI
       id: 'fgo_1',
       kind: 'sanitize',
       payload: envelope.seal(FIXED_KEY_HEX, { text: 'Call Bob Jones at bob@example.org' }),
-      requestId: 'pp_1',
+      requestId: 'req_1',
     };
     const res = agent.processItem(db, secrets, cfg, item);
     assert.equal(res.ok, true);
@@ -134,7 +134,7 @@ test('wire > outbox item shape { id, kind, payload, requestId } is what processI
   }
 });
 
-// ── D. Inbox batch — POST {pp}/familygraph-inbox ─────────────────────────────
+// ── D. Inbox batch — POST {partner}/familygraph-inbox ─────────────────────────────
 
 test('wire > inbox return is a BATCH { tenant, results:[{ id, kind, ok, result }] }', async () => {
   const { newDb, newSecrets, cleanup } = require('./_helpers');
@@ -143,8 +143,8 @@ test('wire > inbox return is a BATCH { tenant, results:[{ id, kind, ok, result }
   const secrets = newSecrets();
   try {
     pairing.set(db, secrets, 'st-marys', {
-      pp_base_url: 'https://pp.example.org',
-      pp_bearer_credential: 'bearer',
+      partner_base_url: 'https://partner.example.org',
+      partner_bearer_credential: 'bearer',
       shared_webhook_secret: 'secret',
       envelope_key: FIXED_KEY_HEX,
       check_in_interval_s: 20,
@@ -187,7 +187,7 @@ test('wire > inbox return is a BATCH { tenant, results:[{ id, kind, ok, result }
 
 // ── F. Document vault wire shapes — store / fetch / document.updated ──────────
 //
-// These pin the EXACT bytes for the Document Vault contract. PP asserts the
+// These pin the EXACT bytes for the Document Vault contract. The partner app asserts the
 // identical shapes in its mirror fixture test. SEAL on store/fetch payloads
 // (bytes + PII); CLEARTEXT on the store result (opaque docRef only) and on the
 // fetch DENY result (no PII); SEALED envelope on the fetch ALLOW result.
@@ -199,8 +199,8 @@ function _vaultSetup() {
   const { db, dir } = newDb();
   const secrets = newSecrets();
   pairing.set(db, secrets, 'st-marys', {
-    pp_base_url: 'https://pp.example.org',
-    pp_bearer_credential: 'bearer',
+    partner_base_url: 'https://partner.example.org',
+    partner_bearer_credential: 'bearer',
     shared_webhook_secret: 'secret',
     envelope_key: FIXED_KEY_HEX,
     check_in_interval_s: 20,
@@ -224,9 +224,9 @@ test('wire > document.store: SEALED payload in, CLEARTEXT { docRef } out', () =>
       title: 'Baptismal Record',
       contentType: 'application/pdf',
       contentBase64: Buffer.from('%PDF-1.4 fake', 'utf8').toString('base64'),
-      source: 'pp',
+      source: 'partner',
     });
-    const item = { id: 'fgo_doc_store', kind: 'document.store', payload, requestId: 'pp_ds' };
+    const item = { id: 'fgo_doc_store', kind: 'document.store', payload, requestId: 'req_ds' };
     const res = agent.processItem(db, secrets, cfg, item);
     assert.equal(res.ok, true);
     assert.equal(res.id, 'fgo_doc_store');
@@ -253,7 +253,7 @@ test('wire > document.fetch ALLOW: SEALED { docRef, contentType, contentBase64, 
     // Canonical document.fetch payload (SEALED — carries the asserted viewer).
     const payload = envelope.seal(FIXED_KEY_HEX, {
       docRef: stored.docRef, personCode,
-      viewer: { userId: 'pp_user_1', role: 'clergy', relationship: 'staff' },
+      viewer: { userId: 'usr_1', role: 'clergy', relationship: 'staff' },
     });
     const res = agent.processItem(db, secrets, cfg, { id: 'fgo_doc_fetch', kind: 'document.fetch', payload });
     assert.equal(res.ok, true);
@@ -281,7 +281,7 @@ test('wire > document.fetch DENY: CLEARTEXT { ok:false, error } with no PII', ()
     });
     // Parent on an accommodation doc → DENY the file.
     const payload = envelope.seal(FIXED_KEY_HEX, {
-      docRef: stored.docRef, personCode, viewer: { userId: 'pp_parent_1', relationship: 'parent_of' },
+      docRef: stored.docRef, personCode, viewer: { userId: 'usr_parent_1', relationship: 'parent_of' },
     });
     const res = agent.processItem(db, secrets, cfg, { id: 'fgo_doc_deny', kind: 'document.fetch', payload });
     assert.equal(res.ok, false);

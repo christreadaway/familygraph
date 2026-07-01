@@ -124,9 +124,9 @@ The `X-Source-Tenant` value is treated as a "school slug". The
 validator accepts `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` (start with
 alphanumeric, then alphanumeric / dot / dash / underscore).
 
-### 4.1 Provisioning a key for ParentPoint (the canonical consumer recipe)
+### 4.1 Provisioning a key for the partner app (the canonical consumer recipe)
 
-ParentPoint (PP) is the first app integrating against FamilyGraph, and
+the partner app is the first app integrating against FamilyGraph, and
 it reaches three surfaces, not just `/v1`:
 
 1. The versioned `/v1/...` contract surface — scope `integration`.
@@ -137,7 +137,7 @@ it reaches three surfaces, not just `/v1`:
 3. Anonymization round-trip — `POST /api/sanitize`,
    `POST /api/desanitize` — gated on scope `sanitize`.
 
-A single scoped key can carry all three scopes, so PP needs exactly
+A single scoped key can carry all three scopes, so the partner app needs exactly
 **one** key. The operator mints it from the dashboard (Keys page) or
 over the API with the master token:
 
@@ -145,14 +145,14 @@ over the API with the master token:
 curl -sS http://127.0.0.1:3500/api/keys \
   -H "Authorization: Bearer <MASTER_TOKEN>" \
   -H 'content-type: application/json' \
-  -d '{ "name": "parentpoint", "scopes": ["integration", "sanitize", "pii.write"] }'
+  -d '{ "name": "partner", "scopes": ["integration", "sanitize", "pii.write"] }'
 # → { "code": "sk_...", "token": "sk_xxxxxxxx", "scopes": [...] }
 ```
 
-The `token` is shown **once**; store it in PP's server-side secret
-store (never the browser bundle). All of PP's FamilyGraph calls then
+The `token` is shown **once**; store it in the partner app's server-side secret
+store (never the browser bundle). All of the partner app's FamilyGraph calls then
 ride that one `Authorization: Bearer sk_xxxxxxxx`. Because the key is
-named `parentpoint`, every audit row FG writes for PP is attributed to
+named `partner`, every audit row FG writes for the partner app is attributed to
 that name (scoped keys cannot spoof a different `X-Family-Graph-Actor`;
 the actor is forced to the key's name).
 
@@ -160,25 +160,24 @@ No new auth surface or scope was needed: `integration`, `sanitize`,
 and `pii.write` already exist in the scope vocabulary
 (`server/auth/api-keys.js`). If the operator wants to split read-only
 identity peeks from writes later, `pii.read` covers `POST
-/api/identity/match` reads — but the three POSTs PP uses all require
+/api/identity/match` reads — but the three POSTs the partner app uses all require
 `pii.write`, so the single-key recipe above is the minimal grant that
-makes PP fully functional.
+makes the partner app fully functional.
 
 ### 4.2 Option A — the "no open doors" outbound topology (as deployed)
 
-The §4.1 recipe describes the inbound mode where PP calls FG's `/api`
+The §4.1 recipe describes the inbound mode where the partner app calls FG's `/api`
 and `/v1` surfaces directly. The operator instead deployed **Option A**:
 FamilyGraph opens **no inbound internet port** (it binds loopback), and
-**FG is the sole initiator** — it dials PP's public endpoints outbound.
-PP never calls FG. The FG-side build and protocol are documented in
+**FG is the sole initiator** — it dials the partner app's public endpoints outbound. The partner app never calls FG. The FG-side build and protocol are documented in
 `FAMILYGRAPH_INTEGRATION.md` Appendix F. The short version:
 
-- The operator pairs a PP tenant in FG (CLI `pp-pairing set/enable`,
-  the `/api/pp-pairings` API, or the **ParentPoint** dashboard tab),
-  supplying `pp_base_url`, a PP-issued bearer credential, a shared HMAC
+- The operator pairs the partner app tenant in FG (CLI `partner-pairing set/enable`,
+  the `/api/partner-pairings` API, or the **the partner app** dashboard tab),
+  supplying `partner_base_url`, the partner app-issued bearer credential, a shared HMAC
   webhook secret, and a 32-byte envelope key. Secrets are stored
   encrypted and never echoed.
-- Once enabled, FG dials PP every `check_in_interval_s` (default 20s):
+- Once enabled, FG dials the partner app every `check_in_interval_s` (default 20s):
   `POST {ppBaseUrl}/familygraph-sync` → `GET .../familygraph-outbox` →
   process locally → `POST .../familygraph-inbox`. Every call carries the
   bearer plus `X-FG-Signature: sha256=<HMAC(rawBody, sharedSecret)>`,
@@ -187,17 +186,17 @@ PP never calls FG. The FG-side build and protocol are documented in
   fg_<uuid>`.
 - PII-bearing payloads are envelope-encrypted on top of TLS; codes,
   cursors, request ids and acks are cleartext inside the TLS+HMAC
-  envelope. PP holds the same envelope key and decrypts server-side.
+  envelope. The partner app holds the same envelope key and decrypts server-side.
 
-In Option A, PP needs no scoped key against FG (it serves the public
+In Option A, the partner app needs no scoped key against FG (it serves the public
 endpoints FG dials). The §4.1 key recipe still applies if a future
-deployment also wants PP to make direct inbound `/v1` calls.
+deployment also wants the partner app to make direct inbound `/v1` calls.
 
 **Document Vault.** Sensitive child documents (sacramental,
-accommodation, health) live encrypted in FG and surface to PP
-just-in-time over the same outbound spine — no new endpoints. PP parks
+accommodation, health) live encrypted in FG and surface to the partner app
+just-in-time over the same outbound spine — no new endpoints. The partner app parks
 `document.store` (FG persists the bytes, returns an opaque `doc_…` ref)
-and `document.fetch` (FG applies the access matrix to PP's asserted
+and `document.fetch` (FG applies the access matrix to the partner app's asserted
 viewer, enforces a 10 MB cap, returns sealed bytes on ALLOW or
 `{ ok:false, error }` on DENY) outbox items. Document + health-safety
 changes also flow as metadata-only ChangeEvents in the sealed sync batch.

@@ -3,18 +3,18 @@
 // FamilyGraph outbound sync agent (Option A — "no open doors").
 //
 // FG opens NO inbound internet ports. It binds loopback by default and the
-// dialer here is the ONLY thing that talks to ParentPoint (PP). FG is the
+// dialer here is the ONLY thing that talks to the partner app. FG is the
 // sole initiator: on each check-in tick FG makes four OUTBOUND HTTPS calls
-// to PP's public endpoints and processes any work PP parked for it, locally,
-// with FG's existing engines. PP never calls FG.
+// to the partner app's public endpoints and processes any work the partner app parked for it, locally,
+// with FG's existing engines. The partner app never calls FG.
 //
-// The locked inversion protocol, per configured PP tenant:
+// The locked inversion protocol, per configured the partner app tenant:
 //   1. POST {ppBaseUrl}/familygraph-sync?tenant=<schoolId>
-//        Push the reconciliation batch of changes since PP's last-acked
+//        Push the reconciliation batch of changes since the partner app's last-acked
 //        cursor (reusing FG's persons/households changed-feed machinery).
-//        PP responds { ackedCursor }; we persist it per tenant.
+//        The partner app responds { ackedCursor }; we persist it per tenant.
 //   2. GET  {ppBaseUrl}/familygraph-outbox?tenant=<schoolId>&max=N
-//        Fetch PP's parked work items: sanitize | desanitize |
+//        Fetch the partner app's parked work items: sanitize | desanitize |
 //        identity.resolve | schoolContext | document.fetch (stub).
 //   3. Process each item LOCALLY with server/sanitize, server/identity/
 //        resolver, server/integration/schoolContext.
@@ -22,19 +22,19 @@
 //        Return results keyed by each item's id for idempotent ack.
 //
 // Headers on every call:
-//   Authorization: Bearer <pp_bearer_credential>
+//   Authorization: Bearer <partner_bearer_credential>
 //   X-FG-Signature: sha256=<HMAC-SHA256(rawBody, shared_webhook_secret)>
 //   X-Source-Tenant: <schoolId>
 //   X-FG-Contract-Version: v0.2
 //   X-Family-Graph-Actor: familygraph
 //   X-Request-Id: fg_<uuid>           (on writes)
 //
-// Envelope encryption (server/integration/envelope.js): any FG→PP payload
+// Envelope encryption (server/integration/envelope.js): any FG→partner payload
 // carrying PII / de-anonymized text / identity-resolved names is sealed
 // with the pairing's shared envelope_key on TOP of TLS. Codes, cursors,
 // request ids and acks travel cleartext inside the TLS+HMAC envelope.
 //
-// Real-time FG→PP webhooks (server/integration/webhooks.js) stay the
+// Real-time FG→partner webhooks (server/integration/webhooks.js) stay the
 // low-latency path; the step-1 batch is the catch-up backstop.
 
 const crypto = require('crypto');
@@ -59,7 +59,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 // Jitter-backoff retry budget for a single outbound call. Reuses the
 // connector http sleep() so we don't hand-roll a second backoff. Only
-// network-class errors retry; an HTTP 4xx from PP is a contract problem,
+// network-class errors retry; an HTTP 4xx from the partner app is a contract problem,
 // not a transient one, and surfaces immediately.
 const RETRY_DELAYS_MS = [500, 1500, 4000];
 
@@ -79,13 +79,13 @@ async function _call(pairingCfg, { method, path, query = {}, body = null, isWrit
   const _fetch = fetchImpl || globalThis.fetch;
   if (!_fetch) throw _agentError('fetch_unavailable', 'no fetch implementation');
 
-  const base = pairingCfg.pp_base_url.replace(/\/+$/, '');
+  const base = pairingCfg.partner_base_url.replace(/\/+$/, '');
   const qs = new URLSearchParams(query).toString();
   const url = `${base}${path}${qs ? `?${qs}` : ''}`;
 
   const rawBody = body == null ? null : JSON.stringify(body);
   const headers = {
-    authorization: `Bearer ${pairingCfg.pp_bearer_credential}`,
+    authorization: `Bearer ${pairingCfg.partner_bearer_credential}`,
     'x-source-tenant': pairingCfg.schoolId,
     'x-fg-contract-version': CONTRACT_VERSION,
     'x-family-graph-actor': ACTOR,
@@ -110,8 +110,8 @@ async function _call(pairingCfg, { method, path, query = {}, body = null, isWrit
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (e) {
-      lastErr = _agentError('network_error', 'pp endpoint unreachable or timed out');
-      log.warn('integration_pp.call.network_error', {
+      lastErr = _agentError('network_error', 'partner endpoint unreachable or timed out');
+      log.warn('integration_partner.call.network_error', {
         tenant: pairingCfg.schoolId, method, path: _path(url),
         attempt, duration_ms: Date.now() - start,
       });
@@ -123,13 +123,13 @@ async function _call(pairingCfg, { method, path, query = {}, body = null, isWrit
       throw lastErr;
     }
     const dur = Date.now() - start;
-    log.info('integration_pp.call', {
+    log.info('integration_partner.call', {
       tenant: pairingCfg.schoolId, method, path: _path(url),
       status: resp.status, duration_ms: dur,
     });
     if (resp.status === 429 || resp.status >= 500) {
-      // PP transient. Retry on backoff if budget remains; otherwise surface.
-      lastErr = _agentError('upstream_unavailable', `pp returned ${resp.status}`);
+      // The partner app transient. Retry on backoff if budget remains; otherwise surface.
+      lastErr = _agentError('upstream_unavailable', `partner returned ${resp.status}`);
       if (attempt < RETRY_DELAYS_MS.length) {
         await httpClient.sleep(RETRY_DELAYS_MS[attempt]);
         continue;
@@ -141,11 +141,11 @@ async function _call(pairingCfg, { method, path, query = {}, body = null, isWrit
       // 4xx (other than 429) is a contract error — don't retry, don't leak
       // the body (it could echo signed payload / PII).
       try { await resp.text(); } catch (_) { /* drain */ }
-      throw _agentError('contract_error', `pp returned ${resp.status}`);
+      throw _agentError('contract_error', `partner returned ${resp.status}`);
     }
     if (resp.status === 204) return null;
     try { return await resp.json(); }
-    catch (e) { throw _agentError('parse_error', 'pp response was not valid json'); }
+    catch (e) { throw _agentError('parse_error', 'partner response was not valid json'); }
   }
   throw lastErr || _agentError('retry_exhausted', 'outbound call retry budget exhausted');
 }
@@ -162,7 +162,7 @@ function _agentError(reason, message) {
 
 // Map a changed person/household object into the CANONICAL ChangeEvent shape —
 // the SAME `{ type, data }` (or tombstone `{ type, id }`) the webhook emits, so
-// the sync push and the real-time webhook are byte-identical on PP's side.
+// the sync push and the real-time webhook are byte-identical on the partner app's side.
 //
 // A tombstone object from the changed feed is `{ personId|householdId, active:
 // false, ... }`; the contract carries it as `{ type: '...deleted', id }`.
@@ -218,7 +218,7 @@ function _safetyFlagChangeEvent(obj) {
   };
 }
 
-// Assemble the batch of person + household changes since PP's last-acked
+// Assemble the batch of person + household changes since the partner app's last-acked
 // cursor, reusing the existing changed-feed machinery. The cursor is an ISO
 // timestamp (the changed feed's own cursor shape). Each change becomes a
 // canonical ChangeEvent; the array is SEALED with the envelope key (it carries
@@ -263,10 +263,10 @@ async function pushBatch(db, secrets, pairingCfg, { limit = DEFAULT_BATCH_LIMIT,
     query: { tenant: pairingCfg.schoolId },
     body, isWrite: true, fetchImpl,
   });
-  // PP responds { ackedCursor }. Persist it so the next tick resumes there.
+  // The partner app responds { ackedCursor }. Persist it so the next tick resumes there.
   const ackedCursor = resp && (resp.ackedCursor || resp.acked_cursor);
   if (ackedCursor) pairing.setLastAckedCursor(db, pairingCfg.schoolId, ackedCursor);
-  log.info('integration_pp.sync.pushed', {
+  log.info('integration_partner.sync.pushed', {
     tenant: pairingCfg.schoolId, count: batch.count,
     acked_cursor: ackedCursor || null,
   });
@@ -292,7 +292,7 @@ async function fetchOutbox(pairingCfg, { max = DEFAULT_OUTBOX_MAX, fetchImpl = n
 // identity-resolved names, schoolContext snapshot) are SEALED; the sanitize
 // result is code-only (codes + an OPAQUE tokenSetId) → cleartext.
 //
-// CANONICAL item shape (as PP parks it):
+// CANONICAL item shape (as the partner app parks it):
 //   { id, kind, payload: ENVELOPE-or-plain, requestId }
 // We open the payload (if sealed) ONCE, then read the kind-specific fields off
 // the opened object. payload plaintext per kind:
@@ -312,18 +312,18 @@ function processItem(db, secrets, pairingCfg, item) {
       // opaque tokenSetId travels. FG persists the map in its own encrypted
       // token_sets store.
       const text = payload.text;
-      const out = sanitize.sanitizeText(db, secrets, String(text || ''), { actor: `pp:${pairingCfg.schoolId}` });
+      const out = sanitize.sanitizeText(db, secrets, String(text || ''), { actor: `partner:${pairingCfg.schoolId}` });
       return { ...base, ok: true, result: { sanitized: out.sanitized, tokenSetId: out.tokenSet } };
     }
     if (kind === 'desanitize') {
       // codes → text (authorized). The map is looked up BY tokenSetId from
-      // FG's own encrypted store — PP never sent the mapping, only the id.
+      // FG's own encrypted store — the partner app never sent the mapping, only the id.
       // Result contains names → SEALED.
       const text = payload.text;
       const tokenSetId = payload.tokenSetId;
       const restored = sanitize.desanitizeText(db, secrets, String(text || ''), tokenSetId, {
-        actor: `pp:${pairingCfg.schoolId}`,
-        // PP is an authorized de-anonymization caller for its own token sets.
+        actor: `partner:${pairingCfg.schoolId}`,
+        // The partner app is an authorized de-anonymization caller for its own token sets.
         authKind: 'master',
       });
       return { ...base, ok: true, result: envelope.seal(pairingCfg.envelope_key, { text: restored }) };
@@ -335,23 +335,23 @@ function processItem(db, secrets, pairingCfg, item) {
       const incoming = _toIncoming(record);
       const thresholds = _thresholds(db);
       const out = resolver.resolveOrCreatePerson(db, secrets, thresholds, incoming, {
-        actor: `pp:${pairingCfg.schoolId}`,
-        source: `pp:${pairingCfg.schoolId}`,
+        actor: `partner:${pairingCfg.schoolId}`,
+        source: `partner:${pairingCfg.schoolId}`,
       });
       return { ...base, ok: true, result: envelope.seal(pairingCfg.envelope_key, out) };
     }
     if (kind === 'schoolContext') {
-      // PP-supplied child/school snapshot → apply via existing logic. We ack
+      // partner-supplied child/school snapshot → apply via existing logic. We ack
       // with the stored shape (codes + non-PII fields) — SEALED since
       // grade/classroom can be sensitive in aggregate.
       const snapshot = payload;
       const personCode = snapshot.personCode || snapshot.personId || snapshot.person_code || snapshot.person_id;
-      schoolContext.upsert(db, personCode, { ...snapshot, source_app: `pp:${pairingCfg.schoolId}` });
+      schoolContext.upsert(db, personCode, { ...snapshot, source_app: `partner:${pairingCfg.schoolId}` });
       const stored = schoolContext.getOne(db, personCode, snapshot.schoolId || snapshot.school_id);
       return { ...base, ok: true, result: envelope.seal(pairingCfg.envelope_key, { schoolContext: stored }) };
     }
     if (kind === 'document.store') {
-      // PP parks a document for the vault. payload (SEALED — it carries bytes
+      // The partner app parks a document for the vault. payload (SEALED — it carries bytes
       // + PII): { personCode, kind, subtype, title, contentType, contentBase64,
       // source }. We persist to the vault (bytes encrypted at rest with the
       // dataKey), derive the policyKey, and emit a document.updated change on
@@ -364,15 +364,15 @@ function processItem(db, secrets, pairingCfg, item) {
         title: payload.title,
         contentType: payload.contentType || payload.content_type,
         contentBase64: payload.contentBase64 || payload.content_base64,
-        source: payload.source || `pp:${pairingCfg.schoolId}`,
-      }, { actor: `pp:${pairingCfg.schoolId}` });
+        source: payload.source || `partner:${pairingCfg.schoolId}`,
+      }, { actor: `partner:${pairingCfg.schoolId}` });
       audit.record(db, {
         tier: 2,
         action: 'document_store',
-        actor: `pp:${pairingCfg.schoolId}`,
+        actor: `partner:${pairingCfg.schoolId}`,
         entityCode: out.docRef,
         entityKind: 'document',
-        destination: `pp:${pairingCfg.schoolId}`,
+        destination: `partner:${pairingCfg.schoolId}`,
         metadata: {
           doc_ref: out.docRef, person_code: out.personCode,
           policy_key: out.policyKey, byte_size: out.byteSize, decision: 'stored',
@@ -382,24 +382,24 @@ function processItem(db, secrets, pairingCfg, item) {
       return { ...base, ok: true, result: { docRef: out.docRef } };
     }
     if (kind === 'document.fetch') {
-      // PP asks for a document's bytes for an ASSERTED viewer. payload:
+      // The partner app asks for a document's bytes for an ASSERTED viewer. payload:
       // { docRef, personCode, viewer:{ userId, role, relationship } }. FG is
       // the authoritative GATE: it applies the access matrix to the asserted
-      // viewer (PP owns user auth; FG trusts + LOGS PP's signed assertion),
+      // viewer (the partner app owns user auth; FG trusts + LOGS the partner app's signed assertion),
       // enforces the size cap, and on allow RE-SEALS the bytes for transport.
       return _processDocumentFetch(db, secrets, pairingCfg, base, payload);
     }
     return { ...base, ok: false, error: 'unknown_kind' };
   } catch (e) {
-    // Never leak PII or secrets in the error returned to PP.
-    log.warn('integration_pp.outbox.item_error', {
+    // Never leak PII or secrets in the error returned to the partner app.
+    log.warn('integration_partner.outbox.item_error', {
       tenant: pairingCfg.schoolId, kind, id, reason: e.reason || 'error',
     });
     return { ...base, ok: false, error: e.reason || 'processing_error' };
   }
 }
 
-// ParentPoint-driven document fetch. The access decision + audit live here;
+// The partner app-driven document fetch. The access decision + audit live here;
 // the matrix itself is in documentPolicy.js (pure). On DENY the result is
 // cleartext and carries NO PII — just { ok:false, error }. On ALLOW the result
 // is the wire ENVELOPE (sealed bytes), expiring ~5 minutes out.
@@ -418,12 +418,12 @@ function _processDocumentFetch(db, secrets, pairingCfg, base, payload) {
     audit.record(db, {
       tier: 2,
       action: 'document_fetch',
-      actor: `pp:${pairingCfg.schoolId}`,
+      actor: `partner:${pairingCfg.schoolId}`,
       entityCode: docRef || null,
       entityKind: 'document',
-      destination: `pp:${pairingCfg.schoolId}`,
+      destination: `partner:${pairingCfg.schoolId}`,
       metadata: {
-        // Viewer identity is asserted by PP; we LOG it (no name, just id/role).
+        // Viewer identity is asserted by the partner app; we LOG it (no name, just id/role).
         doc_ref: docRef || null, person_code: personCode || null,
         viewer_id: viewerId || null, viewer_role: role || null,
         viewer_relationship: relationship || null,
@@ -482,7 +482,7 @@ function _openMaybe(pairingCfg, value) {
   return value;
 }
 
-// Translate PP's loose record shape into the resolver's incoming shape.
+// Translate the partner app's loose record shape into the resolver's incoming shape.
 // Mirrors server/api/identity.js _toIncoming so behaviour is identical.
 function _toIncoming(record) {
   const r = record && typeof record === 'object' ? record : {};
@@ -525,7 +525,7 @@ async function returnInbox(pairingCfg, results, { fetchImpl = null } = {}) {
     query: { tenant: pairingCfg.schoolId },
     body, isWrite: true, fetchImpl,
   });
-  log.info('integration_pp.inbox.returned', { tenant: pairingCfg.schoolId, count: results.length });
+  log.info('integration_partner.inbox.returned', { tenant: pairingCfg.schoolId, count: results.length });
   return { returned: results.length };
 }
 
@@ -547,7 +547,7 @@ async function checkInOnce(db, secrets, schoolId, { fetchImpl = null, outboxMax 
     summary.ackedCursor = r.ackedCursor;
   } catch (e) {
     summary.errors += 1;
-    log.warn('integration_pp.checkin.push_failed', { tenant: schoolId, reason: e.reason || 'error' });
+    log.warn('integration_partner.checkin.push_failed', { tenant: schoolId, reason: e.reason || 'error' });
   }
 
   // Step 2: fetch outbox.
@@ -556,7 +556,7 @@ async function checkInOnce(db, secrets, schoolId, { fetchImpl = null, outboxMax 
     items = await fetchOutbox(cfg, { max: outboxMax, fetchImpl });
   } catch (e) {
     summary.errors += 1;
-    log.warn('integration_pp.checkin.outbox_failed', { tenant: schoolId, reason: e.reason || 'error' });
+    log.warn('integration_partner.checkin.outbox_failed', { tenant: schoolId, reason: e.reason || 'error' });
   }
 
   // Step 3: process locally.
@@ -575,13 +575,13 @@ async function checkInOnce(db, secrets, schoolId, { fetchImpl = null, outboxMax 
       summary.returned = r.returned;
     } catch (e) {
       summary.errors += 1;
-      log.warn('integration_pp.checkin.inbox_failed', { tenant: schoolId, reason: e.reason || 'error' });
+      log.warn('integration_partner.checkin.inbox_failed', { tenant: schoolId, reason: e.reason || 'error' });
     }
   }
 
   pairing.setLastCheckInAt(db, schoolId, Date.now());
   audit.record(db, {
-    action: 'pp_pairing_checkin',
+    action: 'partner_pairing_checkin',
     actor: ACTOR,
     metadata: {
       school_id: schoolId,

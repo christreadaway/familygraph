@@ -113,7 +113,7 @@ function _enrichCandidate(db, secrets, row) {
   }
 
   const phoneRows = db.prepare(
-    `SELECT ph.value_ct FROM person_phones pp JOIN phones ph ON ph.code = pp.phone_code WHERE pp.person_code = ?`
+    `SELECT ph.value_ct FROM person_phones partner JOIN phones ph ON ph.code = partner.phone_code WHERE partner.person_code = ?`
   ).all(row.code);
   for (const pr of phoneRows) {
     const v = enc.decrypt(secrets, pr.value_ct);
@@ -214,8 +214,8 @@ function findCandidates(db, secrets, incoming) {
       const h = enc.hmac(secrets, norm);
       const rows = db.prepare(
         `SELECT p.* FROM persons p
-           JOIN person_phones pp ON pp.person_code = p.code
-           JOIN phones ph ON ph.code = pp.phone_code
+           JOIN person_phones partner ON partner.person_code = p.code
+           JOIN phones ph ON ph.code = partner.phone_code
           WHERE p.status = 'active' AND ph.norm_hash = ? LIMIT 25`
       ).all(h);
       for (const r of rows) seen.set(r.code, r);

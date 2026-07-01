@@ -2,10 +2,10 @@
 
 // Document access policy — the authoritative ACCESS MATRIX.
 //
-// FamilyGraph is the access GATE. ParentPoint owns user authentication; it
+// FamilyGraph is the access GATE. The partner app owns user authentication; it
 // asserts (signed, inside the tenant boundary) WHO the viewer is — their
 // userId, role, and relationship to the subject person. FG does NOT
-// re-authenticate PP's users. FG's job is the POLICY DECISION on the asserted
+// re-authenticate the partner app's users. FG's job is the POLICY DECISION on the asserted
 // viewer plus the AUDIT trail. This module is PURE: same inputs → same
 // decision, no I/O, no DB, fully unit-testable.
 //
@@ -16,15 +16,15 @@
 // relationship values:
 //   'parent_of' — the viewer is a parent/guardian of the subject person.
 //   'staff'     — the viewer is institutional staff; `role` further narrows.
-// `assigned_teacher` is asserted by PP (PP knows the roster); FG trusts and
+// `assigned_teacher` is asserted by the partner app (the partner app knows the roster); FG trusts and
 // LOGS it. Same for the other staff roles.
 //
-// THE MATRIX (source of truth — mirrored in PP):
+// THE MATRIX (source of truth — mirrored in the partner app):
 //   sacramental (baptism, first_communion, confirmation, marriage):
 //     staff {clergy, dre, admin}; parent_of: ALLOW.
 //   accommodation (iep, 504, mtss):
 //     staff {learning_team, assigned_teacher, admin}; parent_of: DENY the file
-//     (PP shows existence/outcomes from metadata only).
+//     (the partner app shows existence/outcomes from metadata only).
 //   health_plan (allergy_action_plan, health_care_plan):
 //     staff {nurse, assigned_teacher, admin}; parent_of: ALLOW.
 //   health_record:
@@ -80,7 +80,7 @@ const MATRIX = {
   },
   accommodation: {
     staff: new Set(['learning_team', 'assigned_teacher', 'admin']),
-    parent: false, // PP shows existence/outcomes from metadata only.
+    parent: false, // the partner app shows existence/outcomes from metadata only.
   },
   health_plan: {
     staff: new Set(['nurse', 'assigned_teacher', 'admin']),
@@ -102,8 +102,8 @@ const MATRIX = {
 };
 
 // Roles allowed the life-safety summary (delivered via sync, not fetch).
-// Exported for completeness/testing; the safety summary is released to PP in
-// the sealed sync batch and PP applies its own per-viewer gating using this.
+// Exported for completeness/testing; the safety summary is released to the partner app in
+// the sealed sync batch and the partner app applies its own per-viewer gating using this.
 const SAFETY_FLAG_STAFF = new Set(['nurse', 'assigned_teacher', 'direct_care', 'admin']);
 
 // decide({ policyKey, role, relationship }) →
@@ -134,7 +134,7 @@ function decide({ policyKey, role, relationship } = {}) {
 }
 
 // Whether a viewer is entitled to the life-safety summary. parent_of is always
-// entitled; staff must hold a direct-care role. (FG ships the summary to PP via
+// entitled; staff must hold a direct-care role. (FG ships the summary to the partner app via
 // sync regardless; this helper lets either side gate per-viewer rendering.)
 function safetyFlagsAllowed({ role, relationship } = {}) {
   const rel = String(relationship || '').toLowerCase();

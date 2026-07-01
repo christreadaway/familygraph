@@ -5,8 +5,8 @@
 // Mounted under /api/documents with the MASTER bearer (operator-only) — the
 // vault holds children's sacramental / accommodation / health records, the
 // most sensitive data in the system, so it lives behind the same gate as
-// /api/settings and /api/pp-pairings, not a per-app scope. This route opens
-// NO inbound surface to ParentPoint; PP reaches documents ONLY through the
+// /api/settings and /api/partner-pairings, not a per-app scope. This route opens
+// NO inbound surface to the partner app; the partner app reaches documents ONLY through the
 // outbound agent's document.store / document.fetch transport. This is the
 // operator's local management surface.
 //
@@ -89,8 +89,8 @@ function build({ db, secrets }) {
     res.json({ document: { ...meta, title: title || null } });
   });
 
-  // Operator download of the decrypted bytes. Master-only; bypasses the PP
-  // access matrix because this is the operator's own console, not a PP viewer.
+  // Operator download of the decrypted bytes. Master-only; bypasses the partner app
+  // access matrix because this is the operator's own console, not the partner app viewer.
   r.get('/:docRef/content', (req, res) => {
     const full = documents.getWithBytes(db, secrets, req.params.docRef);
     if (!full) return res.status(404).json({ error: 'not_found' });

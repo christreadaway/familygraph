@@ -78,10 +78,10 @@ function _contactsForPerson(db, secrets, personCode) {
       WHERE pe.person_code = ?`
   ).all(personCode);
   const phones = db.prepare(
-    `SELECT p.code, p.value_ct, p.kind, p.e164, p.sms_consent, pp.is_primary
-       FROM person_phones pp
-       JOIN phones p ON p.code = pp.phone_code
-      WHERE pp.person_code = ?`
+    `SELECT p.code, p.value_ct, p.kind, p.e164, p.sms_consent, partner.is_primary
+       FROM person_phones partner
+       JOIN phones p ON p.code = partner.phone_code
+      WHERE partner.person_code = ?`
   ).all(personCode);
   return {
     emails: emails.map(r => ({

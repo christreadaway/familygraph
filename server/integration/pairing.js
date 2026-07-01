@@ -1,19 +1,19 @@
 'use strict';
 
-// Per-tenant ParentPoint (PP) pairing configuration.
+// Per-tenant the partner app pairing configuration.
 //
 // FamilyGraph is the only initiator in the "no open doors" (Option A)
-// topology. For every PP tenant the operator pairs, FG stores the
+// topology. For every the partner app tenant the operator pairs, FG stores the
 // outbound target and the shared secrets here, encrypted at rest with the
 // existing dataKey, reusing the connector-credential storage pattern
 // (server/connectors/credentials.js). Plaintext secrets are NEVER returned
 // over HTTP and NEVER logged.
 //
 // Storage lives under the existing `settings` table — no schema change.
-// Keys are namespaced `pp_pairing.<schoolId>.<field>`. Plain fields
-// (pp_base_url, school_id, enabled, check_in_interval_s, last_acked_cursor,
+// Keys are namespaced `partner_pairing.<schoolId>.<field>`. Plain fields
+// (partner_base_url, school_id, enabled, check_in_interval_s, last_acked_cursor,
 // last_check_in_at) are stored as raw JSON; the three secret fields
-// (pp_bearer_credential, shared_webhook_secret, envelope_key) are stored
+// (partner_bearer_credential, shared_webhook_secret, envelope_key) are stored
 // as a `_ct` base64-of-ciphertext blob alongside, exactly like connector
 // secrets, so they round-trip through settings without new columns.
 //
@@ -27,9 +27,9 @@ const log = require('../log');
 
 // Fields per pairing. `secret: true` means encrypt-at-rest and never echo.
 const FIELDS = [
-  { name: 'pp_base_url',           secret: false, required: true  },
+  { name: 'partner_base_url',           secret: false, required: true  },
   { name: 'school_id',             secret: false, required: true  },
-  { name: 'pp_bearer_credential',  secret: true,  required: true  },
+  { name: 'partner_bearer_credential',  secret: true,  required: true  },
   { name: 'shared_webhook_secret', secret: true,  required: true  },
   { name: 'envelope_key',          secret: true,  required: true  },
 ];
@@ -65,11 +65,11 @@ function _get(db, key) {
 
 function _del(db, key) { db.prepare('DELETE FROM settings WHERE key = ?').run(key); }
 
-function _key(schoolId, field) { return `pp_pairing.${schoolId}.${field}`; }
+function _key(schoolId, field) { return `partner_pairing.${schoolId}.${field}`; }
 
 // The registry of paired tenants. We keep an index list so list()/scheduler
 // can enumerate pairings without scanning the whole settings table.
-function _indexKey() { return 'pp_pairing.__index'; }
+function _indexKey() { return 'partner_pairing.__index'; }
 function _index(db) {
   const idx = _get(db, _indexKey());
   return Array.isArray(idx) ? idx : [];
@@ -161,8 +161,8 @@ function _validateHexKey(v) {
 
 function _validateHttpsUrl(v) {
   let u;
-  try { u = new URL(String(v)); } catch (_) { throw new Error('pp_base_url must be a valid URL'); }
-  if (u.protocol !== 'https:') throw new Error('pp_base_url must be https://');
+  try { u = new URL(String(v)); } catch (_) { throw new Error('partner_base_url must be a valid URL'); }
+  if (u.protocol !== 'https:') throw new Error('partner_base_url must be https://');
   return String(v).replace(/\/+$/, '');
 }
 
@@ -181,7 +181,7 @@ function set(db, secrets, schoolId, payload, opts = {}) {
     if (!Object.prototype.hasOwnProperty.call(payload, f.name)) continue;
     let v = payload[f.name];
     if (v == null || v === '') continue;
-    if (f.name === 'pp_base_url') v = _validateHttpsUrl(v);
+    if (f.name === 'partner_base_url') v = _validateHttpsUrl(v);
     if (f.name === 'envelope_key') v = _validateHexKey(v);
     if (f.secret) {
       const ct = enc.encrypt(secrets, String(v));
@@ -201,12 +201,12 @@ function set(db, secrets, schoolId, payload, opts = {}) {
   }
   if (updated.length) {
     audit.record(db, {
-      action: 'pp_pairing_set',
+      action: 'partner_pairing_set',
       actor,
       metadata: { school_id: sid, fields: updated },
     });
     // Never log secret VALUES — only field names.
-    log.info('integration_pp.pairing.set', { school_id: sid, actor, fields: updated });
+    log.info('integration_partner.pairing.set', { school_id: sid, actor, fields: updated });
   }
   return describe(db, secrets, sid);
 }
@@ -224,11 +224,11 @@ function clear(db, secrets, schoolId, opts = {}) {
   _del(db, _key(sid, 'last_check_in_at'));
   _removeFromIndex(db, sid);
   audit.record(db, {
-    action: 'pp_pairing_deleted',
+    action: 'partner_pairing_deleted',
     actor: opts.actor || 'operator',
     metadata: { school_id: sid },
   });
-  log.info('integration_pp.pairing.deleted', { school_id: sid, actor: opts.actor || 'operator' });
+  log.info('integration_partner.pairing.deleted', { school_id: sid, actor: opts.actor || 'operator' });
   return true;
 }
 
