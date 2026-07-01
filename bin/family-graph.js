@@ -313,11 +313,49 @@ switch (cmd) {
     db.close();
     break;
   }
+  case 'issue-key': {
+    // Provision a scoped API key for a consuming app and print the token once.
+    //   family-graph issue-key <name> [scope,scope,...]
+    // Scopes default to the standard consuming-app set (read/write PII,
+    // sanitize for AI pseudonyms, audit.write for PII-export consent logging).
+    const name = process.argv[3];
+    const scopesArg = process.argv[4];
+    if (!name) {
+      // eslint-disable-next-line no-console
+      console.error('usage: family-graph issue-key <name> [scope,scope,...]');
+      console.error('  default scopes: pii.read,pii.write,sanitize,audit.write');
+      console.error('  valid scopes:   pii.read, pii.write, sanitize, audit.read, audit.write, import, rules.write, integration, *');
+      process.exit(2);
+    }
+    const config = require('../server/config');
+    const dbm = require('../server/db');
+    const apiKeys = require('../server/auth/api-keys');
+    const scopes = (scopesArg || 'pii.read,pii.write,sanitize,audit.write')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    const db = dbm.init(config.dbPath);
+    try {
+      const { code, token } = apiKeys.provision(db, { name, scopes });
+      // eslint-disable-next-line no-console
+      console.log(`[family-graph] issued scoped key for "${name}"`);
+      console.log(`  key code: ${code}`);
+      console.log(`  scopes:   ${scopes.join(', ')}`);
+      console.log('');
+      console.log('  TOKEN (shown once — copy it now; only its hash is stored):');
+      console.log(`  ${token}`);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(`error: ${e.message || e}`);
+      process.exitCode = 1;
+    } finally {
+      db.close();
+    }
+    break;
+  }
   default: {
     // eslint-disable-next-line no-console
     console.error(`unknown command: ${cmd}`);
     // eslint-disable-next-line no-console
-    console.error('commands: start | status | rotate-secret | backup [passphrase] | restore <passphrase> <src> <dest> | show-token | list-backups | prune-backups [keep=10] | connector <test|sync|status> [name] | pp-pairing <list|show|set|enable|disable|check-in|remove> [schoolId]');
+    console.error('commands: start | status | rotate-secret | backup [passphrase] | restore <passphrase> <src> <dest> | show-token | issue-key <name> [scopes] | list-backups | prune-backups [keep=10] | connector <test|sync|status> [name] | pp-pairing <list|show|set|enable|disable|check-in|remove> [schoolId]');
     process.exit(2);
   }
 }

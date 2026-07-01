@@ -3399,4 +3399,59 @@ closes the arc.
 
 ---
 
+## Consuming-app identity enhancements — the MissionIQ round (2026-07-01)
+
+MissionIQ became the second real consumer, and wiring it up surfaced five gaps
+in the consuming-app surface. Fixed all five on the FG side this session. The
+theme: the identity API was built for a single-record peek/commit, but a real
+consumer registering thousands of contacts and caching codes needs more.
+
+The load-bearing fix was the least glamorous. `POST /api/identity/resolve`
+created a person from name/DOB but NEVER attached the incoming email/phone to
+it - only the bulk `/api/import/run` path did. So a consumer that resolved the
+same email twice got two persons: the second resolve had nothing to match on but
+the name (0.50 → enqueue, not the 0.95 email auto-merge). Per-record
+registration silently produced duplicates - the exact opposite of the point.
+`resolve` (and the new `resolve-batch`) now attach emails/phones the same way
+`import.js` does. A test caught this: the batch test asserted row 3 (same email
+as row 1) returns the SAME code, and it didn't until the attach landed.
+
+Shipped, all on the existing `/api/identity` mount (no new auth surface -
+GET rides bearerRead/pii.read, POST rides bearerWrite/pii.write via the existing
+method2scope; noting here per the auth-surface rule):
+
+1. `resolve` returns a `family` code (and creates+attaches one on `with_family:
+   true`). MissionIQ needed this to key giving totals to the canonical family;
+   before, it could only stamp the person code.
+2. `POST /api/identity/resolve-batch` - up to 1000 records in one transaction.
+   Kills the chatty per-contact round-trip a large import used to be.
+3. `GET /api/identity/changed?since=` - forward-cursored change feed off
+   `entity_changes` (new `history.changedSince`). Lets a consumer learn when an
+   operator merges families in the dashboard so its cached codes don't drift.
+   Codes/ops/timestamps only, no PII, so it sits on pii.read.
+4. `GET /api/health` now carries a `capabilities` map + `capabilities_version`.
+   This is the durable answer to "future integrations need to be aware of
+   changes": consumers feature-detect instead of hardcoding. New feature → new
+   flag + version bump. Kept in sync with the new Appendix A in
+   FAMILYGRAPH_INTEGRATION.md.
+5. `family-graph issue-key <name> [scopes]` CLI - foolproof scoped-key
+   provisioning (default scopes pii.read,pii.write,sanitize,audit.write), token
+   shown once.
+
+No schema migration - everything reuses existing tables (entity_changes,
+memberships, api_keys), so SCHEMA_VERSION stays 18. Test total 597 → 613 (612
+pass, 1 pre-existing skip); added `tests/identity-enhancements.test.js` (8
+cases: capabilities, resolve family + with_family, batch + limits, changed feed
++ cursor, merge-in-feed).
+
+SFW note (required by the install rule): had to run `SFW_BYPASS=1 npm install`
+this session. `sfw` was not present, and after `npm install -g sfw` the sfw
+binary crashed npm's exit handler ("Exit handler never called") on every
+attempt in this sandbox, leaving node_modules half-extracted (express files
+missing, ENOTEMPTY on rename). That is a genuine tool outage in this
+environment, which is what the bypass is reserved for. No package.json guard was
+removed; the preinstall guard stays intact for normal machines.
+
+---
+
 *End of session notes*

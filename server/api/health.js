@@ -5,6 +5,28 @@ const { SCHEMA_VERSION } = require('../db');
 const profiles = require('../identity/profiles');
 const runs = require('../connectors/runs');
 
+// Capability discovery. Consuming apps read this off the open /api/health
+// endpoint to feature-detect what THIS FamilyGraph build supports, instead of
+// hardcoding assumptions about the API. As new integration features land, add
+// a flag here and bump CAPABILITIES_VERSION — a consuming app can then light up
+// (or gate off) a feature based on what the running registry actually offers.
+// This is the contract that keeps future integrations forward/backward
+// compatible. Keep it in sync with the changelog in FAMILYGRAPH_INTEGRATION.md.
+const CAPABILITIES_VERSION = 1;
+const CAPABILITIES = {
+  contract: 'v0.2',
+  identity_match: true,            // POST /api/identity/match
+  identity_resolve: true,          // POST /api/identity/resolve
+  identity_resolve_family: true,   // resolve returns a family code; with_family creates one
+  identity_resolve_batch: true,    // POST /api/identity/resolve-batch
+  identity_feedback: true,         // POST /api/identity/feedback
+  identity_changed_feed: true,     // GET  /api/identity/changed?since=
+  conflicts_api: true,             // /api/conflicts
+  sanitize: true,                  // /api/sanitize + /api/desanitize
+  audit_external_export: true,     // POST /api/audit/external-export
+  scoped_keys: true,               // sk_ tokens via /api/keys (or CLI issue-key)
+};
+
 function _connectorPosture(db) {
   // Lightweight summary the dashboard's status rail consumes. PRD §4.3:
   // each configured connector gets a green dot if its most recent sync
@@ -57,6 +79,8 @@ function build({ db, watchState = null }) {
     res.json({
       status: dbOk ? 'ok' : 'degraded',
       schema: SCHEMA_VERSION,
+      capabilities_version: CAPABILITIES_VERSION,
+      capabilities: CAPABILITIES,
       time: new Date().toISOString(),
       counts,
       pending_conflicts: pendingConflicts,

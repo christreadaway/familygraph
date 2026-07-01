@@ -1543,3 +1543,136 @@ FG: migration 0017 (`documents` + `health_safety`), `documents.js` (vault),
 `documentPolicy.js` (matrix), `outbound-agent.js` (`document.store` /
 `document.fetch` in `processItem`), `changes.js`
 (`listChangedDocuments` / `listChangedSafetyFlags`).
+
+---
+
+# Appendix A: Consuming-app identity enhancements (2026-07-01)
+
+*As-built additions to the consuming-app surface, driven by the MissionIQ
+integration. These EXTEND the contract above; nothing prior changed
+incompatibly. Consuming apps should feature-detect via `GET /api/health`
+`capabilities` rather than assuming a given build has these.*
+
+## A.1 Capability discovery — `GET /api/health`
+
+`/api/health` (open, no auth) now returns a `capabilities` map and a
+`capabilities_version` integer. A consuming app reads this once at startup to
+light up (or gate off) features based on what the running registry actually
+offers, instead of hardcoding assumptions:
+
+```json
+{
+  "status": "ok",
+  "schema": 18,
+  "capabilities_version": 1,
+  "capabilities": {
+    "contract": "v0.2",
+    "identity_match": true,
+    "identity_resolve": true,
+    "identity_resolve_family": true,
+    "identity_resolve_batch": true,
+    "identity_feedback": true,
+    "identity_changed_feed": true,
+    "conflicts_api": true,
+    "sanitize": true,
+    "audit_external_export": true,
+    "scoped_keys": true
+  }
+}
+```
+
+This is the durable mechanism for keeping future integrations compatible: when a
+new consuming-app feature lands, add a flag here and bump `capabilities_version`.
+Keep this map in sync with the changelog below (source:
+`server/api/health.js`).
+
+## A.2 `POST /api/identity/resolve` now returns a family code
+
+The resolve response is unchanged except it now also:
+
+- **Attaches the incoming record's emails and phones to the resolved person**
+  (previously only the bulk `/api/import/run` path did this). Without it a
+  second resolve of the same email couldn't match and created a duplicate.
+  This is the fix that makes per-record registration actually dedupe.
+- Includes a `family` object when the resolved person has an active family:
+  `{ "code": "f_…", "action": "existing" }`.
+- When the body sets `"with_family": true` and the person has no family,
+  resolve-or-creates one from the record (reusing the person-overlap and
+  address-overlap attach heuristics) and returns
+  `{ "code": "f_…", "action": "created" | "attached" }`.
+
+Backward compatible: callers that don't send `with_family` and whose person has
+no family simply get no `family` key, as before.
+
+## A.3 `POST /api/identity/resolve-batch` (new)
+
+Same auth/scope as `/resolve` (pii.write). Commit many records in one
+round-trip inside a single transaction — the fix for chatty per-contact syncs.
+
+Request: `{ "records": [<loose record>, …], "source"?, "source_ref"?, "with_family"? }`
+Bounded at 1000 records/call. Response:
+
+```json
+{
+  "results": [
+    { "index": 0, "code": "p_…", "action": "created", "score": 0, "family": { "code": "f_…", "action": "created" } }
+  ],
+  "totals": { "created": 2, "attached": 1, "enqueued": 0 }
+}
+```
+
+Per-row shape matches `/resolve` so a consuming app persists its domain data
+keyed by each `code`.
+
+## A.4 `GET /api/identity/changed` (new)
+
+Auth/scope: pii.read (returns only opaque codes, operations, and timestamps —
+no PII). A forward-cursored feed of identity changes so a consuming app that
+caches FamilyGraph codes learns what moved — the key case being an operator
+merging families/persons in FamilyGraph's dashboard, which turns a cached code
+into an alias.
+
+`GET /api/identity/changed?since=<iso>&limit=<n>&kinds=person,family`
+
+```json
+{
+  "changes": [
+    { "change": "ec_…", "kind": "person", "code": "p_…", "operation": "merge",
+      "related_codes": ["p_winner"], "at": "2026-07-01T15:00:00.000Z" }
+  ],
+  "next_since": "2026-07-01T15:00:00.000Z",
+  "count": 1
+}
+```
+
+Page forward by feeding `next_since` back as `since`. On a `merge`, re-fetch the
+affected code via `GET /api/families/:code` or `/api/people/:code` (FamilyGraph
+follows the alias) to pick up the surviving code.
+
+## A.5 `family-graph issue-key` CLI (new)
+
+Foolproof scoped-key provisioning for a consuming app:
+
+```
+family-graph issue-key <name> [scope,scope,...]
+# default scopes: pii.read,pii.write,sanitize,audit.write
+```
+
+Prints the `sk_…` token once (only its hash is stored). Equivalent to
+`POST /api/keys` but without hand-editing scopes in the dashboard.
+
+## A.6 Feedback winner semantics (clarification)
+
+`POST /api/identity/feedback` with `decision: "same"` merges `left_code` into
+the winner. The winner is `winner_code` if provided, else `right_code`. The
+winner's code is the one that SURVIVES; the loser's code becomes a permanent
+alias that FamilyGraph resolves transparently on future reads. A consuming app
+that stored the loser's code can keep using it (reads follow the alias) or
+update to the winner's code, which it learns from the feedback response or the
+`changed` feed.
+
+## A.7 Changelog
+
+| capabilities_version | date | change |
+|---|---|---|
+| 1 | 2026-07-01 | `capabilities` map on /health; resolve returns family code + attaches emails/phones; resolve-batch; changed feed; issue-key CLI; feedback winner semantics documented. |

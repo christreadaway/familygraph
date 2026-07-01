@@ -164,6 +164,42 @@ function _row2event(r) {
   };
 }
 
+// changedSince: a forward-cursored feed of entity changes for consuming apps
+// that cache FamilyGraph codes and need to know what moved. Returns changes
+// with created_at strictly after `since` (an ISO-8601 string; omit for "from
+// the beginning"), oldest-first so the caller can page forward by feeding the
+// last row's `created_at` back as the next `since`. Only opaque codes,
+// operations, and timestamps are exposed here — no PII — so this is safe on the
+// pii.read scope. `kinds` defaults to identity entities (person, family); pass
+// an array to widen or narrow. `relatedCodes` is included so a merge (whose
+// after-snapshot names the winner) can be followed to the surviving code.
+function changedSince(db, { since = null, kinds = ['person', 'family'], limit = 500 } = {}) {
+  const kindList = (Array.isArray(kinds) && kinds.length ? kinds : ['person', 'family'])
+    .filter(k => KNOWN_KINDS.has(k));
+  if (!kindList.length) return [];
+  const lim = Math.max(1, Math.min(2000, Number(limit) || 500));
+  const placeholders = kindList.map(() => '?').join(',');
+  const params = [...kindList];
+  let where = `entity_kind IN (${placeholders})`;
+  if (since) { where += ' AND created_at > ?'; params.push(String(since)); }
+  params.push(lim);
+  const rows = db.prepare(
+    `SELECT code, entity_kind, entity_code, operation, related_codes, created_at
+       FROM entity_changes
+       WHERE ${where}
+       ORDER BY created_at ASC, rowid ASC
+       LIMIT ?`
+  ).all(...params);
+  return rows.map(r => ({
+    change: r.code,
+    kind: r.entity_kind,
+    code: r.entity_code,
+    operation: r.operation,
+    related_codes: r.related_codes ? (() => { try { return JSON.parse(r.related_codes); } catch (_) { return []; } })() : [],
+    at: r.created_at,
+  }));
+}
+
 // Most recent change matching a kind+code+operation, or null.
 function latestFor(db, entityKind, entityCode, operation) {
   const row = db.prepare(
@@ -205,6 +241,7 @@ function effectiveRetentionDays(db, fallback = null) {
 module.exports = {
   record,
   listFor,
+  changedSince,
   latestFor,
   sweep,
   snapshot,
