@@ -50,6 +50,24 @@ function _attachContacts(db, secrets, personCode, incoming) {
   }
 }
 
+// Tag a just-opened conflict with the caller's provenance (source + source_ref)
+// by merging into the conflict's metadata JSON. This is deliberately opaque:
+// FamilyGraph stores whatever `source_ref` string the consuming app supplied
+// (e.g. its own record id or a link) so an operator resolving the conflict can
+// see where it came from — without FamilyGraph knowing anything about that app.
+function _tagConflictSource(db, conflictCode, source, sourceRef) {
+  if (!conflictCode || (!source && !sourceRef)) return;
+  try {
+    const row = db.prepare('SELECT metadata FROM conflicts WHERE code = ?').get(conflictCode);
+    if (!row) return;
+    let meta = {};
+    if (row.metadata) { try { meta = JSON.parse(row.metadata) || {}; } catch (_) { meta = {}; } }
+    if (source) meta.source = source;
+    if (sourceRef) meta.source_ref = sourceRef;
+    db.prepare('UPDATE conflicts SET metadata = ? WHERE code = ?').run(JSON.stringify(meta), conflictCode);
+  } catch (_) { /* best effort — provenance is advisory */ }
+}
+
 // The person's current (active) family, or null. Cheap membership lookup used
 // to enrich resolve responses so a consuming app can key its family-scoped
 // domain data (e.g. giving totals) to the canonical family code.
@@ -193,6 +211,10 @@ function build({ db, secrets, thresholds }) {
     });
     if (family) result.family = family;
 
+    // If this opened a conflict, stamp it with the caller's provenance so the
+    // operator can trace it back in the dashboard.
+    if (result.conflict) _tagConflictSource(db, result.conflict, source, source_ref);
+
     audit.record(db, {
       action: 'identity_resolve_commit',
       actor,
@@ -239,6 +261,12 @@ function build({ db, secrets, thresholds }) {
         _attachContacts(db, secrets, result.code, incoming);
         const family = _resolveFamily(db, secrets, t, result.code, incoming, { create: !!with_family, actor });
         if (family) result.family = family;
+        // Per-record source_ref (falls back to the batch-level ref) so each
+        // conflict traces back to the exact upstream record.
+        if (result.conflict) {
+          const rowRef = (records[i] && records[i].source_ref) || source_ref;
+          _tagConflictSource(db, result.conflict, source, rowRef);
+        }
         result.index = i;
         if (result.action === 'created') totals.created += 1;
         else if (result.action === 'attached') totals.attached += 1;

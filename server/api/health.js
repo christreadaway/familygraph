@@ -12,7 +12,7 @@ const runs = require('../connectors/runs');
 // (or gate off) a feature based on what the running registry actually offers.
 // This is the contract that keeps future integrations forward/backward
 // compatible. Keep it in sync with the changelog in FAMILYGRAPH_INTEGRATION.md.
-const CAPABILITIES_VERSION = 1;
+const CAPABILITIES_VERSION = 2;
 const CAPABILITIES = {
   contract: 'v0.2',
   identity_match: true,            // POST /api/identity/match
@@ -21,6 +21,7 @@ const CAPABILITIES = {
   identity_resolve_batch: true,    // POST /api/identity/resolve-batch
   identity_feedback: true,         // POST /api/identity/feedback
   identity_changed_feed: true,     // GET  /api/identity/changed?since=
+  identity_conflict_source_ref: true, // resolve stamps caller source_ref onto opened conflicts
   conflicts_api: true,             // /api/conflicts
   sanitize: true,                  // /api/sanitize + /api/desanitize
   audit_external_export: true,     // POST /api/audit/external-export

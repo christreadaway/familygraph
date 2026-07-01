@@ -60,7 +60,29 @@ test('health > exposes a capabilities map for feature discovery', async t => {
   assert.equal(r.body.capabilities.identity_resolve_batch, true);
   assert.equal(r.body.capabilities.identity_resolve_family, true);
   assert.equal(r.body.capabilities.identity_changed_feed, true);
+  assert.equal(r.body.capabilities.identity_conflict_source_ref, true);
   assert.equal(typeof r.body.capabilities_version, 'number');
+});
+
+test('resolve > stamps the caller source_ref onto an opened conflict', async t => {
+  const { port, db, secrets } = await makeServer(t);
+  // Seed a name-only person so a same-name resolve scores in the review band
+  // (last+first name = 0.50) and opens a conflict rather than auto-merging.
+  people.create(db, secrets, { given_name: 'Mary', family_name: 'Smith' });
+
+  const r = await request(port, {
+    method: 'POST', path: '/api/identity/resolve', headers: auth(secrets),
+    body: { source: 'ext_app', source_ref: 'ext:record:123', record: { first_name: 'Mary', last_name: 'Smith', email: 'new-mary@example.org' } },
+  });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.action, 'enqueued');
+  assert.ok(r.body.conflict, 'conflict opened');
+
+  // The consuming app's opaque ref is now visible on the conflict for the operator.
+  const c = await request(port, { method: 'GET', path: `/api/conflicts/${r.body.conflict}`, headers: auth(secrets) });
+  assert.equal(c.status, 200);
+  assert.equal(c.body.conflict.metadata.source_ref, 'ext:record:123');
+  assert.equal(c.body.conflict.metadata.source, 'ext_app');
 });
 
 test('resolve > returns the existing family code for a matched person', async t => {

@@ -1548,9 +1548,10 @@ FG: migration 0017 (`documents` + `health_safety`), `documents.js` (vault),
 
 # Appendix A: Consuming-app identity enhancements (2026-07-01)
 
-*As-built additions to the consuming-app surface, driven by the MissionIQ
-integration. These EXTEND the contract above; nothing prior changed
-incompatibly. Consuming apps should feature-detect via `GET /api/health`
+*As-built additions to the consuming-app surface, driven by the first
+external consumer (a donor-intelligence app). These EXTEND the contract above;
+nothing prior changed incompatibly. Consuming apps should feature-detect via
+`GET /api/health`
 `capabilities` rather than assuming a given build has these.*
 
 ## A.1 Capability discovery — `GET /api/health`
@@ -1671,8 +1672,24 @@ that stored the loser's code can keep using it (reads follow the alias) or
 update to the winner's code, which it learns from the feedback response or the
 `changed` feed.
 
-## A.7 Changelog
+## A.7 Conflict provenance — `source_ref` on opened conflicts
+
+When `resolve` / `resolve-batch` opens a conflict, it now stamps the caller's
+`source` and `source_ref` onto the conflict's `metadata`
+(`metadata.source_ref`, `metadata.source`), surfaced by `GET /api/conflicts` and
+`GET /api/conflicts/:code`. This lets an operator resolving a conflict in the
+dashboard trace it back to the exact upstream record.
+
+`source_ref` is an OPAQUE string the consuming app chooses — its own record id,
+a URL, whatever it wants to trace back to. FamilyGraph stores and displays it
+without interpreting it, so no consuming-app knowledge leaks into FamilyGraph.
+In `resolve-batch`, each record may carry its own `source_ref`
+(`records[i].source_ref`), falling back to the batch-level `source_ref`.
+Capability flag: `identity_conflict_source_ref`.
+
+## A.8 Changelog
 
 | capabilities_version | date | change |
 |---|---|---|
 | 1 | 2026-07-01 | `capabilities` map on /health; resolve returns family code + attaches emails/phones; resolve-batch; changed feed; issue-key CLI; feedback winner semantics documented. |
+| 2 | 2026-07-01 | resolve/resolve-batch stamp caller `source_ref` (+ `source`) onto opened conflicts (`identity_conflict_source_ref`); per-record `source_ref` in batch. |

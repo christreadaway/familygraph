@@ -3399,10 +3399,13 @@ closes the arc.
 
 ---
 
-## Consuming-app identity enhancements — the MissionIQ round (2026-07-01)
+## Consuming-app identity enhancements (2026-07-01)
 
-MissionIQ became the second real consumer, and wiring it up surfaced five gaps
-in the consuming-app surface. Fixed all five on the FG side this session. The
+The first external consumer (the donor-intelligence app) got wired up, and
+doing it surfaced five gaps in the consuming-app surface. Fixed all five on the
+FG side this session. Note for the open-source path: FG source and docs refer to
+consumers by ROLE ("the donor-intelligence app", "a consuming app"), never by
+product name — the same convention the architecture memo already uses. The
 theme: the identity API was built for a single-record peek/commit, but a real
 consumer registering thousands of contacts and caching codes needs more.
 
@@ -3421,8 +3424,8 @@ GET rides bearerRead/pii.read, POST rides bearerWrite/pii.write via the existing
 method2scope; noting here per the auth-surface rule):
 
 1. `resolve` returns a `family` code (and creates+attaches one on `with_family:
-   true`). MissionIQ needed this to key giving totals to the canonical family;
-   before, it could only stamp the person code.
+   true`). The consumer needed this to key family-level domain data to the
+   canonical family; before, it could only stamp the person code.
 2. `POST /api/identity/resolve-batch` - up to 1000 records in one transaction.
    Kills the chatty per-contact round-trip a large import used to be.
 3. `GET /api/identity/changed?since=` - forward-cursored change feed off
@@ -3437,12 +3440,19 @@ method2scope; noting here per the auth-surface rule):
 5. `family-graph issue-key <name> [scopes]` CLI - foolproof scoped-key
    provisioning (default scopes pii.read,pii.write,sanitize,audit.write), token
    shown once.
+6. Conflict provenance: when resolve/resolve-batch opens a conflict, it stamps
+   the caller's `source` + `source_ref` onto the conflict metadata, so an
+   operator can trace it back in the dashboard. `source_ref` is an OPAQUE
+   string the consumer chooses - FG stores/echoes it without interpreting it,
+   so nothing app-specific leaks into FG. capabilities_version bumped 1 → 2
+   (`identity_conflict_source_ref`).
 
 No schema migration - everything reuses existing tables (entity_changes,
-memberships, api_keys), so SCHEMA_VERSION stays 18. Test total 597 → 613 (612
-pass, 1 pre-existing skip); added `tests/identity-enhancements.test.js` (8
-cases: capabilities, resolve family + with_family, batch + limits, changed feed
-+ cursor, merge-in-feed).
+memberships, api_keys, conflicts.metadata), so SCHEMA_VERSION stays 18. Test
+total 597 → 614 (613 pass, 1 pre-existing skip); added
+`tests/identity-enhancements.test.js` (9 cases: capabilities, resolve family +
+with_family, batch + limits, changed feed + cursor, merge-in-feed, conflict
+source_ref).
 
 SFW note (required by the install rule): had to run `SFW_BYPASS=1 npm install`
 this session. `sfw` was not present, and after `npm install -g sfw` the sfw
