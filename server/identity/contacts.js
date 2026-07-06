@@ -216,7 +216,7 @@ function familyContacts(db, secrets, familyCode, { includePii = false } = {}) {
     emails.push(...eRows);
     const pRows = db
       .prepare(
-        `SELECT ph.*, pp.is_primary, pp.person_code FROM person_phones pp JOIN phones ph ON ph.code = pp.phone_code WHERE pp.person_code = ?`
+        `SELECT ph.*, partner.is_primary, partner.person_code FROM person_phones partner JOIN phones ph ON ph.code = partner.phone_code WHERE partner.person_code = ?`
       )
       .all(person_code);
     phones.push(...pRows);

@@ -1,6 +1,6 @@
 'use strict';
 
-// ParentPoint outbound agent (Option A — "no open doors") tests.
+// The partner app outbound agent (Option A — "no open doors") tests.
 //
 // Covers: pairing config storage + secret redaction, envelope encrypt/decrypt
 // round-trip, HMAC signing of outbound calls, reconciliation batch assembly +
@@ -31,8 +31,8 @@ const EKEY = 'a'.repeat(64); // 32-byte hex envelope key
 
 function configurePairing(db, secrets, schoolId, { enabled = true, interval = 20 } = {}) {
   pairing.set(db, secrets, schoolId, {
-    pp_base_url: 'https://pp.example.org',
-    pp_bearer_credential: 'pp-bearer-token-secret',
+    partner_base_url: 'https://partner.example.org',
+    partner_bearer_credential: 'partner-bearer-token-secret',
     shared_webhook_secret: 'shared-hmac-secret',
     envelope_key: EKEY,
     check_in_interval_s: interval,
@@ -52,27 +52,27 @@ test('pairing > stores config and never echoes secrets in describe()', t => {
   assert.equal(d.enabled, true);
   assert.equal(d.check_in_interval_s, 20);
   // secrets present but value never exposed
-  assert.equal(d.fields.pp_bearer_credential.set, true);
-  assert.equal('value' in d.fields.pp_bearer_credential, false);
+  assert.equal(d.fields.partner_bearer_credential.set, true);
+  assert.equal('value' in d.fields.partner_bearer_credential, false);
   assert.equal(d.fields.shared_webhook_secret.set, true);
   assert.equal(d.fields.envelope_key.set, true);
   // non-secret field value IS exposed
-  assert.equal(d.fields.pp_base_url.value, 'https://pp.example.org');
+  assert.equal(d.fields.partner_base_url.value, 'https://partner.example.org');
 });
 
 test('pairing > load() returns plaintext secrets for internal use', t => {
   const { db, secrets } = setup(t);
   configurePairing(db, secrets, 'st-marys');
   const cfg = pairing.load(db, secrets, 'st-marys');
-  assert.equal(cfg.pp_bearer_credential, 'pp-bearer-token-secret');
+  assert.equal(cfg.partner_bearer_credential, 'partner-bearer-token-secret');
   assert.equal(cfg.shared_webhook_secret, 'shared-hmac-secret');
   assert.equal(cfg.envelope_key, EKEY);
-  assert.equal(cfg.pp_base_url, 'https://pp.example.org');
+  assert.equal(cfg.partner_base_url, 'https://partner.example.org');
 });
 
 test('pairing > isComplete only when all required fields set', t => {
   const { db, secrets } = setup(t);
-  pairing.set(db, secrets, 'partial', { pp_base_url: 'https://pp.example.org' }, { actor: 'test' });
+  pairing.set(db, secrets, 'partial', { partner_base_url: 'https://partner.example.org' }, { actor: 'test' });
   assert.equal(pairing.isComplete(db, secrets, 'partial'), false);
   configurePairing(db, secrets, 'partial');
   assert.equal(pairing.isComplete(db, secrets, 'partial'), true);
@@ -80,7 +80,7 @@ test('pairing > isComplete only when all required fields set', t => {
 
 test('pairing > rejects non-https base url and bad envelope key', t => {
   const { db, secrets } = setup(t);
-  assert.throws(() => pairing.set(db, secrets, 's1', { pp_base_url: 'http://insecure.example' }, {}), /https/);
+  assert.throws(() => pairing.set(db, secrets, 's1', { partner_base_url: 'http://insecure.example' }, {}), /https/);
   assert.throws(() => pairing.set(db, secrets, 's1', { envelope_key: 'tooshort' }, {}), /64 hex/);
 });
 
@@ -111,7 +111,7 @@ test('envelope > seal/open round-trips an object (CANONICAL enc shape)', () => {
   const value = { name: '[Name]', personId: 'p_abc', nested: { a: [1, 2, 3] } };
   const wire = envelope.seal(EKEY, value);
   assert.equal(envelope.isSealed(wire), true);
-  // Canonical wire shape shared with ParentPoint: { enc, iv, tag, ct }.
+  // Canonical wire shape shared with the partner app: { enc, iv, tag, ct }.
   assert.equal(wire.enc, 'aes-256-gcm');
   assert.equal('__fg_enc' in wire, false);
   assert.equal('alg' in wire, false);
@@ -154,9 +154,9 @@ test('agent > outbound write carries bearer, signature, tenant, version, actor, 
   await agent.pushBatch(db, secrets, pairing.load(db, secrets, 'st-marys'), { fetchImpl: fakeFetch });
   assert.equal(captured.length, 1);
   const { url, opts } = captured[0];
-  assert.match(url, /^https:\/\/pp\.example\.org\/familygraph-sync\?tenant=st-marys$/);
+  assert.match(url, /^https:\/\/partner\.example\.org\/familygraph-sync\?tenant=st-marys$/);
   assert.equal(opts.method, 'POST');
-  assert.equal(opts.headers.authorization, 'Bearer pp-bearer-token-secret');
+  assert.equal(opts.headers.authorization, 'Bearer partner-bearer-token-secret');
   assert.equal(opts.headers['x-source-tenant'], 'st-marys');
   assert.equal(opts.headers['x-fg-contract-version'], 'v0.2');
   assert.equal(opts.headers['x-family-graph-actor'], 'familygraph');
@@ -239,7 +239,7 @@ test('agent > processItem desanitize returns SEALED text', t => {
   configurePairing(db, secrets, 'st-marys');
   const cfg = pairing.load(db, secrets, 'st-marys');
   // First sanitize to create a token set
-  const out = sanitize.sanitizeText(db, secrets, 'email me at jane@example.org', { actor: 'pp:st-marys' });
+  const out = sanitize.sanitizeText(db, secrets, 'email me at jane@example.org', { actor: 'partner:st-marys' });
   const res = agent.processItem(db, secrets, cfg, {
     id: 'd-1', kind: 'desanitize', payload: { text: out.sanitized, tokenSetId: out.tokenSet },
   });
@@ -404,9 +404,9 @@ test('scheduler > enabled+complete pairing becomes due after its interval', t =>
 
 test('scheduler > start() returns dormant handle when disabled via env', t => {
   const { db, secrets } = setup(t);
-  const prev = process.env.FAMILY_GRAPH_DISABLE_PP_OUTBOUND;
-  process.env.FAMILY_GRAPH_DISABLE_PP_OUTBOUND = '1';
-  t.after(() => { if (prev === undefined) delete process.env.FAMILY_GRAPH_DISABLE_PP_OUTBOUND; else process.env.FAMILY_GRAPH_DISABLE_PP_OUTBOUND = prev; });
+  const prev = process.env.FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND;
+  process.env.FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND = '1';
+  t.after(() => { if (prev === undefined) delete process.env.FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND; else process.env.FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND = prev; });
   const h = scheduler.start(db, secrets);
   assert.equal(h.running, false);
   h.stop();

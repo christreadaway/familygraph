@@ -230,6 +230,7 @@ Alternatively, register a Scheduled Task that runs at logon with
 | `node bin/family-graph.js start` | Default. Runs the API server + folder-watch agent. |
 | `node bin/family-graph.js status` | Prints schema version, profile, audit count, backup count, key + watch dir paths. |
 | `node bin/family-graph.js show-token` | Prints the master Bearer token. |
+| `node bin/family-graph.js issue-key <name> [scopes]` | Provisions a scoped API key for a consuming app and prints the `sk_…` token once. Default scopes: `pii.read,pii.write,sanitize,audit.write`. |
 | `node bin/family-graph.js rotate-secret` | Regenerates the master Bearer token. The data + HMAC keys are preserved so existing ciphertext keeps decrypting. |
 | `node bin/family-graph.js backup [passphrase]` | Hot snapshot. Encrypted with PBKDF2 + AES-256-GCM if a passphrase is given. |
 | `node bin/family-graph.js list-backups` | Lists files in the backups directory. |
@@ -238,11 +239,11 @@ Alternatively, register a Scheduled Task that runs at logon with
 | `node bin/family-graph.js connector status` | Prints last-run timestamps + outcomes for FACTS / Ministry Platform connectors. |
 | `node bin/family-graph.js connector test <facts\|ministry_platform>` | Runs the test-connection flow without writing data. |
 | `node bin/family-graph.js connector sync <facts\|ministry_platform>` | Runs a full sync immediately (same path the scheduler uses). |
-| `node bin/family-graph.js pp-pairing list` | Lists configured ParentPoint outbound pairings (secrets masked). |
-| `node bin/family-graph.js pp-pairing set <schoolId> key=value ...` | Configures a pairing. Keys: `pp_base_url`, `pp_bearer_credential`, `shared_webhook_secret`, `envelope_key` (64 hex), `check_in_interval_s`. Secrets are stored encrypted and never echoed. |
-| `node bin/family-graph.js pp-pairing enable\|disable <schoolId>` | Toggles a pairing. `enable` requires all fields set. |
-| `node bin/family-graph.js pp-pairing check-in <schoolId>` | Runs one outbound check-in now (sync → outbox → process → inbox). |
-| `node bin/family-graph.js pp-pairing remove <schoolId>` | Deletes a pairing and clears its secrets. |
+| `node bin/family-graph.js partner-pairing list` | Lists configured the partner app outbound pairings (secrets masked). |
+| `node bin/family-graph.js partner-pairing set <schoolId> key=value ...` | Configures a pairing. Keys: `partner_base_url`, `partner_bearer_credential`, `shared_webhook_secret`, `envelope_key` (64 hex), `check_in_interval_s`. Secrets are stored encrypted and never echoed. |
+| `node bin/family-graph.js partner-pairing enable\|disable <schoolId>` | Toggles a pairing. `enable` requires all fields set. |
+| `node bin/family-graph.js partner-pairing check-in <schoolId>` | Runs one outbound check-in now (sync → outbox → process → inbox). |
+| `node bin/family-graph.js partner-pairing remove <schoolId>` | Deletes a pairing and clears its secrets. |
 
 `npm run start`, `npm run dev`, `npm run status`, `npm run backup`,
 `npm run rotate-secret`, and `npm test` are equivalent shortcuts and
@@ -722,15 +723,15 @@ Quick sketch:
   `webhook_deliveries`. Pusher runs every ~60s; disable with
   `FAMILY_GRAPH_DISABLE_FEDERATION_PUSH=1`. See INTEGRATION_GUIDE.md §8.7.
 
-### ParentPoint outbound agent (Option A — "no open doors")
+### the partner app outbound agent (Option A — "no open doors")
 
-ParentPoint (PP) is a public cloud app. FamilyGraph opens **no inbound
-internet port** (it binds loopback by default) — all FG↔PP traffic is
-initiated by FG as outbound HTTPS to PP's public endpoints. PP never
-calls FG. Once an operator pairs and **enables** a PP tenant, an
-in-process scheduler dials PP on a per-tenant interval (default 20s) and
+the partner app is a public cloud app. FamilyGraph opens **no inbound
+internet port** (it binds loopback by default) — all FG↔partner traffic is
+initiated by FG as outbound HTTPS to the partner app's public endpoints. The partner app never
+calls FG. Once an operator pairs and **enables** the partner app tenant, an
+in-process scheduler dials the partner app on a per-tenant interval (default 20s) and
 runs four calls per tick: `POST /familygraph-sync` (push the
-reconciliation batch since PP's last-acked cursor), `GET
+reconciliation batch since the partner app's last-acked cursor), `GET
 /familygraph-outbox` (fetch parked work items), process each item
 locally with FG's existing sanitize / identity-resolver / school-context
 engines, then `POST /familygraph-inbox` (return results keyed by item id
@@ -742,31 +743,29 @@ HMAC over the raw body. Any payload carrying PII / de-anonymized text /
 resolved names is **envelope-encrypted** with a shared key on top of TLS
 (`server/integration/envelope.js`); codes, cursors, request ids and acks
 travel cleartext inside the TLS+HMAC envelope. Real-time webhooks
-(above) remain the low-latency FG→PP path; the sync batch is the
+(above) remain the low-latency FG→partner path; the sync batch is the
 catch-up backstop.
 
 The scheduler is dormant unless a pairing is enabled — with zero enabled
 pairings it makes no outbound call. Configure pairings via the
-`pp-pairing` CLI, the operator-only `/api/pp-pairings` API (master
-bearer), or the **ParentPoint** settings tab. Disable the agent entirely
-with `FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`.
+`partner-pairing` CLI, the operator-only `/api/partner-pairings` API (master
+bearer), or the **the partner app** settings tab. Disable the agent entirely
+with `FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND=1`.
 
 ### Document Vault (FG is the authoritative access gate)
 
 Sensitive child documents (sacramental, learning-accommodation,
 health/allergy records) live **encrypted in FG's vault** and surface to
-PP **just-in-time** over the same outbound spine — no new endpoints, no
+the partner app **just-in-time** over the same outbound spine — no new endpoints, no
 inbound ports. The file bytes and title are encrypted **at rest** with
 the local `dataKey` (AES-256-GCM); on an **authorized** fetch the bytes
-are re-sealed with the pairing envelope key for transport. PP holds no
+are re-sealed with the pairing envelope key for transport. The partner app holds no
 document bytes at rest — it asks FG per fetch and **FG makes the access
-decision and audits it** (Tier-2).
-
-PP parks two outbox kinds: `document.store` (FG persists the bytes,
+decision and audits it** (Tier-2). The partner app parks two outbox kinds: `document.store` (FG persists the bytes,
 returns an opaque `doc_…` ref) and `document.fetch` (FG applies the
-access matrix to PP's asserted viewer, enforces a 10 MB cap, and returns
+access matrix to the partner app's asserted viewer, enforces a 10 MB cap, and returns
 the sealed bytes on ALLOW or `{ ok:false, error }` on DENY). Document and
-health-safety-flag changes also flow to PP as **metadata-only**
+health-safety-flag changes also flow to the partner app as **metadata-only**
 ChangeEvents inside the sealed sync batch (`document.updated/deleted`,
 `health.safetyFlags.updated/cleared`) — bytes never ride the sync batch.
 The access matrix (who can see what) lives in
@@ -774,7 +773,7 @@ The access matrix (who can see what) lives in
 `FAMILYGRAPH_INTEGRATION.md` §7.
 
 Operator surface: `/api/documents` (master bearer, operator-only — opens
-no inbound surface to PP). `POST /api/documents` stores a document
+no inbound surface to the partner app). `POST /api/documents` stores a document
 (JSON, base64 body); `GET /api/documents/person/:code` lists a person's
 documents; `GET /api/documents/:docRef` returns metadata + title; `GET
 /api/documents/:docRef/content` downloads decrypted bytes; `DELETE
@@ -851,7 +850,7 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
 | `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS` | unset | set to `1` to disable the integration webhook dispatcher (pending rows accumulate until re-enabled) |
 | `FAMILY_GRAPH_DISABLE_FEDERATION_PUSH` | unset | set to `1` to disable the federation pusher (fat hex-keyed hydration/reconciliation batches to `federationPush` subscriptions) |
-| `FAMILY_GRAPH_DISABLE_PP_OUTBOUND` | unset | set to `1` to disable the ParentPoint outbound check-in scheduler entirely. Dormant anyway when no pairing is enabled. |
+| `FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND` | unset | set to `1` to disable the partner app outbound check-in scheduler entirely. Dormant anyway when no pairing is enabled. |
 | `FAMILY_GRAPH_DISABLE_RATE_LIMIT` | unset | set to `1` to disable per-Bearer-token rate limiting on `/api` and `/v1`. Defaults: 600/min for `/api`, 1200/min for `/v1`, 60/min for `/api/sanitize`, 30/min for `/api/import`. Disable only for diagnostics; the limits are deliberately generous and shouldn't trip legitimate integration traffic. |
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |

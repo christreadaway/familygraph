@@ -194,12 +194,12 @@ export const api = {
   },
   getConnectorRun: code => request('GET', `/api/connector-runs/${code}`),
 
-  // ParentPoint outbound pairings (Option A dialer). Secrets are write-only.
-  listPpPairings: () => request('GET', '/api/pp-pairings'),
-  getPpPairing: schoolId => request('GET', `/api/pp-pairings/${encodeURIComponent(schoolId)}`),
-  setPpPairing: (schoolId, body) => request('PUT', `/api/pp-pairings/${encodeURIComponent(schoolId)}`, body),
-  patchPpPairing: (schoolId, body) => request('PATCH', `/api/pp-pairings/${encodeURIComponent(schoolId)}`, body),
-  deletePpPairing: schoolId => request('DELETE', `/api/pp-pairings/${encodeURIComponent(schoolId)}`),
+  // The partner app outbound pairings (Option A dialer). Secrets are write-only.
+  listPartnerPairings: () => request('GET', '/api/partner-pairings'),
+  getPartnerPairing: schoolId => request('GET', `/api/partner-pairings/${encodeURIComponent(schoolId)}`),
+  setPartnerPairing: (schoolId, body) => request('PUT', `/api/partner-pairings/${encodeURIComponent(schoolId)}`, body),
+  patchPartnerPairing: (schoolId, body) => request('PATCH', `/api/partner-pairings/${encodeURIComponent(schoolId)}`, body),
+  deletePartnerPairing: schoolId => request('DELETE', `/api/partner-pairings/${encodeURIComponent(schoolId)}`),
 
   // Organizations (parish / school) + dated affiliations + verification.
   listOrganizations: params => {

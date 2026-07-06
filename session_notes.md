@@ -3039,13 +3039,13 @@ re-litigate why main moved past it.
 
 ## Follow-up: federation push — present the hex to consumers that can't pull (migration 0018)
 
-The trigger was a cross-repo integration audit. ParentPoint had built a
+The trigger was a cross-repo integration audit. The partner app had built a
 whole FamilyGraph integration (mirror, webhook receiver, and a
 `familygraph-sync` receiver for a "FG-pushed reconciliation batch"), but
 FamilyGraph never sent that batch — and FamilyGraph's own docs describe a
-loopback-only, same-machine consumer while ParentPoint is cloud. The
+loopback-only, same-machine consumer while the partner app is cloud. The
 operator's direction: keep FamilyGraph app-agnostic (any app ties in, no
-ParentPoint hardcoding), and make FamilyGraph present the unique person
+the partner app hardcoding), and make FamilyGraph present the unique person
 hex to all services for federation.
 
 The read surface already presents the canonical hex app-agnostically —
@@ -3101,11 +3101,11 @@ wrapper crashes the install). The dependency install ran UNPROTECTED. Re-run
 
 ---
 
-## v0.2 wire bump: ParentPoint contract edges
+## v0.2 wire bump: the partner app contract edges
 
-ParentPoint is the first app wiring into FamilyGraph for real, so this
-pass locked the `/v1` contract PP consumes. Most of it was confirmation,
-not construction. The v0.1 build already shipped every read PP needs
+the partner app is the first app wiring into FamilyGraph for real, so this
+pass locked the `/v1` contract the partner app consumes. Most of it was confirmation,
+not construction. The v0.1 build already shipped every read the partner app needs
 (`GET /v1/persons/:id`, `?email=` equality via the `emails.norm_hash`
 HMAC, `GET /v1/households/:id`, `?personId=`, and both
 `persons/changed` / `households/changed` feeds with archived-row
@@ -3115,7 +3115,7 @@ renaming - the wire already said `person.updated` / `person.deleted` /
 `household.updated` / `household.deleted` / `consent.updated`.
 
 What actually shipped new: two canonical write endpoints and the wire
-version. PP's product spec asked for a person-keyed `POST /v1/consents`
+version. The partner app's product spec asked for a person-keyed `POST /v1/consents`
 (`{ personId, schoolId?, photo, directory }` - schoolId present writes
 the per-school override, absent writes the identity base) and a
 school-keyed `POST /v1/schools/:schoolId/context` (the household/child
@@ -3125,10 +3125,10 @@ helpers, so override-merge, more-restrictive-wins on person merge,
 schoolId validation, entity_changes snapshotting, and webhook emission
 are byte-identical to the older `POST /v1/persons/:id/photoConsent` and
 `.../schoolContext` routes. Those legacy routes stay mounted and write
-the same rows - PP doesn't need a person-keyed `photoConsent`;
+the same rows - the partner app doesn't need a person-keyed `photoConsent`;
 `/v1/consents` is canonical. The trade-off was deliberate: adding alias
 routes rather than migrating callers keeps every existing test and
-consumer working while giving PP the cleaner contract shape.
+consumer working while giving the partner app the cleaner contract shape.
 
 `CONTRACT_VERSION` went `v0.1` → `v0.2`, accepted set is now
 `{ v0.1, v0.2 }` so an older client keeps working, and FG echoes
@@ -3136,10 +3136,10 @@ consumer working while giving PP the cleaner contract shape.
 speaks, not what the request declared). Unknown majors still 426. The
 outbound webhook headers moved to `v0.2` / `familygraph-webhook/0.2`.
 
-Phase 3 reachability: PP touches three surfaces - `/v1` (`integration`),
+Phase 3 reachability: the partner app touches three surfaces - `/v1` (`integration`),
 identity resolve/match/feedback (all POSTs → `pii.write`), and
 sanitize/desanitize (`sanitize`). A single scoped key carrying
-`["integration", "sanitize", "pii.write"]` grants exactly that, so PP
+`["integration", "sanitize", "pii.write"]` grants exactly that, so the partner app
 needs one key, not three. No new auth surface or scope was invented -
 all three already exist in `api-keys.js`. The exact provisioning recipe
 went into `INTEGRATION_GUIDE.md` §4.1. The only scope nuance worth
@@ -3153,12 +3153,12 @@ Two stale assertions hard-coded the old `v0.1` echoed header (one in
 integration-api, one in integration-webhooks); both were updated to
 `v0.2` to match the intentional bump - the tests still assert the header
 is present and correct, not weakened. 15 new cases in
-`integration-pp-contract.test.js`. New total: 544 tests, 543 pass, 0
+`integration-partner-contract.test.js`. New total: 544 tests, 543 pass, 0
 fail, 1 pre-existing skip.
 
 Docs: FAMILYGRAPH_INTEGRATION.md got an Appendix E (as-built, not a body
 rewrite); INTEGRATION_GUIDE.md got the v0.2 version bump, the two
-canonical endpoints in the §7.2 table, and the PP key recipe (§4.1);
+canonical endpoints in the §7.2 table, and the partner app key recipe (§4.1);
 README's integration section now names v0.2 and the canonical consent /
 school-context routes.
 
@@ -3170,13 +3170,13 @@ install the 208 project deps to run `node --test`.
 
 ---
 
-## Option A outbound agent: FG becomes the dialer to ParentPoint
+## Option A outbound agent: FG becomes the dialer to the partner app
 
-The operator locked the FG↔PP topology to "no open doors." FamilyGraph
+The operator locked the FG↔partner topology to "no open doors." FamilyGraph
 stays a loopback-bound dialer that opens NO inbound internet port - it
-binds `127.0.0.1` by default and nothing here changed that. PP is the
-public cloud app; FG is the sole initiator. Every FG↔PP byte is an
-outbound HTTPS call FG makes to PP's public endpoints. PP never calls
+binds `127.0.0.1` by default and nothing here changed that. The partner app is the
+public cloud app; FG is the sole initiator. Every FG↔partner byte is an
+outbound HTTPS call FG makes to the partner app's public endpoints. The partner app never calls
 FG. This session built FG's outbound sync agent against that locked
 inversion protocol.
 
@@ -3186,25 +3186,25 @@ encrypted-credential pattern over the existing `settings` table - no
 migration needed; secrets write-only, never echoed, never logged by
 value), `envelope.js` (AES-256-GCM envelope encryption with a shared
 key, same primitive family as `crypto/encryption.js` but a
-self-describing JSON wire shape `{__fg_enc,alg,iv,tag,ct}` so PP can
+self-describing JSON wire shape `{__fg_enc,alg,iv,tag,ct}` so the partner app can
 detect-and-decrypt), `outbound-agent.js` (the four-call check-in:
 `POST /familygraph-sync` → `GET /familygraph-outbox` → process locally →
 `POST /familygraph-inbox`), and `outbound-scheduler.js` (a small
 in-process loop modeled on `connectors/scheduler.js`). Plus
-`api/pp-pairings.js` (operator-only master-bearer settings API) and a
-`/settings/pp-pairings` client view, the `pp-pairing` CLI subcommand,
+`api/partner-pairings.js` (operator-only master-bearer settings API) and a
+`/settings/partner-pairings` client view, the `partner-pairing` CLI subcommand,
 and the scheduler wired into `server/index.js` boot/shutdown.
 
 The protocol, exactly. Per enabled+complete pairing, on each tick FG
-makes outbound calls carrying `Authorization: Bearer <pp cred>`,
+makes outbound calls carrying `Authorization: Bearer <partner cred>`,
 `X-FG-Signature: sha256=<HMAC-SHA256(rawBody, sharedSecret)>` (reuses the
 existing webhook `sign()` util), `X-Source-Tenant`,
 `X-FG-Contract-Version: v0.2`, `X-Family-Graph-Actor: familygraph`, and
 `X-Request-Id: fg_<uuid>` on writes. Step 1 pushes the reconciliation
 batch (assembled from the existing `integration/changes.js` changed-feed
-machinery) since PP's last-acked cursor; PP returns `{ackedCursor}` which
+machinery) since the partner app's last-acked cursor; the partner app returns `{ackedCursor}` which
 FG persists per tenant so the next tick resumes there. Step 2 pulls
-PP's parked outbox items. Step 3 processes each with the EXISTING
+the partner app's parked outbox items. Step 3 processes each with the EXISTING
 engines - `sanitize`, `identity/resolver`, `integration/schoolContext` -
 nothing reimplemented. Step 4 returns results keyed by item id for
 idempotent ack. `document.fetch` is a clean accept-and-no-op stub for a
@@ -3217,7 +3217,7 @@ names), identity.resolve results (reasons can echo matched values), the
 sync batch payload (person/household PII), schoolContext acks. Cleartext
 inside the TLS+HMAC envelope: pseudonymous codes, cursors, request ids,
 acks, and sanitize results (codes only, not PII). The agent also opens
-any sealed INPUT PP sends (e.g. a sealed desanitize text or resolve
+any sealed INPUT the partner app sends (e.g. a sealed desanitize text or resolve
 record) before processing. Tests pin all of this - a sanitize result is
 asserted NOT sealed, desanitize/resolve/schoolContext results ARE.
 
@@ -3225,20 +3225,20 @@ Dormancy. The scheduler is OFF unless a pairing is enabled AND complete.
 With zero enabled pairings every tick walks an empty list and returns -
 no outbound call, no port, no listener - and its interval handle is
 `unref()`'d so it never holds the process open. Disable entirely with
-`FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`. A test asserts `dueTenants` is
+`FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND=1`. A test asserts `dueTenants` is
 empty and `tick` makes zero fetch calls when dormant.
 
 Retry/idempotency/logging. Outbound calls retry network-class failures
-and PP 429/5xx on a jitter backoff (reusing `connectors/http.sleep`);
-PP 4xx is a contract error and surfaces immediately without leaking the
+and the partner app 429/5xx on a jitter backoff (reusing `connectors/http.sleep`);
+the partner app 4xx is a contract error and surfaces immediately without leaking the
 body. Every call logs `{tenant, method, path, status, duration_ms}` -
 no PII, no secrets; the existing log redactor covers the rest.
 
-25 new tests in `tests/integration-pp-outbound.test.js` (pairing storage
+25 new tests in `tests/integration-partner-outbound.test.js` (pairing storage
 + secret redaction, envelope round-trip + tamper/wrong-key rejection,
 HMAC signing, batch assembly + cursor advance, every outbox kind
 including sealed-input and the stub, a full mocked check-in, scheduler
-dormancy). PP's HTTP is mocked via an injected fetch. No existing test
+dormancy). The partner app's HTTP is mocked via an injected fetch. No existing test
 weakened. New total: 569 tests, 568 pass, 0 fail, 1 pre-existing skip.
 
 No SFW bypass this session: project deps were already installed, so no
@@ -3253,17 +3253,17 @@ conventions. If the operator runs the client locally, use
 
 ---
 
-## FG<->PP wire-contract reconciliation (v1)
+## FG<->the partner app wire-contract reconciliation (v1)
 
 The two repos had drifted on the bytes on the wire. We pinned a single canonical
-contract (now in the `FAMILYGRAPH_INTEGRATION.md` appendix and verbatim in PP's
-`trackerdocs/specs/FG_PP_WIRE_CONTRACT.md`) and moved FG to match it.
+contract (now in the `FAMILYGRAPH_INTEGRATION.md` appendix and verbatim in the partner app's
+`trackerdocs/specs/FG_PARTNER_WIRE_CONTRACT.md`) and moved FG to match it.
 
 Five mismatches, all fixed:
 
 1. Envelope. FG was emitting `{ __fg_enc:"v1", alg:"aes-256-gcm", iv, tag, ct }`;
-   PP expected the canonical `{ enc:"aes-256-gcm", iv, tag, ct }`. Changed
-   `server/integration/envelope.js` to emit `enc` and detect on it. PP was
+   the partner app expected the canonical `{ enc:"aes-256-gcm", iv, tag, ct }`. Changed
+   `server/integration/envelope.js` to emit `enc` and detect on it. The partner app was
    already canonical, so FG moved.
 
 2. Sync push. `pushBatch` was sending `{ tenant, since, cursor, count, payload:
@@ -3271,15 +3271,15 @@ Five mismatches, all fixed:
    changes: ENVELOPE([ChangeEvent...]) }` where a ChangeEvent is the SAME
    `{type,data}` the webhook emits (tombstones `{type,id}` for deletes). Rebuilt
    `assembleBatch` to map each changed person/household into a ChangeEvent and
-   seal the array as `changes`. PP's `processSyncBatch` now opens that envelope
+   seal the array as `changes`. The partner app's `processSyncBatch` now opens that envelope
    and maps each event through the shared `applyChange`/`claimDelivery`.
 
 3. Outbox. `processItem` was reading `item.text`/`item.record`/`item.snapshot`
    directly. Canonical parks a single `item.payload` (sealed for PII). It now
-   opens `item.payload` once and reads the kind fields off the opened object. PP
+   opens `item.payload` once and reads the kind fields off the opened object. The partner app
    seals the PII payloads server-side at the outbox function.
 
-4. Inbox. FG already batched (`{tenant, results:[...]}`) - kept. PP's inbox
+4. Inbox. FG already batched (`{tenant, results:[...]}`) - kept. The partner app's inbox
    handler was single-item; it now consumes the batch keyed by each result's
    `id`.
 
@@ -3288,10 +3288,10 @@ Five mismatches, all fixed:
    Desanitize looks the map up by `tokenSetId`. `processItem` asserts `mappings`
    never goes on the wire.
 
-Added `tests/integration-pp-wire-fixtures.test.js` - fixed-key envelope
-round-trip (a known sealed blob shared with PP), one sync request, one outbox
+Added `tests/integration-partner-wire-fixtures.test.js` - fixed-key envelope
+round-trip (a known sealed blob shared with the partner app), one sync request, one outbox
 item, one inbox batch - asserting the exact bytes. Updated
-`integration-pp-outbound.test.js` to the canonical shapes (NOT weakened - the
+`integration-partner-outbound.test.js` to the canonical shapes (NOT weakened - the
 old assertions encoded the pre-reconciliation contract). Full FG suite green:
 574 pass, 1 skipped (was 569 total). No npm install needed (node_modules
 present); no `sfw` invoked.
@@ -3300,16 +3300,16 @@ present); no `sfw` invoked.
 
 ## Document Vault — FG as the authoritative document access gate (2026-06-19)
 
-Built the Document Vault on top of the FG↔PP transport spine. The whole point:
+Built the Document Vault on top of the FG↔partner transport spine. The whole point:
 the most sensitive data we hold — sacramental records, IEP/504/MTSS plans,
-allergy action plans, immunization records — must NEVER sit in ParentPoint at
-rest. It lives encrypted in FG and surfaces to PP just-in-time, and FG (not PP)
-decides who gets to see each file. No new endpoints, no inbound ports. PP parks
+allergy action plans, immunization records — must NEVER sit in the partner app at
+rest. It lives encrypted in FG and surfaces to the partner app just-in-time, and FG (not the partner app)
+decides who gets to see each file. No new endpoints, no inbound ports. The partner app parks
 work on the existing outbox; FG processes it locally and audits every decision.
 
 Migration 0017 adds two tables. `documents` stores `content_ct` (the file bytes,
 AES-256-GCM at rest with the local dataKey) and `title_ct` — never a plaintext
-byte or title column. `code` is an opaque `doc_<16hex>` ref safe to hand PP.
+byte or title column. `code` is an opaque `doc_<16hex>` ref safe to hand the partner app.
 `policy_key` is derived from kind/subtype and persisted on the row so a stored
 doc carries its own access class. `health_safety` mirrors the life-safety
 summary (allergens/severity/medication/emergency contact), every field `_ct`.
@@ -3323,15 +3323,15 @@ never the wire shape.
 
 `server/integration/documentPolicy.js` is the matrix, pure and unit-tested:
 sacramental → clergy/dre/admin + parent ALLOW; accommodation →
-learning_team/assigned_teacher/admin, parent DENY the file (PP shows
+learning_team/assigned_teacher/admin, parent DENY the file (the partner app shows
 existence/outcomes from metadata only); health_plan →
 nurse/assigned_teacher/admin + parent ALLOW; immunization → nurse/admin + parent
 ALLOW; other medical → nurse/admin, parent DENY; safety flags →
 nurse/assigned_teacher/direct_care/admin + parent, released regardless of
 directory/photo consent (life-safety). Unknown policy or relationship fails
-closed. PP owns user auth and asserts the viewer (userId/role/relationship);
+closed. The partner app owns user auth and asserts the viewer (userId/role/relationship);
 FG trusts + LOGS that assertion and makes the policy call — FG's job is the
-decision + audit, not re-authenticating PP's users.
+decision + audit, not re-authenticating the partner app's users.
 
 `documents.js` is the vault primitive (store/getMeta/getWithBytes/list/archive +
 safety set/get/clear) with a hard 10 MB raw byte cap enforced at store time and
@@ -3352,37 +3352,36 @@ the sync batch; bytes move only on an authorized fetch. The title + safety
 summary are PII, which is why the whole array stays sealed.
 
 Operator surface: `/api/documents` under the master bearer (operator-only, same
-gate as /api/pp-pairings — no new auth surface invented). Store/list/get/download
+gate as /api/partner-pairings — no new auth surface invented). Store/list/get/download
 /archive documents + set/read/clear safety flags. A dedicated 16 MB express.json
 parser covers the base64 store body (the 10 MB raw cap lives in the vault, not
-the parser). This route opens NO inbound surface to PP; PP reaches documents only
+the parser). This route opens NO inbound surface to the partner app; the partner app reaches documents only
 through the outbound spine.
 
 Docs: appended §7 (Document Vault) to FAMILYGRAPH_INTEGRATION.md with literal
-wire JSON + the full access-matrix table (PP asserts the identical shapes);
+wire JSON + the full access-matrix table (the partner app asserts the identical shapes);
 updated README and INTEGRATION_GUIDE operator/topology sections.
 
 Tests: new `tests/integration-documents.test.js` (19) covers at-rest
 encrypt/decrypt round-trip, the policy matrix every row allow+deny, store/fetch
 via processItem incl. forbidden/not_found/too_large + Tier-2 audit emission, and
 the new sync events (updated + tombstones) in a sealed batch. Added 4 canonical
-wire fixtures to `integration-pp-wire-fixtures.test.js` (store/fetch-allow/
+wire fixtures to `integration-partner-wire-fixtures.test.js` (store/fetch-allow/
 fetch-deny/document.updated) pinning exact bytes. Full FG suite green: 596 pass,
 1 skipped (EACCES-as-root, pre-existing), 597 total — was 575. FG still opens no
 inbound ports. No npm install needed (node_modules present); no `sfw` invoked.
 
 ---
 
-## Session end — ParentPoint integration, the full arc
+## Session end — the partner app integration, the full arc
 
 Stepping back from the four phases (contract edges, the Option A outbound
 inversion, the v1 wire-seam reconciliation, the document vault): FamilyGraph is
-now the identity-and-sensitive-data hub for its first two consuming apps.
-ParentPoint runs communications; TeacherAIde (later) runs the AI classroom. Both
+now the identity-and-sensitive-data hub for its first two consuming apps. The partner app runs communications; TeacherAIde (later) runs the AI classroom. Both
 get codes by default and pull real identity or a sealed document just-in-time.
 
 The load-bearing decision was Option A - "no open doors." FG never opened an
-inbound port; everything to ParentPoint is OUTBOUND from `outbound-agent.js`. A
+inbound port; everything to the partner app is OUTBOUND from `outbound-agent.js`. A
 hacker on the internet cannot start a conversation with FamilyGraph, because
 there is nothing listening. The de-anonymization map never leaves FG: sanitize
 returns coded text plus an opaque `tokenSetId`, and the codes-to-names mapping
@@ -3390,12 +3389,125 @@ stays in the encrypted `token_sets` store. Document bytes are encrypted at rest
 with the dataKey and re-sealed with the pairing envelope key only for an
 authorized fetch; every fetch/store is a Tier-2 audit event.
 
-Pairing is operator-driven: `family-graph pp-pairing set/enable/check-in`. The
-ParentPoint side holds the matching runbook
-(`trackerdocs/specs/FG_PP_PAIRING_RUNBOOK.md`). Nothing is live-verified yet - the
+Pairing is operator-driven: `family-graph partner-pairing set/enable/check-in`. The
+the partner app side holds the matching runbook
+(`trackerdocs/specs/FG_PARTNER_PAIRING_RUNBOOK.md`). Nothing is live-verified yet - the
 cloud-to-local handshake needs the operator standup. Test total stands at 597
 (596 pass, 1 pre-existing skip). No FG code changed in this wrap; this entry
 closes the arc.
+
+---
+
+## Consuming-app identity enhancements (2026-07-01)
+
+The first external consumer (the donor-intelligence app) got wired up, and
+doing it surfaced five gaps in the consuming-app surface. Fixed all five on the
+FG side this session. Note for the open-source path: FG source and docs refer to
+consumers by ROLE ("the donor-intelligence app", "a consuming app"), never by
+product name — the same convention the architecture memo already uses. The
+theme: the identity API was built for a single-record peek/commit, but a real
+consumer registering thousands of contacts and caching codes needs more.
+
+The load-bearing fix was the least glamorous. `POST /api/identity/resolve`
+created a person from name/DOB but NEVER attached the incoming email/phone to
+it - only the bulk `/api/import/run` path did. So a consumer that resolved the
+same email twice got two persons: the second resolve had nothing to match on but
+the name (0.50 → enqueue, not the 0.95 email auto-merge). Per-record
+registration silently produced duplicates - the exact opposite of the point.
+`resolve` (and the new `resolve-batch`) now attach emails/phones the same way
+`import.js` does. A test caught this: the batch test asserted row 3 (same email
+as row 1) returns the SAME code, and it didn't until the attach landed.
+
+Shipped, all on the existing `/api/identity` mount (no new auth surface -
+GET rides bearerRead/pii.read, POST rides bearerWrite/pii.write via the existing
+method2scope; noting here per the auth-surface rule):
+
+1. `resolve` returns a `family` code (and creates+attaches one on `with_family:
+   true`). The consumer needed this to key family-level domain data to the
+   canonical family; before, it could only stamp the person code.
+2. `POST /api/identity/resolve-batch` - up to 1000 records in one transaction.
+   Kills the chatty per-contact round-trip a large import used to be.
+3. `GET /api/identity/changed?since=` - forward-cursored change feed off
+   `entity_changes` (new `history.changedSince`). Lets a consumer learn when an
+   operator merges families in the dashboard so its cached codes don't drift.
+   Codes/ops/timestamps only, no PII, so it sits on pii.read.
+4. `GET /api/health` now carries a `capabilities` map + `capabilities_version`.
+   This is the durable answer to "future integrations need to be aware of
+   changes": consumers feature-detect instead of hardcoding. New feature → new
+   flag + version bump. Kept in sync with the new Appendix A in
+   FAMILYGRAPH_INTEGRATION.md.
+5. `family-graph issue-key <name> [scopes]` CLI - foolproof scoped-key
+   provisioning (default scopes pii.read,pii.write,sanitize,audit.write), token
+   shown once.
+6. Conflict provenance: when resolve/resolve-batch opens a conflict, it stamps
+   the caller's `source` + `source_ref` onto the conflict metadata, so an
+   operator can trace it back in the dashboard. `source_ref` is an OPAQUE
+   string the consumer chooses - FG stores/echoes it without interpreting it,
+   so nothing app-specific leaks into FG. capabilities_version bumped 1 → 2
+   (`identity_conflict_source_ref`).
+
+No schema migration - everything reuses existing tables (entity_changes,
+memberships, api_keys, conflicts.metadata), so SCHEMA_VERSION stays 18. Test
+total 597 → 614 (613 pass, 1 pre-existing skip); added
+`tests/identity-enhancements.test.js` (9 cases: capabilities, resolve family +
+with_family, batch + limits, changed feed + cursor, merge-in-feed, conflict
+source_ref).
+
+SFW note (required by the install rule): had to run `SFW_BYPASS=1 npm install`
+this session. `sfw` was not present, and after `npm install -g sfw` the sfw
+binary crashed npm's exit handler ("Exit handler never called") on every
+attempt in this sandbox, leaving node_modules half-extracted (express files
+missing, ENOTEMPTY on rename). That is a genuine tool outage in this
+environment, which is what the bypass is reserved for. No package.json guard was
+removed; the preinstall guard stays intact for normal machines.
+
+---
+
+## Open-source naming scrub: ParentPoint → generic "partner app" (2026-07-01)
+
+Ahead of the open-source release, scrubbed every ParentPoint/PP product-name
+reference from the repo and generalized the outbound pairing subsystem to a
+generic "partner app" concept. The rule going forward: FG source and docs refer
+to consumers by ROLE, never by product name.
+
+The thing that made this safe: the WIRE CONTRACT was already generic. Before
+touching anything I confirmed the outbound headers (`X-FG-Signature`,
+`X-Source-Tenant`, `X-FG-Contract-Version`), the paths the partner exposes
+(`/familygraph-sync|-outbox|-inbox`), and the envelope shape (`{enc,iv,tag,ct}`)
+carry ZERO pp/parentpoint tokens. So a connected partner app parses only generic
+FamilyGraph naming - renaming FG's internal + operator-facing naming can't break
+connectivity. That's the whole reason this was a rename and not a protocol change.
+
+What changed: pairing config fields `pp_base_url` / `pp_bearer_credential` →
+`partner_base_url` / `partner_bearer_credential`; settings namespace
+`pp_pairing.*` → `partner_pairing.*`; route `/api/pp-pairings` →
+`/api/partner-pairings`; CLI `pp-pairing` → `partner-pairing`; env
+`FAMILY_GRAPH_DISABLE_PP_OUTBOUND` → `FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND`;
+audit actions `pp_pairing_*` → `partner_pairing_*`; log tags `integration_pp.*`
+→ `integration_partner.*`. Files renamed: `api/pp-pairings.js` →
+`api/partner-pairings.js`, `client/src/views/PpPairings.jsx` →
+`PartnerPairings.jsx`, three `tests/integration-pp-*.test.js` →
+`integration-partner-*.test.js`. Client API methods `*PpPairing*` →
+`*PartnerPairing*`; nav label "Partner Apps". All prose/comments/docs:
+"ParentPoint"/"PP" → "the partner app" / "partner".
+
+Migration 0019 (SCHEMA_VERSION 18 → 19) renames any EXISTING stored
+`pp_pairing.*` settings keys to `partner_pairing.*`, data-preserving and
+idempotent - so a pairing configured before the rename keeps working without
+re-entry. This is the "don't break existing connections" guarantee; a dedicated
+test seeds old-style keys and asserts they survive, plus a round-trip through the
+pairing module with the new field names. (The migration + its test are the only
+places `pp_pairing` still appears - by design, since they exist to migrate it.)
+
+Care point for updating a partner-side runbook (e.g. ParentPoint's): the
+operator now sets `partner_base_url` / `partner_bearer_credential` via
+`family-graph partner-pairing set ...` against `/api/partner-pairings`. The wire
+the partner app receives is unchanged.
+
+Test total 614 → 616 (615 pass, 1 pre-existing skip); added
+`tests/partner-pairing-migration.test.js`. Client rebuilt clean. (SFW still
+unavailable in this sandbox - client dep install used the already-logged
+`SFW_BYPASS`.)
 
 ---
 

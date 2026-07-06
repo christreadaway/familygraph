@@ -1,6 +1,6 @@
 'use strict';
 
-// Phase 2 contract-edge tests for the ParentPoint (PP) consumer of the
+// Phase 2 contract-edge tests for the partner app consumer of the
 // FamilyGraph /v1 surface. Covers the v0.2 additions:
 //   - X-FG-Contract-Version: v0.2 accepted (v0.1 still accepted; unknown
 //     major → 426)
@@ -63,9 +63,9 @@ async function makeServer(t) {
 
 const auth = (secrets, extra = {}) => ({
   authorization: `Bearer ${secrets.master}`,
-  'x-family-graph-actor': 'pp-contract-test',
+  'x-family-graph-actor': 'partner-contract-test',
   'x-fg-contract-version': 'v0.2',
-  'x-source-app': 'parentpoint',
+  'x-source-app': 'partner',
   ...extra,
 });
 
@@ -73,14 +73,14 @@ const auth = (secrets, extra = {}) => ({
 // CONTRACT VERSION
 // -----------------------------------------------------------------------------
 
-test('PP contract > X-FG-Contract-Version: v0.2 is accepted and echoed', async t => {
+test('the partner app contract > X-FG-Contract-Version: v0.2 is accepted and echoed', async t => {
   const { port, secrets } = await makeServer(t);
   const r = await request(port, { path: '/v1/webhooks', headers: auth(secrets) });
   assert.equal(r.status, 200);
   assert.equal(r.headers['x-fg-contract-version'], 'v0.2');
 });
 
-test('PP contract > X-FG-Contract-Version: v0.1 still accepted (back-compat)', async t => {
+test('the partner app contract > X-FG-Contract-Version: v0.1 still accepted (back-compat)', async t => {
   const { port, secrets } = await makeServer(t);
   const r = await request(port, {
     path: '/v1/webhooks', headers: auth(secrets, { 'x-fg-contract-version': 'v0.1' }),
@@ -88,7 +88,7 @@ test('PP contract > X-FG-Contract-Version: v0.1 still accepted (back-compat)', a
   assert.equal(r.status, 200);
 });
 
-test('PP contract > unknown major contract version is rejected with 426', async t => {
+test('the partner app contract > unknown major contract version is rejected with 426', async t => {
   const { port, secrets } = await makeServer(t);
   const r = await request(port, {
     path: '/v1/webhooks', headers: auth(secrets, { 'x-fg-contract-version': 'v9.9' }),
@@ -101,7 +101,7 @@ test('PP contract > unknown major contract version is rejected with 426', async 
 // POST /v1/consents — canonical person-keyed consent write
 // -----------------------------------------------------------------------------
 
-test('PP contract > POST /v1/consents writes the identity-level base', async t => {
+test('the partner app contract > POST /v1/consents writes the identity-level base', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const r = await request(port, {
@@ -114,7 +114,7 @@ test('PP contract > POST /v1/consents writes the identity-level base', async t =
   assert.equal(r.body.consent.overrideApplied, false);
 });
 
-test('PP contract > POST /v1/consents with schoolId writes a per-school override', async t => {
+test('the partner app contract > POST /v1/consents with schoolId writes a per-school override', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   // base
@@ -133,7 +133,7 @@ test('PP contract > POST /v1/consents with schoolId writes a per-school override
   assert.equal(r.body.consent.basePhotoConsent, 'allow');
 });
 
-test('PP contract > POST /v1/consents accepts personCode as an alias for personId', async t => {
+test('the partner app contract > POST /v1/consents accepts personCode as an alias for personId', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Bob', family_name: 'Jones' });
   const r = await request(port, {
@@ -144,9 +144,9 @@ test('PP contract > POST /v1/consents accepts personCode as an alias for personI
   assert.equal(r.body.consent.directoryListing, 'deny');
 });
 
-test('PP contract > POST /v1/consents fires a consent.updated webhook (school-scoped carries schoolId)', async t => {
+test('the partner app contract > POST /v1/consents fires a consent.updated webhook (school-scoped carries schoolId)', async t => {
   const { port, db, secrets } = await makeServer(t);
-  webhooks.subscribe(db, secrets, { url: 'https://pp.example/cb', events: ['consent.updated'] });
+  webhooks.subscribe(db, secrets, { url: 'https://partner.example/cb', events: ['consent.updated'] });
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   await request(port, {
     method: 'POST', path: '/v1/consents', headers: auth(secrets),
@@ -160,7 +160,7 @@ test('PP contract > POST /v1/consents fires a consent.updated webhook (school-sc
   assert.equal(payload.schoolId, 'st-marys');
 });
 
-test('PP contract > POST /v1/consents with a bad person id is a 400', async t => {
+test('the partner app contract > POST /v1/consents with a bad person id is a 400', async t => {
   const { port, secrets } = await makeServer(t);
   const r = await request(port, {
     method: 'POST', path: '/v1/consents', headers: auth(secrets),
@@ -170,7 +170,7 @@ test('PP contract > POST /v1/consents with a bad person id is a 400', async t =>
   assert.equal(r.body.error, 'invalid_person_id');
 });
 
-test('PP contract > POST /v1/consents with neither photo nor directory is a 400', async t => {
+test('the partner app contract > POST /v1/consents with neither photo nor directory is a 400', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   const r = await request(port, {
@@ -183,7 +183,7 @@ test('PP contract > POST /v1/consents with neither photo nor directory is a 400'
 // POST /v1/schools/:schoolId/context — canonical school-keyed snapshot
 // -----------------------------------------------------------------------------
 
-test('PP contract > POST /v1/schools/:id/context stores a snapshot keyed by the path schoolId', async t => {
+test('the partner app contract > POST /v1/schools/:id/context stores a snapshot keyed by the path schoolId', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   const r = await request(port, {
@@ -209,7 +209,7 @@ test('PP contract > POST /v1/schools/:id/context stores a snapshot keyed by the 
   assert.equal(g.body.schoolContext.classroomName, 'Room 204');
 });
 
-test('PP contract > POST /v1/schools/:id/context overwrites the previous snapshot (current state, not a log)', async t => {
+test('the partner app contract > POST /v1/schools/:id/context overwrites the previous snapshot (current state, not a log)', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee', kind: 'child' });
   await request(port, {
@@ -229,7 +229,7 @@ test('PP contract > POST /v1/schools/:id/context overwrites the previous snapsho
   assert.equal(all.body.items.length, 1);
 });
 
-test('PP contract > POST /v1/schools/:id/context for an unknown person is a 404', async t => {
+test('the partner app contract > POST /v1/schools/:id/context for an unknown person is a 404', async t => {
   const { port, secrets } = await makeServer(t);
   // A syntactically valid but non-existent person code.
   const ghost = 'p_' + crypto.randomBytes(4).toString('hex');
@@ -240,7 +240,7 @@ test('PP contract > POST /v1/schools/:id/context for an unknown person is a 404'
   assert.equal(r.status, 404);
 });
 
-test('PP contract > POST /v1/schools/:id/context rejects a malformed schoolId', async t => {
+test('the partner app contract > POST /v1/schools/:id/context rejects a malformed schoolId', async t => {
   const { port, db, secrets } = await makeServer(t);
   const p = people.create(db, secrets, { given_name: 'Annie', family_name: 'Lee' });
   const r = await request(port, {
@@ -254,10 +254,10 @@ test('PP contract > POST /v1/schools/:id/context rejects a malformed schoolId', 
 // WEBHOOK SIGNATURE — sha256= over the raw body, keyed by the subscription secret
 // -----------------------------------------------------------------------------
 
-test('PP contract > webhook delivery signs the raw body as sha256=<HMAC-SHA256>', async t => {
+test('the partner app contract > webhook delivery signs the raw body as sha256=<HMAC-SHA256>', async t => {
   const { port, db, secrets } = await makeServer(t);
-  const secret = 'pp-shared-secret';
-  webhooks.subscribe(db, secrets, { url: 'https://pp.example/cb', secret, events: ['person.updated'] });
+  const secret = 'partner-shared-secret';
+  webhooks.subscribe(db, secrets, { url: 'https://partner.example/cb', secret, events: ['person.updated'] });
   const p = people.create(db, secrets, { given_name: 'Demo', family_name: 'User' });
   await request(port, {
     method: 'PATCH', path: `/v1/persons/${p}`, headers: auth(secrets), body: { preferredName: 'Dee' },
@@ -273,7 +273,7 @@ test('PP contract > webhook delivery signs the raw body as sha256=<HMAC-SHA256>'
   assert.equal(capturedHeaders['x-fg-contract-version'], 'v0.2');
 });
 
-test('PP contract > all five canonical event names are the only ones the dispatcher knows', t => {
+test('the partner app contract > all five canonical event names are the only ones the dispatcher knows', t => {
   assert.deepEqual(
     [...webhooks.KNOWN_EVENTS].sort(),
     ['consent.updated', 'household.deleted', 'household.updated', 'person.deleted', 'person.updated'],

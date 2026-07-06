@@ -1,13 +1,13 @@
 'use strict';
 
-// Operator-facing settings API for ParentPoint (PP) outbound pairings.
+// Operator-facing settings API for the partner app outbound pairings.
 //
-// Mounted under /api/pp-pairings with the MASTER bearer (operator-only) —
+// Mounted under /api/partner-pairings with the MASTER bearer (operator-only) —
 // these rows hold the shared secrets that authorise FG's outbound dial-out,
 // so they live behind the same gate as /api/settings, not a per-app scope.
 //
-// This API configures the dialer only. It opens NO inbound surface: PP never
-// calls FG. The four FG→PP calls are made by server/integration/outbound-agent.js
+// This API configures the dialer only. It opens NO inbound surface: the partner app never
+// calls FG. The four FG→partner calls are made by server/integration/outbound-agent.js
 // on the scheduler's cadence once a pairing is enabled. Secrets are stored
 // encrypted (server/integration/pairing.js) and never returned in responses.
 
@@ -31,7 +31,7 @@ function build({ db, secrets }) {
   });
 
   // Create or update a pairing. Accepts any subset of:
-  //   pp_base_url, pp_bearer_credential, shared_webhook_secret,
+  //   partner_base_url, partner_bearer_credential, shared_webhook_secret,
   //   envelope_key, check_in_interval_s, enabled.
   // Secrets are write-only — they go in encrypted and never come back.
   r.put('/:schoolId', (req, res) => {

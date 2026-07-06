@@ -39,7 +39,9 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //  18 — federation push: federation_push flag + per-subscription reconcile
 //       cursors + hydrated_at on webhook_subscriptions (fat hex-keyed batches
 //       for consumers that can't pull).
-const SCHEMA_VERSION = 18;
+//  19 — rename outbound partner-pairing settings keys from pp_* to partner_*
+//       (open-source naming generalization; data-preserving).
+const SCHEMA_VERSION = 19;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

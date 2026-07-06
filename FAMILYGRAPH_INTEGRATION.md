@@ -1136,14 +1136,14 @@ before).
 
 ---
 
-## Appendix E — v0.2 wire bump: ParentPoint contract edges (2026-06-19)
+## Appendix E — v0.2 wire bump: the partner app contract edges (2026-06-19)
 
-ParentPoint (PP) is the first app wiring into FamilyGraph for real, and
+the partner app is the first app wiring into FamilyGraph for real, and
 this pass locked the `/v1` contract it consumes. The work was mostly
 confirmation - the v0.1 build already shipped the reads, the
 changed-feeds, the per-school overrides, and the five-event webhook
 taxonomy. The genuinely new pieces are the two canonical write
-endpoints PP's product spec asked for and the wire-version bump to
+endpoints the partner app's product spec asked for and the wire-version bump to
 `v0.2`. As before, this Appendix records what shipped; the body prose
 stays a historical record of intent.
 
@@ -1234,19 +1234,19 @@ more-restrictive value survives (`deny > group_only > allow` for photo;
   `X-Family-Graph-Actor`, `X-Source-Tenant` / `X-Source-App` on writes,
   `X-Request-Id` on writes, `If-Match` on PATCH.
 
-### Phase 3 reachability: the ParentPoint scoped key
+### Phase 3 reachability: the partner app scoped key
 
-PP reaches three surfaces - `/v1` (`integration`), identity
+the partner app reaches three surfaces - `/v1` (`integration`), identity
 resolve/match/feedback (all POSTs, `pii.write`), and sanitize/desanitize
 (`sanitize`). A single scoped key carrying
-`["integration", "sanitize", "pii.write"]` grants exactly that, so PP
+`["integration", "sanitize", "pii.write"]` grants exactly that, so the partner app
 needs one key, not three. No new auth surface or scope was invented -
 all three scopes already exist in `server/auth/api-keys.js`. The exact
 provisioning recipe lives in `INTEGRATION_GUIDE.md` §4.1.
 
 ### Test count
 
-15 cases added in `tests/integration-pp-contract.test.js` (version
+15 cases added in `tests/integration-partner-contract.test.js` (version
 acceptance, the two canonical write endpoints + their webhook emission
 and validation edges, and the raw-body signature check). Two stale
 expected-value assertions that hard-coded the old `v0.1` echoed header
@@ -1257,21 +1257,20 @@ suite went from 529 → 544 passing (1 skipped on root, as before).
 
 ## Appendix F — Outbound agent: the "no open doors" topology (2026-06-19)
 
-ParentPoint (PP) is a public cloud app (Netlify + Firebase). FamilyGraph
+the partner app is a public cloud app (Netlify + Firebase). FamilyGraph
 (FG) is a loopback-bound dialer that opens NO inbound internet ports - it
 binds `127.0.0.1` by default (`server/config.js`) and nothing in this work
-changes that. The operator chose Option A ("no open doors"): every FG↔PP
-byte is INITIATED BY FG as an outbound HTTPS call to PP's public endpoints.
-PP never calls FG. This Appendix records what shipped; the body prose stays
+changes that. The operator chose Option A ("no open doors"): every FG↔partner
+byte is INITIATED BY FG as an outbound HTTPS call to the partner app's public endpoints. The partner app never calls FG. This Appendix records what shipped; the body prose stays
 the historical record of intent.
 
 ### The locked inversion protocol
 
-For every configured + enabled PP tenant, FG runs an outbound check-in loop
+For every configured + enabled the partner app tenant, FG runs an outbound check-in loop
 on a per-tenant interval (default 20s, operator-tunable 5-3600s). Each tick
 makes four OUTBOUND calls, all over HTTPS, all carrying:
 
-- `Authorization: Bearer <pp_bearer_credential>`
+- `Authorization: Bearer <partner_bearer_credential>`
 - `X-FG-Signature: sha256=<HMAC-SHA256(rawBody, shared_webhook_secret)>`
   (reuses the existing webhook `sign()` util)
 - `X-Source-Tenant: <schoolId>`
@@ -1281,9 +1280,9 @@ makes four OUTBOUND calls, all over HTTPS, all carrying:
 
 The four calls:
 
-| Step | Call | Body (FG → PP) | Response (PP → FG) |
+| Step | Call | Body (FG → partner) | Response (the partner app → FG) |
 |---|---|---|---|
-| 1 | `POST {ppBaseUrl}/familygraph-sync?tenant=<schoolId>` | `{ tenant, since, cursor, count, payload }` where `payload` is the **sealed** envelope of `{ persons[], households[] }` since PP's last-acked cursor (assembled from FG's existing changed-feed machinery) | `{ ackedCursor }` - persisted per tenant so the next tick resumes there |
+| 1 | `POST {ppBaseUrl}/familygraph-sync?tenant=<schoolId>` | `{ tenant, since, cursor, count, payload }` where `payload` is the **sealed** envelope of `{ persons[], households[] }` since the partner app's last-acked cursor (assembled from FG's existing changed-feed machinery) | `{ ackedCursor }` - persisted per tenant so the next tick resumes there |
 | 2 | `GET {ppBaseUrl}/familygraph-outbox?tenant=<schoolId>&max=N` | (none) | `{ items: [ { id, kind, ... } ] }` - parked work items |
 | 3 | (local) process each item with FG's existing engines | - | - |
 | 4 | `POST {ppBaseUrl}/familygraph-inbox?tenant=<schoolId>` | `{ tenant, results: [ { id, kind, ok, result } ] }` keyed by each item's id for idempotent ack | `204` / `{}` |
@@ -1294,22 +1293,22 @@ reimplemented:
 - `sanitize` (text → codes) - `server/sanitize`. Result is code-only, NOT PII → **cleartext**.
 - `desanitize` (codes → text, authorized) - `server/sanitize`. Result carries names → **sealed**.
 - `identity.resolve` (record → code/action) - `server/identity/resolver`. Result → **sealed**.
-- `schoolContext` (PP child/school snapshot → applied via `server/integration/schoolContext`). Ack → **sealed**.
+- `schoolContext` (the partner app child/school snapshot → applied via `server/integration/schoolContext`). Ack → **sealed**.
 - `document.fetch` - reserved for a later phase; accepted and cleanly no-op'd (`{ status: 'not_implemented' }`).
 
-Real-time FG→PP webhooks (`server/integration/webhooks.js`) are themselves
+Real-time FG→partner webhooks (`server/integration/webhooks.js`) are themselves
 outbound and stay the low-latency path; the step-1 batch is the catch-up
 backstop. Webhooks were not removed.
 
 ### Envelope encryption (always-on layer)
 
-Any FG→PP payload containing PII, de-anonymized text, identity-resolved
+Any FG→partner payload containing PII, de-anonymized text, identity-resolved
 names, or (later) document bytes/safety-flags is envelope-encrypted with a
 shared symmetric key (`envelope_key`, 32 bytes / 64 hex) established at
 pairing, on TOP of TLS, using FG's AES-256-GCM primitive
 (`server/integration/envelope.js`, which reuses the same algorithm family as
 `server/crypto/encryption.js` but emits a self-describing JSON wire shape so
-PP can detect-and-decrypt). PP holds the same key and decrypts server-side
+the partner app can detect-and-decrypt). The partner app holds the same key and decrypts server-side
 only. Pseudonymous codes, cursors, request ids, and acks travel cleartext
 inside the TLS+HMAC envelope. Sealed wire shape:
 
@@ -1321,38 +1320,38 @@ inside the TLS+HMAC envelope. Sealed wire shape:
 
 Per-tenant pairing config is stored encrypted in FG settings, reusing the
 connector-credential pattern (`server/integration/pairing.js`):
-`pp_base_url`, `pp_bearer_credential`, `shared_webhook_secret`,
+`partner_base_url`, `partner_bearer_credential`, `shared_webhook_secret`,
 `envelope_key`, `school_id`, `enabled`, `check_in_interval_s`, and the
 per-tenant `last_acked_cursor`. Secrets are write-only - never echoed after
 entry, never logged (only field names are logged). Surfaces:
-`bin/family-graph.js pp-pairing <list|show|set|enable|disable|check-in|remove>`,
-the operator-only `POST/GET/PATCH/DELETE /api/pp-pairings` API (master
-bearer), and a `/settings/pp-pairings` dashboard view.
+`bin/family-graph.js partner-pairing <list|show|set|enable|disable|check-in|remove>`,
+the operator-only `POST/GET/PATCH/DELETE /api/partner-pairings` API (master
+bearer), and a `/settings/partner-pairings` dashboard view.
 
 The scheduler (`server/integration/outbound-scheduler.js`) is OFF unless a
 pairing is enabled AND complete. With zero enabled pairings every tick walks
 an empty list and returns - no outbound call, no port, no listener. Its
 `setInterval` handle is `unref()`'d so it never holds the process open.
-Disable entirely with `FAMILY_GRAPH_DISABLE_PP_OUTBOUND=1`.
+Disable entirely with `FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND=1`.
 
 ### Test count
 
-25 cases added in `tests/integration-pp-outbound.test.js`: pairing config
+25 cases added in `tests/integration-partner-outbound.test.js`: pairing config
 storage + secret redaction, envelope seal/open round-trip + tamper/wrong-key
 rejection, HMAC signing of outbound calls, batch assembly + cursor advance,
 outbox processing per kind (including sealed-input handling and the
 document.fetch stub), a full mocked check-in cycle, and scheduler dormancy
-with no enabled pairing. PP's HTTP endpoints are mocked via an injected
+with no enabled pairing. The partner app's HTTP endpoints are mocked via an injected
 fetch. The full suite went from 544 → 569 passing (1 skipped, as before).
 
 ---
 
-# Appendix — Canonical FG ↔ PP Wire Contract v1
+# Appendix — Canonical FG ↔ the partner app Wire Contract v1
 
 This appendix is the SINGLE canonical record of the bytes on the wire between
-FamilyGraph (FG) and ParentPoint (PP). It is mirrored verbatim in PP at
-`trackerdocs/specs/FG_PP_WIRE_CONTRACT.md`. Change BOTH copies AND the matching
-fixture tests (FG `tests/integration-pp-wire-fixtures.test.js`, PP
+FamilyGraph (FG) and the partner app. It is mirrored verbatim in the partner app at
+`trackerdocs/specs/FG_PARTNER_WIRE_CONTRACT.md`. Change BOTH copies AND the matching
+fixture tests (FG `tests/integration-partner-wire-fixtures.test.js`, the partner app
 `netlify/functions/_lib/familyGraphWire.fixtures.test.ts`) together — those
 fixtures pin the exact bytes so the two sides can never silently re-diverge.
 
@@ -1364,7 +1363,7 @@ fixtures pin the exact bytes so the two sides can never silently re-diverge.
 
 `ct` = AES-256-GCM of the UTF-8 JSON of the wrapped value. A value with NO `enc`
 field is CLEARTEXT and passes through. Key = 32 bytes as 64 hex chars (both
-sides accept hex; PP also accepts base64). A value that looks like an envelope
+sides accept hex; the partner app also accepts base64). A value that looks like an envelope
 but fails to decrypt is a HARD error (fail closed).
 
 FG: `server/integration/envelope.js` (`seal`/`open`/`isSealed`). The marker is
@@ -1381,7 +1380,7 @@ blob: { "enc":"aes-256-gcm",
 plaintext: { "text":"Amanda Lee", "personId":"fg_p_1", "items":[1,2,3] }
 ```
 
-## B. Sync push — `POST {pp}/familygraph-sync?tenant=<sid>`
+## B. Sync push — `POST {partner}/familygraph-sync?tenant=<sid>`
 
 Request: `{ "tenant", "sinceCursor": <cursor|null>, "cursor": <newHighWater>,
 "changes": ENVELOPE([ ChangeEvent, ... ]) }`.
@@ -1392,14 +1391,14 @@ household.deleted | consent.updated`. Deletes are tombstones
 `{ "type": "...deleted", "id": "<code>" }`.
 
 Response 200: `{ "ok": true, "ackedCursor": <cursor>, "applied": <int>,
-"skipped": <int> }`. PP applies each event through the SAME apply +
+"skipped": <int> }`. The partner app applies each event through the SAME apply +
 freshness/idempotency logic the webhook uses and does NOT advance past a failed
 event. FG: `assembleBatch`/`pushBatch` in `server/integration/outbound-agent.js`
 — builds ChangeEvents from the changed feed (same `{type,data}` the webhook
 emits; tombstones for deletes), seals the array as `changes`, sends
 `sinceCursor`.
 
-## C. Outbox fetch — `GET {pp}/familygraph-outbox?tenant=<sid>&max=N`
+## C. Outbox fetch — `GET {partner}/familygraph-outbox?tenant=<sid>&max=N`
 
 Response 200: `{ "ok": true, "items": [ { "id", "kind", "payload":
 ENVELOPE-or-plain, "requestId" } ] }`.
@@ -1411,7 +1410,7 @@ activities?, allergies?}`; `document.fetch` reserved/stub. FG `processItem`
 reads `item.payload` (opens if sealed via `isSealed`), then the kind fields off
 the opened object.
 
-## D. Inbox return — `POST {pp}/familygraph-inbox?tenant=<sid>` (BATCH)
+## D. Inbox return — `POST {partner}/familygraph-inbox?tenant=<sid>` (BATCH)
 
 Request: `{ "tenant", "results": [ { "id", "kind", "ok": bool, "result":
 ENVELOPE-or-plain, "error"? } ] }`.
@@ -1425,14 +1424,14 @@ batches under `{tenant, results}`.
 
 ## E. De-anonymization map stays INSIDE FamilyGraph
 
-FG NEVER returns the codes→names mapping to PP. The sanitize RESULT is
+FG NEVER returns the codes→names mapping to the partner app. The sanitize RESULT is
 `{ sanitized, tokenSetId }` where `tokenSetId` is an OPAQUE reference to the
 token set FG persists in its OWN encrypted `token_sets` store
 (`token_sets.mappings_ct`). Desanitize looks the mapping up BY `tokenSetId`
 from that store — the desanitize payload carries `tokenSetId`, never the
-mapping. PP stores only `tokenSetId` + the sanitized (coded) text, never names.
+mapping. The partner app stores only `tokenSetId` + the sanitized (coded) text, never names.
 
-## 6. Headers (on every FG → PP call)
+## 6. Headers (on every FG → partner call)
 
 ```
 Authorization:          Bearer <fgCredential>
@@ -1446,9 +1445,9 @@ X-Request-Id:           <id>    (on writes)
 ## 7. Document Vault (FG is the authoritative access gate)
 
 Sensitive child documents (sacramental, learning-accommodation, health/allergy
-records) live ENCRYPTED in FG's vault and surface to PP JUST-IN-TIME over the
+records) live ENCRYPTED in FG's vault and surface to the partner app JUST-IN-TIME over the
 SAME transport spine — no new endpoints, no inbound ports. FG makes the access
-decision and audits it (Tier-2); PP holds no document bytes at rest.
+decision and audits it (Tier-2); the partner app holds no document bytes at rest.
 
 AT-REST vs ON-THE-WIRE: bytes + title are encrypted at rest in FG with the
 LOCAL dataKey (`documents.content_ct` / `title_ct`, the versioned AES-256-GCM
@@ -1457,14 +1456,14 @@ pairing ENVELOPE key for transport. `content_ct` is at-rest encryption, NOT the
 wire envelope. Health safety flags (`health_safety` table) are likewise
 encrypted at rest per `_ct` column.
 
-### 7.1 New outbox kinds (PP parks; FG `processItem` handles)
+### 7.1 New outbox kinds (the partner app parks; FG `processItem` handles)
 
 `document.store` — payload SEALED (carries bytes + PII):
 ```json
 { "personCode": "p_…", "kind": "sacramental|accommodation|health|other",
   "subtype": "baptism|first_communion|confirmation|marriage|iep|504|mtss|allergy_action_plan|health_care_plan|immunization|other",
   "title": "…", "contentType": "application/pdf",
-  "contentBase64": "<base64 file bytes>", "source": "pp" }
+  "contentBase64": "<base64 file bytes>", "source": "partner" }
 ```
 result CLEARTEXT (opaque ref only — no bytes, no PII):
 ```json
@@ -1476,12 +1475,12 @@ row's `updated_at` causes a `document.updated` change on the next sync tick.
 `document.fetch` — payload SEALED (carries the asserted viewer):
 ```json
 { "docRef": "doc_…", "personCode": "p_…",
-  "viewer": { "userId": "pp_user_1", "role": "clergy|dre|admin|learning_team|assigned_teacher|nurse|direct_care",
+  "viewer": { "userId": "usr_1", "role": "clergy|dre|admin|learning_team|assigned_teacher|nurse|direct_care",
               "relationship": "parent_of|staff" } }
 ```
-PP owns user auth; FG TRUSTS + LOGS PP's signed assertion of who the viewer is
+the partner app owns user auth; FG TRUSTS + LOGS the partner app's signed assertion of who the viewer is
 within the tenant boundary. FG's job is the policy decision + audit, not
-re-authenticating PP's users. On ALLOW, result is a SEALED envelope:
+re-authenticating the partner app's users. On ALLOW, result is a SEALED envelope:
 ```json
 { "docRef": "doc_…", "contentType": "application/pdf",
   "contentBase64": "<base64>", "expiresAt": "<iso ~5 min out>" }
@@ -1529,13 +1528,13 @@ whole `changes` array is sealed.
 | `health_record_other` | (health + other/medical) | nurse, admin | DENY |
 | `safety_flags` (summary, via sync) | — | nurse, assigned_teacher, direct_care, admin | ALLOW |
 
-`assigned_teacher` is asserted by PP (PP knows the roster); FG trusts + logs it.
+`assigned_teacher` is asserted by the partner app (the partner app knows the roster); FG trusts + logs it.
 Unknown policy or unknown relationship FAILS CLOSED (deny).
 
 ### 7.4 Operator surface
 
 `/api/documents` (master bearer, operator-only — opens NO inbound surface to
-PP): `POST /` store; `GET /person/:code` list; `GET /:docRef` metadata + title;
+the partner app): `POST /` store; `GET /person/:code` list; `GET /:docRef` metadata + title;
 `GET /:docRef/content` operator download of decrypted bytes; `DELETE /:docRef`
 archive; `PUT|GET|DELETE /safety/:code` set/read/clear health safety flags.
 
@@ -1543,3 +1542,153 @@ FG: migration 0017 (`documents` + `health_safety`), `documents.js` (vault),
 `documentPolicy.js` (matrix), `outbound-agent.js` (`document.store` /
 `document.fetch` in `processItem`), `changes.js`
 (`listChangedDocuments` / `listChangedSafetyFlags`).
+
+---
+
+# Appendix A: Consuming-app identity enhancements (2026-07-01)
+
+*As-built additions to the consuming-app surface, driven by the first
+external consumer (a donor-intelligence app). These EXTEND the contract above;
+nothing prior changed incompatibly. Consuming apps should feature-detect via
+`GET /api/health`
+`capabilities` rather than assuming a given build has these.*
+
+## A.1 Capability discovery — `GET /api/health`
+
+`/api/health` (open, no auth) now returns a `capabilities` map and a
+`capabilities_version` integer. A consuming app reads this once at startup to
+light up (or gate off) features based on what the running registry actually
+offers, instead of hardcoding assumptions:
+
+```json
+{
+  "status": "ok",
+  "schema": 18,
+  "capabilities_version": 1,
+  "capabilities": {
+    "contract": "v0.2",
+    "identity_match": true,
+    "identity_resolve": true,
+    "identity_resolve_family": true,
+    "identity_resolve_batch": true,
+    "identity_feedback": true,
+    "identity_changed_feed": true,
+    "conflicts_api": true,
+    "sanitize": true,
+    "audit_external_export": true,
+    "scoped_keys": true
+  }
+}
+```
+
+This is the durable mechanism for keeping future integrations compatible: when a
+new consuming-app feature lands, add a flag here and bump `capabilities_version`.
+Keep this map in sync with the changelog below (source:
+`server/api/health.js`).
+
+## A.2 `POST /api/identity/resolve` now returns a family code
+
+The resolve response is unchanged except it now also:
+
+- **Attaches the incoming record's emails and phones to the resolved person**
+  (previously only the bulk `/api/import/run` path did this). Without it a
+  second resolve of the same email couldn't match and created a duplicate.
+  This is the fix that makes per-record registration actually dedupe.
+- Includes a `family` object when the resolved person has an active family:
+  `{ "code": "f_…", "action": "existing" }`.
+- When the body sets `"with_family": true` and the person has no family,
+  resolve-or-creates one from the record (reusing the person-overlap and
+  address-overlap attach heuristics) and returns
+  `{ "code": "f_…", "action": "created" | "attached" }`.
+
+Backward compatible: callers that don't send `with_family` and whose person has
+no family simply get no `family` key, as before.
+
+## A.3 `POST /api/identity/resolve-batch` (new)
+
+Same auth/scope as `/resolve` (pii.write). Commit many records in one
+round-trip inside a single transaction — the fix for chatty per-contact syncs.
+
+Request: `{ "records": [<loose record>, …], "source"?, "source_ref"?, "with_family"? }`
+Bounded at 1000 records/call. Response:
+
+```json
+{
+  "results": [
+    { "index": 0, "code": "p_…", "action": "created", "score": 0, "family": { "code": "f_…", "action": "created" } }
+  ],
+  "totals": { "created": 2, "attached": 1, "enqueued": 0 }
+}
+```
+
+Per-row shape matches `/resolve` so a consuming app persists its domain data
+keyed by each `code`.
+
+## A.4 `GET /api/identity/changed` (new)
+
+Auth/scope: pii.read (returns only opaque codes, operations, and timestamps —
+no PII). A forward-cursored feed of identity changes so a consuming app that
+caches FamilyGraph codes learns what moved — the key case being an operator
+merging families/persons in FamilyGraph's dashboard, which turns a cached code
+into an alias.
+
+`GET /api/identity/changed?since=<iso>&limit=<n>&kinds=person,family`
+
+```json
+{
+  "changes": [
+    { "change": "ec_…", "kind": "person", "code": "p_…", "operation": "merge",
+      "related_codes": ["p_winner"], "at": "2026-07-01T15:00:00.000Z" }
+  ],
+  "next_since": "2026-07-01T15:00:00.000Z",
+  "count": 1
+}
+```
+
+Page forward by feeding `next_since` back as `since`. On a `merge`, re-fetch the
+affected code via `GET /api/families/:code` or `/api/people/:code` (FamilyGraph
+follows the alias) to pick up the surviving code.
+
+## A.5 `family-graph issue-key` CLI (new)
+
+Foolproof scoped-key provisioning for a consuming app:
+
+```
+family-graph issue-key <name> [scope,scope,...]
+# default scopes: pii.read,pii.write,sanitize,audit.write
+```
+
+Prints the `sk_…` token once (only its hash is stored). Equivalent to
+`POST /api/keys` but without hand-editing scopes in the dashboard.
+
+## A.6 Feedback winner semantics (clarification)
+
+`POST /api/identity/feedback` with `decision: "same"` merges `left_code` into
+the winner. The winner is `winner_code` if provided, else `right_code`. The
+winner's code is the one that SURVIVES; the loser's code becomes a permanent
+alias that FamilyGraph resolves transparently on future reads. A consuming app
+that stored the loser's code can keep using it (reads follow the alias) or
+update to the winner's code, which it learns from the feedback response or the
+`changed` feed.
+
+## A.7 Conflict provenance — `source_ref` on opened conflicts
+
+When `resolve` / `resolve-batch` opens a conflict, it now stamps the caller's
+`source` and `source_ref` onto the conflict's `metadata`
+(`metadata.source_ref`, `metadata.source`), surfaced by `GET /api/conflicts` and
+`GET /api/conflicts/:code`. This lets an operator resolving a conflict in the
+dashboard trace it back to the exact upstream record.
+
+`source_ref` is an OPAQUE string the consuming app chooses — its own record id,
+a URL, whatever it wants to trace back to. FamilyGraph stores and displays it
+without interpreting it, so no consuming-app knowledge leaks into FamilyGraph.
+In `resolve-batch`, each record may carry its own `source_ref`
+(`records[i].source_ref`), falling back to the batch-level `source_ref`.
+Capability flag: `identity_conflict_source_ref`.
+
+## A.8 Changelog
+
+| capabilities_version | date | change |
+|---|---|---|
+| 1 | 2026-07-01 | `capabilities` map on /health; resolve returns family code + attaches emails/phones; resolve-batch; changed feed; issue-key CLI; feedback winner semantics documented. |
+| 2 | 2026-07-01 | resolve/resolve-batch stamp caller `source_ref` (+ `source`) onto opened conflicts (`identity_conflict_source_ref`); per-record `source_ref` in batch. |

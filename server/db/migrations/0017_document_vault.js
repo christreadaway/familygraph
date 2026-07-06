@@ -5,8 +5,8 @@
 // FamilyGraph becomes the authoritative ACCESS GATE for sensitive child
 // documents (sacramental records, learning-accommodation plans, health /
 // allergy records). Bytes live encrypted at rest in FG and surface to
-// ParentPoint JUST-IN-TIME via the existing outbox/inbox + sync transport
-// ("no open doors" — FG opens no inbound ports). PP never holds the bytes;
+// The partner app JUST-IN-TIME via the existing outbox/inbox + sync transport
+// ("no open doors" — FG opens no inbound ports). The partner app never holds the bytes;
 // it asks FG for them per fetch and FG makes the policy decision + audits it.
 //
 // Two tables come online:
@@ -16,17 +16,17 @@
 //    layout). `content_ct` is at-rest encryption, NOT the wire envelope; when
 //    a fetch is authorized the bytes are RE-SEALED with the pairing envelope
 //    key for transport. `code` is an opaque `doc_<hex>` ref that is safe to
-//    show PP. `policy_key` is derived from kind/subtype and drives the access
+//    show the partner app. `policy_key` is derived from kind/subtype and drives the access
 //    matrix. No document bytes and no title ever sit in a plaintext column.
 //
 // 2. `health_safety` — the mirrored life-safety summary (allergens, severity,
 //    medication, emergency contact) keyed by person. Every field is encrypted
 //    at rest (`_ct`). This is the summary that rides INSIDE the already-sealed
-//    sync `changes` envelope to PP on each check-in, released regardless of
+//    sync `changes` envelope to the partner app on each check-in, released regardless of
 //    directory/photo consent because it is life-safety information.
 //
 // `updated_at` on both tables feeds the changed-feed so document + safety
-// changes flow to PP alongside person/household changes.
+// changes flow to the partner app alongside person/household changes.
 
 exports.up = function up(db) {
   db.exec(`

@@ -88,9 +88,9 @@ function listChangedHouseholds(db, secrets, since, { limit = 200 } = {}) {
   };
 }
 
-// Document vault changed feed. Documents surface to PP as METADATA-ONLY
+// Document vault changed feed. Documents surface to the partner app as METADATA-ONLY
 // ChangeEvents (no bytes ride the sync batch — bytes only move on an
-// authorized document.fetch). An archived document is tombstoned so PP can
+// authorized document.fetch). An archived document is tombstoned so the partner app can
 // drop its cached metadata; a still-active document carries its metadata +
 // decrypted title + policyKey. The bytes NEVER appear here.
 function listChangedDocuments(db, secrets, since, { limit = 200 } = {}) {

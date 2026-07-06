@@ -2,17 +2,18 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import Pill from '../components/Pill.jsx';
 
-// ParentPoint outbound pairings (Option A — "no open doors").
+// Partner-app outbound pairings (Option A — "no open doors").
 //
-// FamilyGraph is the sole initiator: once a pairing is enabled, FG dials PP
-// over outbound HTTPS on the configured interval. FG opens no inbound port;
-// PP never calls FG. This screen configures the dial-out target + shared
-// secrets and toggles each pairing. Secrets are WRITE-ONLY — they are stored
-// encrypted server-side and never returned, so the inputs always start blank.
+// FamilyGraph is the sole initiator: once a pairing is enabled, FG dials the
+// paired partner app over outbound HTTPS on the configured interval. FG opens
+// no inbound port; the partner app never calls FG. This screen configures the
+// dial-out target + shared secrets and toggles each pairing. Secrets are
+// WRITE-ONLY — stored encrypted server-side and never returned, so the inputs
+// always start blank.
 
 const FIELD_DEFS = [
-  { key: 'pp_base_url', label: 'ParentPoint Base URL', placeholder: 'https://app.parentpoint.example' },
-  { key: 'pp_bearer_credential', label: 'PP Bearer Credential', secret: true },
+  { key: 'partner_base_url', label: 'Partner App Base URL', placeholder: 'https://app.partner.example' },
+  { key: 'partner_bearer_credential', label: 'Partner App Bearer Credential', secret: true },
   { key: 'shared_webhook_secret', label: 'Shared Webhook/HMAC Secret', secret: true },
   { key: 'envelope_key', label: 'Envelope Key (64 hex)', secret: true, placeholder: '64 hex chars' },
   { key: 'check_in_interval_s', label: 'Check-in Interval (seconds)', placeholder: '20' },
@@ -31,7 +32,7 @@ function PairingCard({ pairing, onChange }) {
       for (const f of FIELD_DEFS) {
         if (form[f.key] != null && form[f.key] !== '') body[f.key] = form[f.key];
       }
-      await api.setPpPairing(sid, body);
+      await api.setPartnerPairing(sid, body);
       setForm({});
       setMsg('Saved.');
       onChange();
@@ -41,7 +42,7 @@ function PairingCard({ pairing, onChange }) {
   async function toggle() {
     setBusy(true); setMsg(null);
     try {
-      await api.patchPpPairing(sid, { enabled: !pairing.enabled });
+      await api.patchPartnerPairing(sid, { enabled: !pairing.enabled });
       onChange();
     } catch (e) { setMsg(e.message); } finally { setBusy(false); }
   }
@@ -49,7 +50,7 @@ function PairingCard({ pairing, onChange }) {
   async function remove() {
     if (!window.confirm(`Remove pairing for ${sid}? This clears its secrets.`)) return;
     setBusy(true);
-    try { await api.deletePpPairing(sid); onChange(); }
+    try { await api.deletePartnerPairing(sid); onChange(); }
     catch (e) { setMsg(e.message); } finally { setBusy(false); }
   }
 
@@ -90,30 +91,30 @@ function PairingCard({ pairing, onChange }) {
   );
 }
 
-export default function PpPairings() {
+export default function PartnerPairings() {
   const [items, setItems] = useState([]);
   const [newId, setNewId] = useState('');
   const [err, setErr] = useState(null);
 
   async function load() {
-    try { const r = await api.listPpPairings(); setItems(r.items || []); setErr(null); }
+    try { const r = await api.listPartnerPairings(); setItems(r.items || []); setErr(null); }
     catch (e) { setErr(e.message); }
   }
   useEffect(() => { load(); }, []);
 
   async function add() {
     if (!newId.trim()) return;
-    try { await api.setPpPairing(newId.trim(), {}); setNewId(''); load(); }
+    try { await api.setPartnerPairing(newId.trim(), {}); setNewId(''); load(); }
     catch (e) { setErr(e.message); }
   }
 
   return (
     <div style={{ maxWidth: 640 }}>
-      <h2>ParentPoint Pairings</h2>
+      <h2>Partner App Pairings</h2>
       <p style={{ color: '#555', fontSize: 14 }}>
-        FamilyGraph is the only initiator. Once enabled, FG dials ParentPoint
+        FamilyGraph is the only initiator. Once enabled, FG dials the partner app
         over outbound HTTPS on the interval below. FamilyGraph opens no inbound
-        port; ParentPoint never calls FamilyGraph. Secrets are write-only.
+        port; the partner app never calls FamilyGraph. Secrets are write-only.
       </p>
       <div style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
         <input

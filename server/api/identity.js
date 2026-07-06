@@ -26,9 +26,93 @@ const express = require('express');
 const matching = require('../identity/matching');
 const resolver = require('../identity/resolver');
 const conflictsMod = require('../identity/conflicts');
+const families = require('../identity/families');
+const contacts = require('../identity/contacts');
+const history = require('../identity/history');
 const profiles = require('../identity/profiles');
 const audit = require('../audit');
 const enc = require('../crypto/encryption');
+
+// Attach the incoming record's emails and phones to the resolved person, the
+// same way the bulk import pipeline does. Without this the identity API creates
+// persons with no contact channels, so a later resolve of the same email can't
+// match on it and a duplicate is created — the exact opposite of what a
+// consuming app calling /resolve wants. Idempotent: upsert + attach no-op when
+// the channel is already linked.
+function _attachContacts(db, secrets, personCode, incoming) {
+  for (const email of incoming.emails || []) {
+    const ec = contacts.upsertEmail(db, secrets, email);
+    if (ec) contacts.attachEmailToPerson(db, personCode, ec, { isPrimary: false });
+  }
+  for (const phone of incoming.phones || []) {
+    const pc = contacts.upsertPhone(db, secrets, phone);
+    if (pc) contacts.attachPhoneToPerson(db, personCode, pc, { isPrimary: false });
+  }
+}
+
+// Tag a just-opened conflict with the caller's provenance (source + source_ref)
+// by merging into the conflict's metadata JSON. This is deliberately opaque:
+// FamilyGraph stores whatever `source_ref` string the consuming app supplied
+// (e.g. its own record id or a link) so an operator resolving the conflict can
+// see where it came from — without FamilyGraph knowing anything about that app.
+function _tagConflictSource(db, conflictCode, source, sourceRef) {
+  if (!conflictCode || (!source && !sourceRef)) return;
+  try {
+    const row = db.prepare('SELECT metadata FROM conflicts WHERE code = ?').get(conflictCode);
+    if (!row) return;
+    let meta = {};
+    if (row.metadata) { try { meta = JSON.parse(row.metadata) || {}; } catch (_) { meta = {}; } }
+    if (source) meta.source = source;
+    if (sourceRef) meta.source_ref = sourceRef;
+    db.prepare('UPDATE conflicts SET metadata = ? WHERE code = ?').run(JSON.stringify(meta), conflictCode);
+  } catch (_) { /* best effort — provenance is advisory */ }
+}
+
+// The person's current (active) family, or null. Cheap membership lookup used
+// to enrich resolve responses so a consuming app can key its family-scoped
+// domain data (e.g. giving totals) to the canonical family code.
+function _familyForPerson(db, personCode) {
+  const row = db.prepare(
+    `SELECT family_code FROM memberships
+       WHERE person_code = ? AND ended_at IS NULL
+       ORDER BY started_at DESC LIMIT 1`
+  ).get(personCode);
+  return row ? row.family_code : null;
+}
+
+// Derive a family display name from an incoming record (e.g. "Smith Family").
+function _familyDisplayName(incoming) {
+  const ln = incoming && incoming.family_name ? String(incoming.family_name).trim() : '';
+  if (!ln) return null;
+  return `${ln.charAt(0).toUpperCase()}${ln.slice(1)} Family`;
+}
+
+// Resolve the family for a just-resolved person.
+//   - Always returns the person's existing active family if they have one
+//     ({ code, action: 'existing' }).
+//   - When `create` is true and the person has no family, resolve-or-create a
+//     family from the incoming record (reusing the resolver's person-overlap
+//     and address-overlap attach heuristics) and attach the person.
+//   - Returns null when there's no family and creation wasn't requested.
+function _resolveFamily(db, secrets, thresholds, personCode, incoming, { create = false, actor = 'external_app' } = {}) {
+  const existing = _familyForPerson(db, personCode);
+  if (existing) return { code: existing, action: 'existing' };
+  if (!create) return null;
+
+  const fam = resolver.resolveOrCreateFamily(db, secrets, thresholds, {
+    display_name: _familyDisplayName(incoming),
+    personCodes: [personCode],
+    address: incoming.address || null,
+  }, { actor });
+
+  const already = db.prepare(
+    `SELECT 1 FROM memberships WHERE family_code = ? AND person_code = ? AND ended_at IS NULL`
+  ).get(fam.code, personCode);
+  if (!already) {
+    families.addMember(db, secrets, fam.code, personCode, { role: 'member' });
+  }
+  return { code: fam.code, action: fam.action };
+}
 
 // Translate the loose external-record shape into our internal canonical
 // person + address. Accepts both flat (first_name/last_name) and structured
@@ -111,16 +195,29 @@ function build({ db, secrets, thresholds }) {
   // Same shape as the internal /api/import/run per-row outcome so external
   // apps can persist their domain data keyed by `code` immediately.
   r.post('/resolve', (req, res) => {
-    const { record, source = 'api', source_ref = null } = req.body || {};
+    const { record, source = 'api', source_ref = null, with_family = false } = req.body || {};
     const incoming = _toIncoming(record);
     if (!incoming) return res.status(400).json({ error: 'record required' });
 
-    const result = resolver.resolveOrCreatePerson(db, secrets, effective(), incoming, {
-      actor: req.auth?.actor || 'external_app',
+    const actor = req.auth?.actor || 'external_app';
+    const result = resolver.resolveOrCreatePerson(db, secrets, effective(), incoming, { actor });
+    _attachContacts(db, secrets, result.code, incoming);
+
+    // Enrich with the canonical family code so the caller can key family-scoped
+    // domain data to it. Always returns an existing family; only creates one
+    // when the caller opts in via with_family.
+    const family = _resolveFamily(db, secrets, effective(), result.code, incoming, {
+      create: !!with_family, actor,
     });
+    if (family) result.family = family;
+
+    // If this opened a conflict, stamp it with the caller's provenance so the
+    // operator can trace it back in the dashboard.
+    if (result.conflict) _tagConflictSource(db, result.conflict, source, source_ref);
+
     audit.record(db, {
       action: 'identity_resolve_commit',
-      actor: req.auth?.actor || 'external_app',
+      actor,
       entityCode: result.code,
       entityKind: 'person',
       metadata: {
@@ -130,9 +227,79 @@ function build({ db, secrets, thresholds }) {
         score: result.score,
         reasons: result.reasons,
         conflict: result.conflict || null,
+        family: family ? { code: family.code, action: family.action } : null,
       },
     });
     res.status(201).json(result);
+  });
+
+  // POST /api/identity/resolve-batch
+  // Body: { records: [<loose>, ...], source?, source_ref?, with_family? }
+  // Commit many records in one round-trip inside a single transaction. Returns
+  // { results: [{ index, code, action, score, reasons, conflict?, family? }],
+  //   totals: { created, attached, enqueued } }. Same per-row outcome shape as
+  // /resolve so a consuming app can persist domain data keyed by each code.
+  // Bounded at 1000 records per call to keep a single request predictable.
+  const MAX_BATCH = 1000;
+  r.post('/resolve-batch', (req, res) => {
+    const { records, source = 'api', source_ref = null, with_family = false } = req.body || {};
+    if (!Array.isArray(records)) return res.status(400).json({ error: 'records array required' });
+    if (records.length === 0) return res.json({ results: [], totals: { created: 0, attached: 0, enqueued: 0 } });
+    if (records.length > MAX_BATCH) {
+      return res.status(400).json({ error: `too many records (max ${MAX_BATCH})` });
+    }
+    const actor = req.auth?.actor || 'external_app';
+    const t = effective();
+    const totals = { created: 0, attached: 0, enqueued: 0 };
+    const results = [];
+
+    const run = db.transaction(() => {
+      for (let i = 0; i < records.length; i++) {
+        const incoming = _toIncoming(records[i]);
+        if (!incoming) { results.push({ index: i, error: 'record required' }); continue; }
+        const result = resolver.resolveOrCreatePerson(db, secrets, t, incoming, { actor });
+        _attachContacts(db, secrets, result.code, incoming);
+        const family = _resolveFamily(db, secrets, t, result.code, incoming, { create: !!with_family, actor });
+        if (family) result.family = family;
+        // Per-record source_ref (falls back to the batch-level ref) so each
+        // conflict traces back to the exact upstream record.
+        if (result.conflict) {
+          const rowRef = (records[i] && records[i].source_ref) || source_ref;
+          _tagConflictSource(db, result.conflict, source, rowRef);
+        }
+        result.index = i;
+        if (result.action === 'created') totals.created += 1;
+        else if (result.action === 'attached') totals.attached += 1;
+        else if (result.action === 'enqueued') totals.enqueued += 1;
+        results.push(result);
+      }
+    });
+    run();
+
+    audit.record(db, {
+      action: 'identity_resolve_batch',
+      actor,
+      metadata: { source, source_ref, rows: records.length, totals },
+    });
+    res.status(201).json({ results, totals });
+  });
+
+  // GET /api/identity/changed?since=<iso>&limit=&kinds=person,family
+  // Forward-cursored feed of identity changes (create/update/merge/archive/…)
+  // for consuming apps that cache FamilyGraph codes and need to know what moved
+  // — the key case being an operator merging families in FamilyGraph's
+  // dashboard, which turns a cached code into an alias. Returns only opaque
+  // codes, operations, and timestamps (no PII), so it rides the pii.read scope.
+  // Page forward by feeding the response's `next_since` back as `since`.
+  r.get('/changed', (req, res) => {
+    const since = req.query.since ? String(req.query.since) : null;
+    const limit = req.query.limit ? Number(req.query.limit) : 500;
+    const kinds = req.query.kinds
+      ? String(req.query.kinds).split(',').map(s => s.trim()).filter(Boolean)
+      : ['person', 'family'];
+    const changes = history.changedSince(db, { since, kinds, limit });
+    const next_since = changes.length ? changes[changes.length - 1].at : (since || null);
+    res.json({ changes, next_since, count: changes.length });
   });
 
   // POST /api/identity/feedback

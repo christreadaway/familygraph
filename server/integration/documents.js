@@ -9,7 +9,7 @@
 //     dataKey via crypto/encryption.js (the versioned BLOB layout). If the
 //     SQLite file is exfiltrated, the bytes are unreadable.
 //   - On the wire, an AUTHORIZED fetch RE-SEALS the bytes with the pairing
-//     ENVELOPE key (server/integration/envelope.js) for transport to PP.
+//     ENVELOPE key (server/integration/envelope.js) for transport to the partner app.
 //     That sealing happens in the outbound agent, not here. This module only
 //     ever touches the at-rest layer.
 //
@@ -41,7 +41,7 @@ const VALID_SUBTYPES = new Set([
 ]);
 
 function _docCode() {
-  // Opaque ref `doc_<hex>` — safe to show PP. Reuse the 64-bit hex minting.
+  // Opaque ref `doc_<hex>` — safe to show the partner app. Reuse the 64-bit hex minting.
   return newCode('audit').replace(/^au_/, 'doc_');
 }
 
@@ -74,7 +74,7 @@ function store(db, secrets, input, { actor = 'operator' } = {}) {
   }
   const personCode = _requirePerson(db, input.personCode || input.person_code);
 
-  // Accept bytes either as base64 (the wire shape PP sends) or a Buffer
+  // Accept bytes either as base64 (the wire shape the partner app sends) or a Buffer
   // (operator API multipart). Normalize to a Buffer.
   let buf;
   if (Buffer.isBuffer(input.contentBuffer)) {
