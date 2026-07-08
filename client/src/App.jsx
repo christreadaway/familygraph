@@ -26,6 +26,7 @@ import Ministries from './views/Ministries.jsx';
 import { OrganizationsList, OrganizationDetail } from './views/Organizations.jsx';
 import Accounts from './views/Accounts.jsx';
 import Login from './views/Login.jsx';
+import Diagnostics from './views/Diagnostics.jsx';
 
 const REASON_HINT = {
   no_bearer: 'No token sent. Paste your Bearer token below.',
@@ -201,6 +202,7 @@ export default function App() {
             <NavItem to="/settings">Settings</NavItem>
             <NavItem to="/settings/connectors">Connectors</NavItem>
             <NavItem to="/settings/partner-pairings">Partner Apps</NavItem>
+            <NavItem to="/diagnostics">Diagnostics</NavItem>
           </nav>
           <div className="sidebar-footer">
             {health ? (
@@ -275,6 +277,7 @@ export default function App() {
             <Route path="/settings/connectors" element={<ConnectorsList />} />
             <Route path="/settings/connectors/:name" element={<ConnectorDetail />} />
             <Route path="/settings/partner-pairings" element={<PartnerPairings />} />
+            <Route path="/diagnostics" element={<Diagnostics />} />
           </Routes>
           <footer
             style={{

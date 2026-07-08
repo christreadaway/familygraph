@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../../log');
 
 // Numbered migrations runner. Each migration file is named NNNN_description.sql
 // or NNNN_description.js. SQL migrations are executed verbatim. JS migrations
@@ -52,6 +53,9 @@ function run(db, migrationsDir) {
   for (const m of pending) {
     const tx = db.transaction(() => applyOne(db, m));
     tx();
+    // One line per applied migration so a startup that ran migrations is
+    // reconstructable from server.log alone ("schema jumped 17→19 at boot").
+    log.info('db.migration_applied', { id: m.version, file: m.file });
   }
   return { from: cur, to: currentVersion(db), applied: pending.map(m => m.version) };
 }

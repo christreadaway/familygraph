@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const migrationsRunner = require('./migrations');
+const log = require('../log');
 
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
@@ -62,6 +63,7 @@ function migrate(db) {
   const cur = migrationsRunner.currentVersion(db);
   if (cur < SCHEMA_VERSION) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
+    log.info('db.schema_version_bumped', { from: cur, to: SCHEMA_VERSION });
   }
   return migrationsRunner.currentVersion(db);
 }

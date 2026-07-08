@@ -855,6 +855,7 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |
 | `FAMILY_GRAPH_LOG_FILE` | `$FAMILY_GRAPH_HOME/logs/server.log` | JSON-lines log destination (mirrored to stderr) |
+| `FAMILY_GRAPH_LOG_MAX_BYTES` | `10485760` (10 MB) | rotation cap: past this size the file is renamed to `server.log.1` (one prior generation kept) and a fresh file starts |
 
 The active profile (Dashboard → Profiles) overrides `FAMILY_GRAPH_AUTO_MERGE` /
 `FAMILY_GRAPH_REVIEW` for imports.
@@ -881,7 +882,22 @@ What's logged:
 - `auth.ok` — debug-level success (drop `FAMILY_GRAPH_LOG_LEVEL=debug`
   to see).
 - `unhandled` — any unhandled exception with `stack`.
+- `uncaught_exception` / `unhandled_rejection` — process-level crash
+  capture. An uncaught exception logs its stack and exits(1); an
+  unhandled promise rejection logs and the server keeps running. Either
+  way the tail of `server.log` says why a process died instead of the
+  file just ending mid-flight.
+- `db.migration_applied` / `db.schema_version_bumped` — one line per
+  schema migration applied at startup.
+- `*.sweep_failed` — background sweep failures (conflict assignments,
+  reminders, idempotency keys, token sets) at `warn`; sweeps stay
+  non-fatal.
 - `notify.dispatch_failed`, `folder_watch.start_failed`, etc.
+
+The file rotates when it exceeds `FAMILY_GRAPH_LOG_MAX_BYTES` (default
+10 MB): `server.log` becomes `server.log.1` (replacing any previous
+`.1`) and a fresh file starts, so disk usage stays bounded at roughly
+twice the cap.
 
 Every emitted line is run through a redactor that replaces values for
 keys named `authorization`, `token`, `master`, `secret`, `password`,
@@ -903,6 +919,14 @@ Get-Content $HOME\.family-graph\logs\server.log -Wait
 When the dashboard says "Error: unauthorized", grep the log for the
 matching `auth.reject` line — the `reason` field tells you exactly
 which middleware refused the call and why.
+
+The dashboard keeps its own client-side log: a rolling in-memory buffer
+(cap 1,000 entries, redacted with the same key list before buffering,
+persisted to `sessionStorage`, never sent anywhere) that records every
+API call, window error, unhandled rejection, and render crash. Open
+**Dashboard → Diagnostics** to download or copy it — paste those lines
+next to the matching `server.log` lines when reporting a bug. A render
+crash shows a fallback screen with the same Download log button.
 
 ---
 

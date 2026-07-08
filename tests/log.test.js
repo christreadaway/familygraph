@@ -110,6 +110,63 @@ test('log > file output mirrors stderr', () => {
   assert.equal(parsed.ok, true);
 });
 
+test('log > rotates the file to .1 when it exceeds maxBytes', () => {
+  delete require.cache[require.resolve('../server/log')];
+  const log = require('../server/log');
+  const file = tmpFile();
+  // Tiny cap so a handful of lines forces rotation.
+  log.configure({ level: 'info', file, maxBytes: 200 });
+  captureStderr(() => {
+    for (let i = 0; i < 20; i++) log.info('filler', { i, pad: 'x'.repeat(40) });
+  });
+  log.configure({ file: null });
+  const rotated = `${file}.1`;
+  assert.ok(fs.existsSync(rotated), 'expected a .1 rotation file');
+  assert.ok(fs.existsSync(file), 'expected a fresh live file after rotation');
+  // What rotation guarantees (and what we assert): the live file holds the
+  // most recent lines, `.1` holds the generation written immediately before
+  // it, and every surviving line is complete JSON (no torn writes). It does
+  // NOT guarantee lossless history — each rotation clobbers the previous
+  // `.1`, so with a tiny cap earlier generations are gone by design (bounded
+  // disk is the contract). The two surviving files therefore form one
+  // contiguous suffix of what was emitted, ending at the last line.
+  const rotatedLines = fs.readFileSync(rotated, 'utf8').trim().split('\n')
+    .filter(Boolean).map(l => JSON.parse(l));
+  const liveLines = fs.readFileSync(file, 'utf8').trim().split('\n')
+    .filter(Boolean).map(l => JSON.parse(l));
+  assert.ok(liveLines.length >= 1, 'live file has at least one line');
+  const ids = [...rotatedLines, ...liveLines].map(l => l.i);
+  assert.equal(ids[ids.length - 1], 19, 'suffix ends at the last emitted line');
+  for (let k = 1; k < ids.length; k++) {
+    assert.equal(ids[k], ids[k - 1] + 1, `rotated + live lines are contiguous at index ${k}`);
+  }
+  fs.unlinkSync(file);
+  fs.unlinkSync(rotated);
+});
+
+test('log > rotation cap is configurable via FAMILY_GRAPH_LOG_MAX_BYTES', () => {
+  const prev = process.env.FAMILY_GRAPH_LOG_MAX_BYTES;
+  process.env.FAMILY_GRAPH_LOG_MAX_BYTES = '150';
+  try {
+    delete require.cache[require.resolve('../server/log')];
+    const log = require('../server/log');
+    const file = tmpFile();
+    log.configure({ level: 'info', file });
+    captureStderr(() => {
+      for (let i = 0; i < 10; i++) log.info('env-filler', { i, pad: 'y'.repeat(60) });
+    });
+    log.configure({ file: null });
+    assert.ok(fs.existsSync(`${file}.1`), 'env-configured cap should trigger rotation');
+    fs.unlinkSync(file);
+    fs.unlinkSync(`${file}.1`);
+  } finally {
+    if (prev === undefined) delete process.env.FAMILY_GRAPH_LOG_MAX_BYTES;
+    else process.env.FAMILY_GRAPH_LOG_MAX_BYTES = prev;
+    // Reload once more so later suites don't inherit the tiny cap.
+    delete require.cache[require.resolve('../server/log')];
+  }
+});
+
 test('log > _redact handles arrays + nested PII keys', () => {
   delete require.cache[require.resolve('../server/log')];
   const log = require('../server/log');
