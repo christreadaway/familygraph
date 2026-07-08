@@ -55,9 +55,11 @@ async function request(method, path, body) {
     const err = new Error((data && data.error) || `${res.status} ${res.statusText}`);
     err.status = res.status;
     err.data = data;
+    // Log status/timing only — server error text can echo operator-submitted
+    // field values (names) into this sessionStorage-persisted, downloadable
+    // buffer; the operator already sees the message in the UI via setError.
     log.error('api', `${method} ${logPath} ${res.status}`, {
       method, path: logPath, status: res.status, ms,
-      error: err.message, reason: (data && data.reason) || null,
     });
     if (res.status === 401 || res.status === 403) {
       emitAuthFailed({

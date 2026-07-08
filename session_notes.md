@@ -3569,6 +3569,56 @@ suite via dynamic `import()` - the module keeps every window / sessionStorage
 / document touch guarded, which the bare-node import itself proves. Client
 rebuilt clean with Vite.
 
+## Post-review hardening of the logging work (2026-07-08, follow-up)
+
+An adversarial review of the logging commit raised five findings. All five
+verified real in code; all five fixed in this pass.
+
+The two client-buffer ones were the same failure mode from opposite ends of
+a reload. First, the debounced 250ms sessionStorage flush meant anything
+logged in the final window before an unload - usually the error that caused
+the operator to reload - was silently dropped from the persisted trail.
+`log.js` now flushes synchronously on every error-level entry and registers
+a guarded `pagehide` listener that flushes whatever the debounce hadn't
+written yet. Second, restore only checked `Array.isArray`, so a stored
+`[null]` survived into the buffer and `formatLine(null)` threw, which took
+down text()/download()/copy() AND the Diagnostics render, landing in an
+ErrorBoundary whose own Download button threw for the same reason. Restore
+now validates each element's shape (plain object, string ts/level/scope/msg;
+failures dropped), `formatLine` degrades garbage to a visible placeholder
+line instead of throwing, and Diagnostics renders rows through `formatLine`
+rather than its own inline copy.
+
+The redactor parity test was vacuous: it deep-equaled output on one fixed
+sample, so the client key list could drift from the server's `_redactKeys`
+while staying green - the opposite of what its name claimed. The server
+logger now exports `_redactKeys` and the test asserts set-equality between
+the two lists directly; the sample-based behavioral test stays as a second
+layer.
+
+`api.js` was logging server-supplied error message text verbatim into the
+persisted buffer under an `error` ctx key the redactor doesn't cover, and
+server validation messages can echo operator-submitted names back. The
+failure path now logs `{ method, path, status, ms }` only, with a comment
+explaining why; the operator still sees the message in the UI via setError.
+The network-failure path keeps its browser-generated error string (client
+text like "Failed to fetch", not a server echo).
+
+The rotation test's comment claimed every line lands on disk exactly once
+across the two generations, which is false whenever multiple rotations
+clobber `.1`, and its only real assertion was `length >= 1`. The comment now
+states the actual contract (bounded disk, one prior generation, no torn
+writes) and the assertions were strengthened to match: rotated + live lines
+must form one contiguous suffix of the emitted sequence ending at the last
+line.
+
+Test total 626 → 631 (630 pass, 1 pre-existing skip): the set-equality
+parity test plus four new client-log tests (formatLine poison guard,
+malformed-restore filtering, synchronous error flush vs debounced info,
+pagehide flush) driven by a mock `sessionStorage`/`window` installed on
+globalThis per-test. Client rebuilt clean with Vite. No installs needed;
+node_modules was already present.
+
 ---
 
 *End of session notes*

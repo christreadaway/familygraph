@@ -47,12 +47,29 @@ export function redact(obj, _seen = new WeakSet()) {
 }
 
 export function formatLine(entry) {
+  // Null-guard: a poisoned sessionStorage restore (or any non-object slipping
+  // into the buffer) must degrade to a visible placeholder line, never a
+  // throw — text()/download()/copy() and the Diagnostics render all route
+  // through here, and a throw here would take down the very surface the
+  // operator needs to debug with.
+  if (!entry || typeof entry !== 'object') {
+    return `[unknown] [warn] [log] unrenderable log entry (${typeof entry})`;
+  }
   let tail = '';
   if (entry.ctx !== undefined) {
     try { tail = ' ' + JSON.stringify(entry.ctx); }
     catch (_) { tail = ' {"_stringify_error":true}'; }
   }
   return `[${entry.ts}] [${entry.level}] [${entry.scope}] ${entry.msg}${tail}`;
+}
+
+// Shape check for entries restored from sessionStorage. Anything a prior
+// page (or an extension, or a bug) left in storage that doesn't look like a
+// real entry is dropped rather than allowed to poison the buffer.
+function isValidEntry(e) {
+  return !!e && typeof e === 'object' && !Array.isArray(e)
+    && typeof e.ts === 'string' && typeof e.level === 'string'
+    && typeof e.scope === 'string' && typeof e.msg === 'string';
 }
 
 function hasSessionStorage() {
@@ -75,20 +92,35 @@ export function createLogBuffer(opts = {}) {
     try {
       const raw = sessionStorage.getItem(storageKey);
       const prior = raw ? JSON.parse(raw) : null;
-      if (Array.isArray(prior)) entries = prior.slice(-max);
+      // Validate element shape, not just array-ness: a stored `[null]` (or
+      // any malformed element) would otherwise survive into the buffer and
+      // crash every formatter downstream.
+      if (Array.isArray(prior)) entries = prior.filter(isValidEntry).slice(-max);
     } catch (_) { /* corrupted or blocked storage — start clean */ }
+  }
+
+  function flushPersist() {
+    if (!persist) return;
+    // Only the most recent 400 entries — enough context, bounded write cost.
+    try { sessionStorage.setItem(storageKey, JSON.stringify(entries.slice(-400))); }
+    catch (_) { /* quota / private mode — logging never throws */ }
   }
 
   function schedulePersist() {
     if (!persist || persistScheduled) return;
     persistScheduled = true;
-    // Coalesce bursts: one storage write per tickful of log calls, and only
-    // the most recent 400 entries — enough context, bounded write cost.
+    // Coalesce bursts: one storage write per tickful of log calls.
     setTimeout(() => {
       persistScheduled = false;
-      try { sessionStorage.setItem(storageKey, JSON.stringify(entries.slice(-400))); }
-      catch (_) { /* quota / private mode — logging never throws */ }
+      flushPersist();
     }, 250);
+  }
+
+  // The debounce above loses the final window before an unload — often the
+  // very error that motivated the reload. Flush immediately on pagehide.
+  if (persist && typeof window !== 'undefined'
+      && typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', flushPersist);
   }
 
   function push(level, scope, msg, ctx) {
@@ -108,7 +140,11 @@ export function createLogBuffer(opts = {}) {
       try { fn(`[fg:${scope}] ${entry.msg}`, entry.ctx !== undefined ? entry.ctx : ''); }
       catch (_) { /* console can be locked down; ignore */ }
     }
-    schedulePersist();
+    // Errors are exactly the entries the operator reloads over — persist
+    // them synchronously so they survive an immediate unload; everything
+    // else takes the debounced path.
+    if (level === 'error') flushPersist();
+    else schedulePersist();
     return entry;
   }
 

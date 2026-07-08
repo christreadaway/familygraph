@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { log } from '../log.js';
+import { log, formatLine } from '../log.js';
 
 // Operator-facing surface for the client log buffer. The point of the whole
 // pipeline: when something misbehaves in the dashboard, come here, hit
@@ -65,7 +65,7 @@ export default function Diagnostics() {
               fontSize: 'var(--t-small)',
             }}
           >
-            {recent.map(e => `[${e.ts}] [${e.level}] [${e.scope}] ${e.msg}${e.ctx !== undefined ? ' ' + JSON.stringify(e.ctx) : ''}`).join('\n')}
+            {recent.map(formatLine).join('\n')}
           </pre>
         )}
       </div>

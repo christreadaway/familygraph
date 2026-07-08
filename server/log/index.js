@@ -136,6 +136,8 @@ module.exports = {
   configure,
   autoConfigureFromEnv,
   LEVELS,
-  // Exposed for tests:
+  // Exposed for tests (the client/server redactor parity test asserts
+  // set-equality against _redactKeys):
   _redact: _maybeRedact,
+  _redactKeys,
 };

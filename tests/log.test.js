@@ -123,13 +123,23 @@ test('log > rotates the file to .1 when it exceeds maxBytes', () => {
   const rotated = `${file}.1`;
   assert.ok(fs.existsSync(rotated), 'expected a .1 rotation file');
   assert.ok(fs.existsSync(file), 'expected a fresh live file after rotation');
-  // The live file restarted below the cap at least once; the rotated file
-  // holds complete JSON lines (no torn writes).
-  const rotatedLines = fs.readFileSync(rotated, 'utf8').trim().split('\n');
-  for (const l of rotatedLines) JSON.parse(l);
-  // Every line is on disk exactly once across the two generations.
-  const liveLines = fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
-  assert.ok(liveLines.length >= 1);
+  // What rotation guarantees (and what we assert): the live file holds the
+  // most recent lines, `.1` holds the generation written immediately before
+  // it, and every surviving line is complete JSON (no torn writes). It does
+  // NOT guarantee lossless history — each rotation clobbers the previous
+  // `.1`, so with a tiny cap earlier generations are gone by design (bounded
+  // disk is the contract). The two surviving files therefore form one
+  // contiguous suffix of what was emitted, ending at the last line.
+  const rotatedLines = fs.readFileSync(rotated, 'utf8').trim().split('\n')
+    .filter(Boolean).map(l => JSON.parse(l));
+  const liveLines = fs.readFileSync(file, 'utf8').trim().split('\n')
+    .filter(Boolean).map(l => JSON.parse(l));
+  assert.ok(liveLines.length >= 1, 'live file has at least one line');
+  const ids = [...rotatedLines, ...liveLines].map(l => l.i);
+  assert.equal(ids[ids.length - 1], 19, 'suffix ends at the last emitted line');
+  for (let k = 1; k < ids.length; k++) {
+    assert.equal(ids[k], ids[k - 1] + 1, `rotated + live lines are contiguous at index ${k}`);
+  }
   fs.unlinkSync(file);
   fs.unlinkSync(rotated);
 });

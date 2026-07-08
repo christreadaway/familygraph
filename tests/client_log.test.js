@@ -21,6 +21,20 @@ test('client log > module imports cleanly with no window / sessionStorage', () =
   assert.ok(mod.log, 'singleton export exists');
 });
 
+test('client log > redact key LIST matches server _redactKeys set-for-set', () => {
+  // The sample-based test below proves behavior on one fixture; this one
+  // locks the actual key lists together so the client list cannot silently
+  // drift from server/log/index.js `_redactKeys` while the fixture stays
+  // green.
+  const serverLog = require('../server/log');
+  assert.ok(serverLog._redactKeys instanceof Set, 'server exports _redactKeys');
+  assert.ok(mod.REDACT_KEYS instanceof Set, 'client exports REDACT_KEYS');
+  assert.deepEqual(
+    [...mod.REDACT_KEYS].sort(),
+    [...serverLog._redactKeys].sort(),
+  );
+});
+
 test('client log > redactor matches the server redactor key-for-key', () => {
   const serverLog = require('../server/log');
   const sample = {
@@ -85,6 +99,86 @@ test('client log > clear empties the buffer', () => {
   buf.clear();
   assert.equal(buf.count(), 0);
   assert.equal(buf.text(), '');
+});
+
+// Minimal sessionStorage stand-in so the persist/restore paths run under
+// bare node. Installed on globalThis per-test and removed in finally.
+function mockStorage(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    getItem: k => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, String(v)); },
+    removeItem: k => { store.delete(k); },
+    _store: store,
+  };
+}
+
+test('client log > formatLine never throws on poisoned entries', () => {
+  for (const junk of [null, undefined, 'text', 42]) {
+    const line = mod.formatLine(junk);
+    assert.equal(typeof line, 'string');
+    assert.match(line, /unrenderable log entry/);
+  }
+});
+
+test('client log > restore drops malformed persisted entries', () => {
+  const key = 'fg-test-restore';
+  const good = { ts: '2026-07-08T00:00:00.000Z', level: 'info', scope: 't', msg: 'kept' };
+  globalThis.sessionStorage = mockStorage({
+    [key]: JSON.stringify([null, 'junk', 42, { ts: 1 }, { level: 'info' }, good]),
+  });
+  try {
+    const buf = mod.createLogBuffer({ mirror: false, storageKey: key });
+    assert.equal(buf.count(), 1);
+    assert.equal(buf.entries()[0].msg, 'kept');
+    // The formatters run clean over the restored buffer.
+    assert.match(buf.text(), /kept/);
+  } finally {
+    delete globalThis.sessionStorage;
+  }
+});
+
+test('client log > error entries persist synchronously; info is debounced', async () => {
+  const key = 'fg-test-flush';
+  const storage = mockStorage();
+  globalThis.sessionStorage = storage;
+  try {
+    const buf = mod.createLogBuffer({ mirror: false, storageKey: key });
+    buf.error('api', 'boom just before unload');
+    // No timer wait: the error must already be in storage.
+    const persisted = JSON.parse(storage.getItem(key));
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0].msg, 'boom just before unload');
+
+    buf.info('api', 'debounced line');
+    assert.equal(JSON.parse(storage.getItem(key)).length, 1, 'info not flushed yet');
+    await new Promise(r => setTimeout(r, 350));
+    assert.equal(JSON.parse(storage.getItem(key)).length, 2, 'info flushed after debounce');
+  } finally {
+    delete globalThis.sessionStorage;
+  }
+});
+
+test('client log > pagehide flushes pending entries to storage', () => {
+  const key = 'fg-test-pagehide';
+  const storage = mockStorage();
+  const handlers = {};
+  globalThis.sessionStorage = storage;
+  globalThis.window = {
+    addEventListener: (ev, fn) => { handlers[ev] = fn; },
+  };
+  try {
+    const buf = mod.createLogBuffer({ mirror: false, storageKey: key });
+    assert.equal(typeof handlers.pagehide, 'function', 'pagehide listener registered');
+    buf.info('api', 'final window line');
+    assert.equal(storage.getItem(key), null, 'debounce has not fired');
+    handlers.pagehide();
+    const persisted = JSON.parse(storage.getItem(key));
+    assert.equal(persisted[persisted.length - 1].msg, 'final window line');
+  } finally {
+    delete globalThis.sessionStorage;
+    delete globalThis.window;
+  }
 });
 
 test('client log > download/copy degrade gracefully without a DOM', async () => {
