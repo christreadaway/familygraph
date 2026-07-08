@@ -31,6 +31,29 @@ let minLevel = _resolveLevel(process.env.FAMILY_GRAPH_LOG_LEVEL);
 // stream-buffer latency. At our log volume (~hundreds of lines/min) the
 // per-line syscall is well within budget.
 let _logFilePath = null;
+// Size-based rotation cap. When the log file would grow past this, it is
+// renamed to `<file>.1` (clobbering any previous .1) and a fresh file starts.
+// One generation of history is enough for "paste the tail into a chat"
+// debugging while guaranteeing disk usage stays bounded at ~2× the cap.
+const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+let _maxBytes = _resolveMaxBytes(process.env.FAMILY_GRAPH_LOG_MAX_BYTES);
+
+function _resolveMaxBytes(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MAX_BYTES;
+}
+
+function _rotateIfNeeded() {
+  // Synchronous and best-effort: a rotation failure must never take the
+  // logger (let alone the app) down — worst case the file keeps growing
+  // until the next append retries the rename.
+  try {
+    const st = fs.statSync(_logFilePath);
+    if (st.size < _maxBytes) return;
+    fs.renameSync(_logFilePath, `${_logFilePath}.1`);
+  } catch (_) { /* ENOENT (fresh file) or rename failure — carry on */ }
+}
+
 let _redactKeys = new Set([
   'authorization', 'token', 'master', 'secret', 'password',
   // Connector OAuth credentials. Per PRD §11.2 — connector logs must
@@ -75,13 +98,17 @@ function _emit(level, levelNum, msg, fields) {
   }
   process.stderr.write(line + '\n');
   if (_logFilePath) {
-    try { fs.appendFileSync(_logFilePath, line + '\n', { mode: 0o600 }); }
+    try {
+      _rotateIfNeeded();
+      fs.appendFileSync(_logFilePath, line + '\n', { mode: 0o600 });
+    }
     catch (_) { /* swallow file errors so logging never crashes the app */ }
   }
 }
 
 function configure(opts = {}) {
   if (opts.level != null) minLevel = _resolveLevel(opts.level);
+  if (opts.maxBytes != null) _maxBytes = _resolveMaxBytes(opts.maxBytes);
   if (opts.file !== undefined) {
     if (opts.file) {
       const dir = path.dirname(opts.file);

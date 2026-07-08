@@ -272,6 +272,40 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   return app;
 }
 
+// Process-level crash capture. Without these, an uncaught throw or an
+// unhandled promise rejection dies on stderr only — the operator's
+// server.log ends mid-flight with no trace of why the process vanished.
+// Installed from start() (NOT buildApp) so test files that import buildApp
+// never get process-wide handlers bolted onto the test runner. Guarded so
+// a double start() can't stack duplicate handlers.
+let _crashHandlersInstalled = false;
+function installCrashHandlers() {
+  if (_crashHandlersInstalled) return;
+  _crashHandlersInstalled = true;
+  process.on('uncaughtException', (err) => {
+    // The logger appends to the file synchronously, so the line is on disk
+    // before we exit — no async flush to race against.
+    try {
+      log.error('uncaught_exception', {
+        message: String((err && err.message) || err),
+        stack: (err && err.stack) || null,
+      });
+    } catch (_) { /* logging must never mask the crash path */ }
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    const err = reason instanceof Error ? reason : null;
+    try {
+      log.error('unhandled_rejection', {
+        message: err ? err.message : String(reason),
+        stack: err ? err.stack : null,
+      });
+    } catch (_) { /* ditto */ }
+    // Log-and-continue: a stray rejection in a background loop shouldn't
+    // take down the whole registry the way a synchronous throw does.
+  });
+}
+
 async function start() {
   // Restrict the umask so any file we create — SQLite WAL/SHM files,
   // log files, backup blobs — is owner-read/write only (mode 0600 for
@@ -289,6 +323,9 @@ async function start() {
     log.configure({ file: path.join(config.home, 'logs', 'server.log') });
   }
   log.info('boot', { home: config.home, port: config.port, bind: config.bind });
+
+  // Crash capture (uncaughtException / unhandledRejection → server.log).
+  installCrashHandlers();
 
   const secrets = secretModule.load(config.secretPath);
   const db = dbModule.init(config.dbPath);
@@ -334,7 +371,9 @@ async function start() {
   // Daily EIM expiration sweep. Flips certified rows whose eim_expires_on
   // has passed into 'expired' so the dashboard surfaces lapses without
   // waiting for an operator action. Runs once at boot, then every 24h.
-  try { eim.recomputeStatus(db); } catch (_) { /* boot-safe */ }
+  try { eim.recomputeStatus(db); } catch (e) {
+    log.warn('eim.recompute_failed', { at: 'boot', message: e.message });
+  }
   const eimSweep = setInterval(() => {
     try { eim.recomputeStatus(db); } catch (e) {
       log.error('eim.recompute_failed', { message: e.message, stack: e.stack });
@@ -345,12 +384,22 @@ async function start() {
   // Conflict-assignment expiry sweep. Runs every 15 minutes; on first start we
   // also run it once so a process restart doesn't leave expired assignments
   // visible until the first interval fires.
+  // Failures stay non-fatal — a broken sweep must not stop the server —
+  // but they land in server.log instead of vanishing into empty catches.
   const conflictsMod = require('./identity/conflicts');
-  try { conflictsMod.sweepExpiredAssignments(db); } catch (_) { /* ok at boot */ }
-  try { conflictsMod.sendDueReminders(db); } catch (_) { /* ok at boot */ }
+  try { conflictsMod.sweepExpiredAssignments(db); } catch (e) {
+    log.warn('conflict_assignments.sweep_failed', { at: 'boot', message: e.message });
+  }
+  try { conflictsMod.sendDueReminders(db); } catch (e) {
+    log.warn('conflict_reminders.sweep_failed', { at: 'boot', message: e.message });
+  }
   const assignSweep = setInterval(() => {
-    try { conflictsMod.sweepExpiredAssignments(db); } catch (_) { /* ignore */ }
-    try { conflictsMod.sendDueReminders(db); } catch (_) { /* ignore */ }
+    try { conflictsMod.sweepExpiredAssignments(db); } catch (e) {
+      log.warn('conflict_assignments.sweep_failed', { message: e.message });
+    }
+    try { conflictsMod.sendDueReminders(db); } catch (e) {
+      log.warn('conflict_reminders.sweep_failed', { message: e.message });
+    }
   }, 15 * 60 * 1000);
   assignSweep.unref();
 
@@ -423,7 +472,9 @@ async function start() {
   // is the belt-and-suspenders cleanup for the long tail of rows that
   // never get queried again.
   const idemSweep = setInterval(() => {
-    try { integrationIdempotency.sweep(db); } catch (_) { /* ignore */ }
+    try { integrationIdempotency.sweep(db); } catch (e) {
+      log.warn('idempotency.sweep_failed', { message: e.message });
+    }
   }, 6 * 60 * 60 * 1000);
   idemSweep.unref();
 
@@ -437,7 +488,9 @@ async function start() {
     try {
       db.prepare(`DELETE FROM token_sets WHERE expires_at IS NOT NULL AND expires_at <= ?`)
         .run(new Date().toISOString());
-    } catch (_) { /* ignore */ }
+    } catch (e) {
+      log.warn('token_sets.sweep_failed', { message: e.message });
+    }
   }, 6 * 60 * 60 * 1000);
   tokenSetSweep.unref();
 

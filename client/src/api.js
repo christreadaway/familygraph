@@ -8,6 +8,8 @@
 // for this and re-shows the token banner with the reason — so a stale token
 // in localStorage can no longer silently override a fresh paste.
 
+import { log } from './log.js';
+
 const TOKEN_KEY = 'family-graph.bearer';
 
 export function getToken() {
@@ -28,17 +30,35 @@ async function request(method, path, body) {
   const headers = { 'content-type': 'application/json', 'x-family-graph-actor': 'dashboard' };
   const t = getToken();
   if (t) headers['authorization'] = `Bearer ${t}`;
-  const res = await fetch(path, {
-    method,
-    headers,
-    body: body == null ? undefined : JSON.stringify(body),
-  });
+  // Log the path WITHOUT its query string: search queries (`?q=<name>`) can
+  // carry PII, and the buffer persists to sessionStorage / downloaded files.
+  // Never log bodies or headers for the same reason.
+  const logPath = String(path).split('?')[0];
+  const started = Date.now();
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers,
+      body: body == null ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    log.error('api', `${method} ${logPath} network failure`, {
+      method, path: logPath, ms: Date.now() - started, error: String(e && e.message ? e.message : e),
+    });
+    throw e;
+  }
+  const ms = Date.now() - started;
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('application/json') ? await res.json() : await res.text();
   if (!res.ok) {
     const err = new Error((data && data.error) || `${res.status} ${res.statusText}`);
     err.status = res.status;
     err.data = data;
+    log.error('api', `${method} ${logPath} ${res.status}`, {
+      method, path: logPath, status: res.status, ms,
+      error: err.message, reason: (data && data.reason) || null,
+    });
     if (res.status === 401 || res.status === 403) {
       emitAuthFailed({
         status: res.status,
@@ -49,6 +69,9 @@ async function request(method, path, body) {
     }
     throw err;
   }
+  log.info('api', `${method} ${logPath} ${res.status}`, {
+    method, path: logPath, status: res.status, ms,
+  });
   return data;
 }
 

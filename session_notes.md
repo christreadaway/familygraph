@@ -3511,4 +3511,64 @@ unavailable in this sandbox - client dep install used the already-logged
 
 ---
 
+## Crash capture, log rotation, and a client-side log buffer (2026-07-08)
+
+Closed the observability gaps a survey turned up: the server logger was solid
+but a process crash bypassed it entirely, the file grew unbounded, four
+background sweeps swallowed errors into empty catches, migrations ran silently,
+and the browser side had NOTHING - no error boundary, no buffer, no way for the
+operator to hand over what the dashboard saw.
+
+Server side. `start()` now installs `uncaughtException` / `unhandledRejection`
+handlers (module-scope guard, deliberately NOT in `buildApp()` so test imports
+stay clean): an uncaught exception logs message+stack and exits(1) - the
+logger's `appendFileSync` means the line is on disk before the exit, no flush
+race; an unhandled rejection logs and the server keeps running, since a stray
+rejection in a background loop shouldn't take the registry down the way a
+synchronous throw does. Smoke-tested both against a real boot: exit code 1
+with `uncaught_exception` as the last server.log line, and exit 0 with
+`unhandled_rejection` logged mid-run. The log file now rotates: past
+`FAMILY_GRAPH_LOG_MAX_BYTES` (default 10 MB, also a `configure({ maxBytes })`
+option) the file renames to `server.log.1`, clobbering the prior `.1` - one
+generation is enough for paste-into-chat debugging and bounds disk at ~2x the
+cap. Rotation is synchronous, try/catch-wrapped, never throws. The four empty
+sweep catches (conflict assignments, due reminders, idempotency keys, token
+sets, plus the boot-time EIM recompute) now emit `<name>.sweep_failed` at warn
+and stay non-fatal. Migrations log `db.migration_applied` per migration and
+`db.schema_version_bumped` on the bump, so a startup that moved the schema is
+reconstructable from server.log alone.
+
+Client side, the operator's primary surface. New `client/src/log.js`: an
+in-memory ring buffer (cap 1000) of `{ ts, level, scope, msg, ctx }` entries,
+console mirror, best-effort sessionStorage persistence (restored on boot,
+coalesced writes), and a redactor that mirrors the server's `_redactKeys` list
+key-for-key BEFORE anything is buffered - so names, emails, and tokens never
+sit in sessionStorage or a downloaded file. A parity test locks the two
+redactors together, so extending the server list without the client will fail
+the suite. `window.onerror` + `unhandledrejection` feed the buffer;
+`main.jsx` gained a React ErrorBoundary whose fallback offers Download log
+instead of a bare white screen. The `api.js` fetch wrapper logs every call
+(method, path, status, ms; error entries on failure) with query strings
+stripped from logged paths - `/api/search?q=<name>` would otherwise leak PII
+into the buffer - and never logs bodies or headers. A new Diagnostics view
+(sidebar, under Posture) shows entry counts, the last 100 lines, and
+Download / Copy / Clear. README updated (env table, Logging section,
+dashboard note).
+
+One environment note: this sandbox came with NO node_modules at root or
+client, and the sfw binary is still unavailable here, so restoring the locked
+dependency tree for the mandated test run used the documented emergency path:
+`SFW_BYPASS=1 npm ci --prefer-offline` in both package roots (lockfile-pinned
+versions with integrity hashes, no dependency changes). Same rationale as the
+prior logged bypass: sfw absent in the sandbox, treat as outage.
+
+Test total 616 → 626 (625 pass, 1 pre-existing skip): two rotation tests in
+`tests/log.test.js` (configure option + env var) and eight in the new
+`tests/client_log.test.js`, which loads the ESM client module from the CJS
+suite via dynamic `import()` - the module keeps every window / sessionStorage
+/ document touch guarded, which the bare-node import itself proves. Client
+rebuilt clean with Vite.
+
+---
+
 *End of session notes*
