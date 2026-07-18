@@ -3621,4 +3621,34 @@ node_modules was already present.
 
 ---
 
+## Central admin tier investigation + PRD (2026-07-18)
+
+No code this session - an investigation across all ten portfolio repos,
+ending in `CENTRAL_ADMIN_TIER_PRD.md`. The owner sensed the same pattern
+that produced FamilyGraph: tech administration (AI provider choice, API
+keys, per-app access, acting fast in an incident) is duplicated across
+every app, and asked whether a single admin tier inside the firewall
+could govern all of them.
+
+The investigation found the portfolio has already built the pieces three
+times over: Beacon's Super Admin Providers screen + server-only
+`platform_config/providers` doc (enter keys, last-4 masking, working
+kill switches), missionIQ's multi-provider `aiProvider.js` (provider
+dropdown, connection test, enable flag), litmus/desloppify's
+`inheritFrom` shared admin contract (single-hop pull, graceful
+fallback), and ParentPoint's per-tenant AI governance (caps, allowed
+providers, pause). FamilyGraph supplies the chassis pattern: loopback
+service, scoped bearer tokens, encrypted `_ct` credential store, audit,
+dashboard, CLI.
+
+Owner rulings recorded in the PRD: all ten apps in scope; config-and-
+credentials only (never an AI gateway); keep Netlify simple (no Netlify
+API - generated paste-ready steps instead); and the tier is a NEW
+codebase in its own repo, not an extension of FamilyGraph - FamilyGraph
+becomes a governed app like the rest, its code vendored not linked. The
+kill-switch failure posture (fail open vs fail closed when an app can't
+reach the tier) is deliberately undecided; v1 ships fail-open with the
+posture as a per-app field. The PRD is parked in this repo only until
+the new repo exists.
+
 *End of session notes*
