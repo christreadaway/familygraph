@@ -3643,12 +3643,22 @@ dashboard, CLI.
 
 Owner rulings recorded in the PRD: all ten apps in scope; config-and-
 credentials only (never an AI gateway); keep Netlify simple (no Netlify
-API - generated paste-ready steps instead); and the tier is a NEW
-codebase in its own repo, not an extension of FamilyGraph - FamilyGraph
-becomes a governed app like the rest, its code vendored not linked. The
-kill-switch failure posture (fail open vs fail closed when an app can't
-reach the tier) is deliberately undecided; v1 ships fail-open with the
-posture as a per-app field. The PRD is parked in this repo only until
-the new repo exists.
+API - generated paste-ready steps instead); dual-mode per app (every app
+runs enrolled/managed OR standalone with its own local admin, flipped by
+a local enroll action, all-or-nothing over the tech-admin slice in v1);
+and a consistent admin look-and-feel across apps via a shared, vendored
+UI kit that renders only the functions each app declares.
+
+Two decisions deliberately deferred: (1) WHERE the console lives - a new
+standalone repo vs a new scoped surface inside familygraph - is a later
+call, so the PRD is written host-agnostic (the contract, onboarding, and
+UI kit are identical either way; decide after the first proof app); and
+(2) the kill-switch failure posture (fail open vs fail closed when an
+enrolled app can't reach the console), where v1 ships fail-open with the
+posture as a per-app field. The distribution model is one vendored
+contract module (litmus SYNC pattern) plus one shared admin UI kit, not
+ten hand-written integrations. Recommended sequencing: build the
+contract, prove it on beacon or missionIQ, then propagate. PRD parked in
+this repo pending the host decision.
 
 *End of session notes*
