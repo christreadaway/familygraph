@@ -3696,4 +3696,16 @@ per app, integration-secret minting, staff-admin delegation, mathtracker's
 identity fork. Next build step when the owner is ready: author
 `@chamberlain/contract` v1 and prove it on beacon or missionIQ.
 
+## Moved the Chamberlain PRDs out of this repo (2026-07-22, same day)
+
+The owner moved `CENTRAL_ADMIN_TIER_PRD.md` and `CHAMBERLAIN_CONTRACT.md`
+out of familygraph to `parentpoint/trackerdocs/` - explicitly because
+parking them here read as a decision to host Chamberlain inside
+familygraph, which is NOT decided (PRD §9 Q9 keeps the console's home
+open). ParentPoint is likewise only a holding spot, not a host decision.
+Both files are deleted from this repo; the canonical copies now live in
+`parentpoint/trackerdocs/`. The investigation findings above still stand as
+this repo's record of what was surveyed. If Chamberlain is ever built here,
+that is a future, separate decision.
+
 *End of session notes*
