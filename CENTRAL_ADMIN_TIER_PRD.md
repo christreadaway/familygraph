@@ -1,13 +1,18 @@
-# Switchboard - Central Admin Tier PRD (v1)
+# Chamberlain - Central Admin Tier PRD (v1)
 
 **Status:** Draft for owner review. No code exists yet. This is the single
 document the console AND every app's onboarding are built against.
+**Name:** Chamberlain (decided 2026-07-22) - the officer who runs a great
+household as keeper of its keys and accounts. It is the product name, the
+vendored package (`@chamberlain/contract`), the per-app flag
+(`chamberlainEnabled` / `CHAMBERLAIN_URL`), the integration doc
+(`CHAMBERLAIN_INTEGRATION.md`), and the config-key prefix (`chamberlain.*`)
+you grep future repos for. The wire/module spec is `CHAMBERLAIN_CONTRACT.md`.
 **Home:** DEFERRED (see §9 Q9). The console may live in a new standalone
-repo (working name: `switchboard`) OR inside familygraph as a new scoped
-surface - a later decision. This PRD is written host-agnostic: nothing in
-the contract or the apps changes based on where the console runs. Parked in
-the familygraph repo for now. Follows the extraction pattern in
-`ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md`.
+repo OR inside familygraph as a new scoped surface - a later decision. This
+PRD is written host-agnostic: nothing in the contract or the apps changes
+based on where the console runs. Parked in the familygraph repo for now.
+Follows the extraction pattern in `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md`.
 
 **This PRD specifies TWO deliverables that share one contract:**
 1. **The console** - a local admin service where the operator administers
@@ -19,7 +24,7 @@ the familygraph repo for now. Follows the extraction pattern in
 
 **Owner decisions already made (2026-07-18):**
 1. All ten portfolio apps are in scope.
-2. **Config-and-credentials only** - Switchboard is NEVER in the AI request
+2. **Config-and-credentials only** - Chamberlain is NEVER in the AI request
    path (no gateway/proxy). Apps make their own model calls with keys the
    console distributed.
 3. **Dual-mode, per app** - every app can run *enrolled* (managed by the
@@ -40,19 +45,19 @@ decisions; the PRD is written so neither blocks building the contract.
 
 ## 1. What this is
 
-Switchboard is a single tech-administration console, running as a local
+Chamberlain is a single tech-administration console, running as a local
 service inside the school's firewall, where the operator administers the
 whole app portfolio once: enter and rotate provider credentials (AI,
 email, SMS, payments, search), choose the AI provider and model, turn each
 app's access on or off, and act fast in an emergency - without hopping app
 to app.
 
-Every app keeps its own local admin. Enrolling an app in Switchboard makes
+Every app keeps its own local admin. Enrolling an app in Chamberlain makes
 it *defer* its tech-admin settings to the console; unenrolling returns it
 to standalone. Nothing forces an app to enroll, and an enrolled app whose
 console is unreachable keeps running on the last config it received.
 
-**What "tech administration" means here (the slice Switchboard governs):**
+**What "tech administration" means here (the slice Chamberlain governs):**
 provider credentials, AI provider/model policy, and each app's access
 on/off + kill switch. **NOT** domain administration - lunch settings,
 schedules, rosters, moderation queues, gradebooks stay local to each app,
@@ -100,7 +105,7 @@ admin.
 ## 4. Core features
 
 ### 4.1 The shared admin contract (the spine)
-One small, versioned module, authored once in the Switchboard repo and
+One small, versioned module, authored once in the Chamberlain repo and
 **vendored byte-for-byte into every app** (the litmus/desloppify
 `shared/admin/contract.js` + `SYNC.md` pattern - never hand-edited in a
 copy). It is the single source of truth; the console and every app both
@@ -137,7 +142,7 @@ locally at enrollment.
   screens are fully editable; it never calls the console.
 - **Enrolled** = the app resolves its tech-admin config through the
   contract (4.1). Its local tech-admin fields render **read-only**,
-  showing the centrally-managed value with a "managed by Switchboard"
+  showing the centrally-managed value with a "managed by Chamberlain"
   label - never editable-but-ignored (the split-brain trap). The env
   override still applies as the deliberate local escape hatch.
 - **Granularity (v1): all-or-nothing per app.** Enrolling defers the whole
@@ -179,7 +184,7 @@ The console chooses and distributes; apps call providers themselves.
   `SuperadminAiGovernance`); cost-cap fields carried as pass-through config
   for apps that implement caps.
 - Connection test at key entry (vendored from missionIQ) - a bad key is
-  caught at entry, not in a classroom. This is the ONLY place Switchboard
+  caught at entry, not in a classroom. This is the ONLY place Chamberlain
   ever calls a provider, and never in a production request path.
 - **On-prem boundary as policy:** apps flagged `onprem_ai_only`
   (teacherAIde box, Beacon local mode) never receive cloud AI keys - only
@@ -187,7 +192,7 @@ The console chooses and distributes; apps call providers themselves.
   `assertNoExternalAI()` guard.
 
 ### 4.6 Distribution - how an enrolled app receives central config
-Switchboard is inside the firewall; nothing dials in. Three mechanisms,
+Chamberlain is inside the firewall; nothing dials in. Three mechanisms,
 per app, all outbound-or-local (FamilyGraph "Option A - no open doors"):
 
 1. **Local pull** - on-prem apps (familygraph, teacherAIde server, beacon
@@ -235,7 +240,7 @@ same across the portfolio, showing only the functions relevant to that app.
 This is the UI companion to the contract (4.1): the same way the config
 schema is vendored so apps speak one language, a small **shared admin UI
 kit** (design tokens + a few components: credential field with last-4 mask,
-"managed by Switchboard" read-only state, enrollment panel, kill-switch
+"managed by Chamberlain" read-only state, enrollment panel, kill-switch
 control) is vendored so apps present one language. The portfolio already
 shares design tokens (Sensible Debate → toots inherited `tokens.css`/
 `sd.css`; familygraph's `design-handoff`), so this extends an existing
@@ -259,7 +264,7 @@ default; LAN bind is an explicit operator choice.
 
 ## 5. Business rules and logic
 
-1. **No app may hard-require Switchboard** (standing rule, owner
+1. **No app may hard-require Chamberlain** (standing rule, owner
    2026-07-08). Absent enrollment = standalone. MissionIQ's
    `FAMILYGRAPH_ENABLED=auto` is the reference behavior.
 2. **Env always wins inside each app** - the per-app escape hatch when the
@@ -276,7 +281,7 @@ default; LAN bind is an explicit operator choice.
    visible per app; drift is never silent.
 7. **Rotation shows blast radius first** - every consuming app and manual
    step listed before confirm.
-8. **Switchboard moves config and credentials only - never student or
+8. **Chamberlain moves config and credentials only - never student or
    family data.** Identity stays FamilyGraph's; content stays in the apps.
 9. **Mandatory vs optional** exists as a per-app field from day one; v1
    treats every app as optional until the owner rules otherwise.
@@ -285,7 +290,7 @@ default; LAN bind is an explicit operator choice.
 
 New SQLite DB (FamilyGraph chassis: better-sqlite3, numbered migrations,
 encrypted `_ct` columns, HMAC `_hash` columns, mode-0600 key file,
-`~/.switchboard/` home):
+`~/.chamberlain/` home):
 
 - `apps` - registry (id, name, mode, enabled, delivery_mode,
   onprem_ai_only, failure_posture, config_version, acked_version,
@@ -345,14 +350,15 @@ own, no Anthropic/OpenAI SDKs in production paths.
    (lock)? Likely per-app, tied to mandatory-vs-optional. v1 ships
    fail-open with the field in place.
 2. **Which apps are mandatory** in a deployment? Drives posture defaults.
-3. **Repo + product name** - `switchboard` is a placeholder.
-4. **Per-category enrollment** - worth building in v1, or is all-or-nothing
-   per app enough until a school asks?
+3. **Repo location** - decided-name aside (Chamberlain), whether it gets
+   its own repo is folded into Q9. RESOLVED: product name is Chamberlain.
+4. **Per-category enrollment** - RESOLVED for v1: all-or-nothing per app
+   (owner, 2026-07-22). Per-category deferred to v2 unless a school asks.
 5. **Mathtracker prerequisite fork** - Google-auth + ownerUid vs
    teacher-code + family PIN (its audit C1/H7). Must resolve before
    mathtracker can meaningfully honor central config.
 6. **Relationship to B24** (the "shared backend gets its own home" note in
-   parentpoint/beacon docs): is Switchboard that home's control plane only,
+   parentpoint/beacon docs): is Chamberlain that home's control plane only,
    or eventually its host? v1 assumes control plane only.
 7. **Staff-admin delegation** - v1, or operator-only until a second school
    exists?
@@ -360,7 +366,7 @@ own, no Anthropic/OpenAI SDKs in production paths.
    pairwise HMAC secrets (today hand-generated on both sides)? Proposed
    yes; cheap to add.
 9. **Where the console lives** (owner: defer) - a new standalone repo
-   (`switchboard`) or a new scoped surface inside familygraph. The contract
+   (`chamberlain`) or a new scoped surface inside familygraph. The contract
    (§4.1), the apps' onboarding, and the UI kit (§4.9) are identical either
    way, so this decision can wait until the contract is proven on the first
    app. Trade-off in brief: a new repo keeps familygraph purely
@@ -381,7 +387,7 @@ own, no Anthropic/OpenAI SDKs in production paths.
    checklist for the rest.
 4. Zero AI/provider secrets in any client bundle portfolio-wide (`VITE_*`
    AI keys retired), verified by grep in CI.
-5. Every app still builds, runs, and demos with Switchboard absent.
+5. Every app still builds, runs, and demos with Chamberlain absent.
 6. The audit log answers who/what/when/delivered-where for any config
    change in one query.
 7. A future Claude Code session can build the console AND onboard any app
@@ -391,7 +397,7 @@ own, no Anthropic/OpenAI SDKs in production paths.
 
 ## Logging infrastructure (required section)
 
-- **Structured JSON logs** to `~/.switchboard/logs/server.log`, rotated,
+- **Structured JSON logs** to `~/.chamberlain/logs/server.log`, rotated,
   levels `info|warn|error`, one line per: config change, credential
   entry/rotation (provider + last4 only, never the value), token
   issue/revoke, enroll/unenroll, delivery attempt/result per app, auth
@@ -405,7 +411,7 @@ own, no Anthropic/OpenAI SDKs in production paths.
   masked old→new, actor attribution.
 - **Operator debug path** - Diagnostics view with Copy log / Download log
   (the portfolio-standard "paste into a Claude Code session" loop) +
-  `switchboard status --verbose`.
+  `chamberlain status --verbose`.
 - **Per-app delivery logs** retained long enough to answer "did app X ever
   receive version N" (default 180 days, configurable).
 

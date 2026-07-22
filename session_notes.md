@@ -3661,4 +3661,39 @@ ten hand-written integrations. Recommended sequencing: build the
 contract, prove it on beacon or missionIQ, then propagate. PRD parked in
 this repo pending the host decision.
 
+## Central admin tier named + contract spec drafted (2026-07-22)
+
+The tier has a name: **Chamberlain** - the officer who runs a great
+household as keeper of its keys and accounts, which is close to literally
+the job. The name is load-bearing on purpose: it is the product name, the
+vendored package (`@chamberlain/contract`), the per-app flag
+(`chamberlainEnabled`/`CHAMBERLAIN_URL`), the config-key prefix
+(`chamberlain.*`), the manifest (`chamberlain.json`), and the per-repo doc
+(`CHAMBERLAIN_INTEGRATION.md`) - so the owner can grep any future repo
+(`rg -l chamberlain`) to answer "is this wired in?" and read
+`chamberlain.json.contractVersion` to answer "is it compatible?"
+
+Two spec-gating decisions settled: name (Chamberlain) and enrollment
+granularity (all-or-nothing per app for v1; per-category deferred to v2).
+The PRD was renamed throughout and its open questions updated to mark
+these resolved.
+
+New artifact: `CHAMBERLAIN_CONTRACT.md` - the concrete wire + module spec
+the PRD's §4.1 only described. It pins down semver compatibility and the
+greppable manifest, the `chamberlain.json` shape, the resolved config
+payload (secrets by reference + last4, never inlined), the `resolveConfig`
+precedence (env > central > local > default, single-hop), dual-mode UI
+behavior (governed keys read-only when enrolled), the enroll/check-in/ack
+endpoints, kill-switch + failure-posture semantics, the redaction rule,
+the per-repo footprint, an 8-point conformance checklist (items 1-3 are
+the mechanical compatibility gate), and the companion UI-kit module. A
+developer or future session can build the console and onboard any app
+from the PRD + this contract without the original conversation.
+
+Still deferred (do not re-litigate): console host (new repo vs inside
+familygraph), kill-switch failure posture default, mandatory-vs-optional
+per app, integration-secret minting, staff-admin delegation, mathtracker's
+identity fork. Next build step when the owner is ready: author
+`@chamberlain/contract` v1 and prove it on beacon or missionIQ.
+
 *End of session notes*
