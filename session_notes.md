@@ -3621,4 +3621,91 @@ node_modules was already present.
 
 ---
 
+## Central admin tier investigation + PRD (2026-07-18)
+
+No code this session - an investigation across all ten portfolio repos,
+ending in `CENTRAL_ADMIN_TIER_PRD.md`. The owner sensed the same pattern
+that produced FamilyGraph: tech administration (AI provider choice, API
+keys, per-app access, acting fast in an incident) is duplicated across
+every app, and asked whether a single admin tier inside the firewall
+could govern all of them.
+
+The investigation found the portfolio has already built the pieces three
+times over: Beacon's Super Admin Providers screen + server-only
+`platform_config/providers` doc (enter keys, last-4 masking, working
+kill switches), missionIQ's multi-provider `aiProvider.js` (provider
+dropdown, connection test, enable flag), litmus/desloppify's
+`inheritFrom` shared admin contract (single-hop pull, graceful
+fallback), and ParentPoint's per-tenant AI governance (caps, allowed
+providers, pause). FamilyGraph supplies the chassis pattern: loopback
+service, scoped bearer tokens, encrypted `_ct` credential store, audit,
+dashboard, CLI.
+
+Owner rulings recorded in the PRD: all ten apps in scope; config-and-
+credentials only (never an AI gateway); keep Netlify simple (no Netlify
+API - generated paste-ready steps instead); dual-mode per app (every app
+runs enrolled/managed OR standalone with its own local admin, flipped by
+a local enroll action, all-or-nothing over the tech-admin slice in v1);
+and a consistent admin look-and-feel across apps via a shared, vendored
+UI kit that renders only the functions each app declares.
+
+Two decisions deliberately deferred: (1) WHERE the console lives - a new
+standalone repo vs a new scoped surface inside familygraph - is a later
+call, so the PRD is written host-agnostic (the contract, onboarding, and
+UI kit are identical either way; decide after the first proof app); and
+(2) the kill-switch failure posture (fail open vs fail closed when an
+enrolled app can't reach the console), where v1 ships fail-open with the
+posture as a per-app field. The distribution model is one vendored
+contract module (litmus SYNC pattern) plus one shared admin UI kit, not
+ten hand-written integrations. Recommended sequencing: build the
+contract, prove it on beacon or missionIQ, then propagate. PRD parked in
+this repo pending the host decision.
+
+## Central admin tier named + contract spec drafted (2026-07-22)
+
+The tier has a name: **Chamberlain** - the officer who runs a great
+household as keeper of its keys and accounts, which is close to literally
+the job. The name is load-bearing on purpose: it is the product name, the
+vendored package (`@chamberlain/contract`), the per-app flag
+(`chamberlainEnabled`/`CHAMBERLAIN_URL`), the config-key prefix
+(`chamberlain.*`), the manifest (`chamberlain.json`), and the per-repo doc
+(`CHAMBERLAIN_INTEGRATION.md`) - so the owner can grep any future repo
+(`rg -l chamberlain`) to answer "is this wired in?" and read
+`chamberlain.json.contractVersion` to answer "is it compatible?"
+
+Two spec-gating decisions settled: name (Chamberlain) and enrollment
+granularity (all-or-nothing per app for v1; per-category deferred to v2).
+The PRD was renamed throughout and its open questions updated to mark
+these resolved.
+
+New artifact: `CHAMBERLAIN_CONTRACT.md` - the concrete wire + module spec
+the PRD's §4.1 only described. It pins down semver compatibility and the
+greppable manifest, the `chamberlain.json` shape, the resolved config
+payload (secrets by reference + last4, never inlined), the `resolveConfig`
+precedence (env > central > local > default, single-hop), dual-mode UI
+behavior (governed keys read-only when enrolled), the enroll/check-in/ack
+endpoints, kill-switch + failure-posture semantics, the redaction rule,
+the per-repo footprint, an 8-point conformance checklist (items 1-3 are
+the mechanical compatibility gate), and the companion UI-kit module. A
+developer or future session can build the console and onboard any app
+from the PRD + this contract without the original conversation.
+
+Still deferred (do not re-litigate): console host (new repo vs inside
+familygraph), kill-switch failure posture default, mandatory-vs-optional
+per app, integration-secret minting, staff-admin delegation, mathtracker's
+identity fork. Next build step when the owner is ready: author
+`@chamberlain/contract` v1 and prove it on beacon or missionIQ.
+
+## Moved the Chamberlain PRDs out of this repo (2026-07-22, same day)
+
+The owner moved `CENTRAL_ADMIN_TIER_PRD.md` and `CHAMBERLAIN_CONTRACT.md`
+out of familygraph to `parentpoint/trackerdocs/` - explicitly because
+parking them here read as a decision to host Chamberlain inside
+familygraph, which is NOT decided (PRD §9 Q9 keeps the console's home
+open). ParentPoint is likewise only a holding spot, not a host decision.
+Both files are deleted from this repo; the canonical copies now live in
+`parentpoint/trackerdocs/`. The investigation findings above still stand as
+this repo's record of what was surveyed. If Chamberlain is ever built here,
+that is a future, separate decision.
+
 *End of session notes*
