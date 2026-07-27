@@ -3708,4 +3708,24 @@ Both files are deleted from this repo; the canonical copies now live in
 this repo's record of what was surveyed. If Chamberlain is ever built here,
 that is a future, separate decision.
 
+## 2026-07-27 - Portfolio launch plan: FG stays off the August critical path; two small gaps recorded
+
+Cross-repo launch-planning session, no FamilyGraph code touched. The
+suite's August go-live runbook is `parentpoint/LAUNCH_PLAN_PRD.md` PART 2,
+and the decision that matters here is explicit: the school launches on
+ParentPoint's NATIVE roster import (its class-roster CSV carries per-parent
+custody columns plus a review queue), and FamilyGraph federation stays a
+post-launch, opt-in step. That is the standing modular-adoption posture,
+not a demotion - the cloud-to-local pairing handshake has still never run
+live, and launch week is the wrong week to debug a first standup.
+
+Two gaps from the audit are recorded for whenever the federation standup is
+scheduled, both small and both load-bearing: (1) `grade` is invisible on the
+`/v1` person object - a roster loaded here puts grade on `persons.grade`
+but a partner app reading `/v1/persons/:id` cannot see it; (2) the CSV
+importer has no custody column aliases, so a "custodial parent" column in a
+school roster is silently dropped and every membership lands on the profile
+default. Neither is scheduled; do not start either without the operator
+scheduling the standup itself.
+
 *End of session notes*
