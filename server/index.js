@@ -236,7 +236,10 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   const clientDir = path.join(__dirname, '..', 'client', 'dist');
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));
-    app.get(/^\/(?!api).*/, (req, res) => {
+    // Exclude BOTH /api and /v1 so an unknown /v1 path falls through to the
+    // /v1 JSON 404 below instead of being served index.html (which broke the
+    // contract's error shape for clients).
+    app.get(/^\/(?!api|v1).*/, (req, res) => {
       res.sendFile(path.join(clientDir, 'index.html'));
     });
   } else {
