@@ -3728,4 +3728,40 @@ school roster is silently dropped and every membership lands on the profile
 default. Neither is scheduled; do not start either without the operator
 scheduling the standup itself.
 
+---
+
+## 2026-07-29 — Security review: SSRF IPv6 guard + SPA regex; plaintext-PII documented for the operator
+
+Part of a five-repo code + security review (owner: "identify problems and fix
+low->critical bugs... securityJul28.md" — that register lives in the parentpoint
+repo). A review agent read the whole server. Two SAFE static fixes shipped here;
+the serious findings need a migration the operator must run locally with `sfw`,
+so they are DOCUMENTED, not attempted blind.
+
+Shipped (node --check clean, no dependency install):
+- `_isLoopbackOrLinkLocal` now blocks IPv6 unique-local (fc00::/7) and
+  IPv4-mapped-IPv6 (::ffff:) — a webhook/federation subscription could otherwise
+  reach an internal address on an IPv6 host via those forms.
+- the SPA catch-all regex excludes /v1 as well as /api, so an unknown /v1 path
+  returns the contract's JSON 404 instead of index.html.
+
+DOCUMENTED for the operator (securityJul28.md, tracked as parentpoint B37) —
+these are the ones that matter and they need YOU to run them:
+- **Plaintext PII at rest.** `phones.e164` is a plaintext indexed column beside
+  the encrypted `value_ct`, and `school_contexts.allergies/activities` are
+  plaintext while a parallel encrypted `health_safety` table already exists.
+  The repo's own rule is "never a plaintext PII column." The fix is a schema
+  migration (drop e164 → e164_hash for the index + decrypt-on-read; encrypt the
+  school_contexts columns) plus a row rewrite — which MUST be run and tested
+  locally with `sfw` + `node --test` against the identity store, not by an
+  autonomous session. Do this before the identity layer holds real family data.
+- **Cursor data loss.** The partner-sync check-in advances ONE cursor to the
+  cross-feed maximum, and keyset pagination uses strict `> since` on a
+  non-unique timestamp — both silently drop records (an import >200 rows, or a
+  bulk write sharing a millisecond). Use per-feed cursors + a composite
+  `(updated_at, code)` keyset with a drain loop — the `federation.js` path
+  already does exactly this and is the pattern to mirror.
+
+Committed to claude/parentpoint-live-google-auth-xu5rxt, not merged.
+
 *End of session notes*

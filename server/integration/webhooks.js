@@ -84,6 +84,8 @@ function _isLoopbackOrLinkLocal(hostname) {
   if (h === '::1' || h === '[::1]') return true;
   if (/^169\.254\./.test(h)) return true;       // IPv4 link-local + cloud metadata
   if (/^fe80:/i.test(h)) return true;           // IPv6 link-local
+  if (/^\[?f[cd][0-9a-f]{2}:/i.test(h)) return true;  // IPv6 unique-local fc00::/7 (RFC1918 equivalent)
+  if (/^\[?::ffff:/i.test(h)) return true;      // IPv4-mapped IPv6 (::ffff:10.0.0.1 bypass)
   if (/^10\./.test(h)) return true;             // RFC1918 — block by default
   if (/^192\.168\./.test(h)) return true;
   if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h)) return true;
