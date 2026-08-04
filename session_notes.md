@@ -3764,4 +3764,62 @@ these are the ones that matter and they need YOU to run them:
 
 Committed to claude/parentpoint-live-google-auth-xu5rxt, not merged.
 
+---
+
+## 2026-08-04 — Classroom A/V implications doc lands here, with an as-built appendix
+
+The operator carried in `familygraphimplications.md`, written the same day in a sibling-repo
+session (TeacherAIde / ParentPoint / AudioScribe) against a read-only clone of this repo. Those
+repos can't reach this one, so the transfer was by hand. It's now
+`CLASSROOM_AV_IMPLICATIONS.md`: sections 1-7 verbatim as the record of intent, plus Appendix A,
+which is this repo checking its claims against the actual code. Body prose untouched, per the
+PRD convention — corrections go in the appendix.
+
+The analysis holds up. Every capability it leans on is real: `p_` minting, `resolve-batch` with
+the conflicts queue, `memberships.custody`, dated `affiliations`, the consent tables, the sealed
+changed-feed, `audit_events` + `entity_changes`. Three corrections.
+
+The one that matters is a consent-semantics trap. Section 6 of the doc calls
+`person_consent_overrides` "strictest-wins." It isn't. `effective()` is **override-or-base per
+field** — a school writing `photo: allow` beats a family's identity-level `deny`. The
+`deny > group_only > allow` restrictive-wins rule is the PERSON-MERGE rule
+(`people.js:435`), which is what section 3.5.1 actually cited, correctly. So the doc's
+recommendation is fine and its table row is fine; only section 6's gloss is wrong. The
+consequence is for open decision 3: if the study release ever moves onto these rails,
+override-or-base is the WRONG semantic for a release, because a school-scoped override could
+silently re-enable classroom capture for a family that denied. Moving it here means writing a
+restrictive-merge variant of `effective()`, not reusing it. That cost now sits in the decision
+instead of being discovered later.
+
+Two smaller ones. The doc cites the v0.1 changed-feed; the contract has been `v0.2` since
+2026-06-19 with `{v0.1, v0.2}` both accepted, so nothing breaks but new work should declare
+v0.2. And sections 3.1 (student crosswalks) and 3.4 (`schoolId <-> org_`) read in places as if
+the crosswalk exists and needs wiring — it does not exist at all. Zero hits for `crosswalk`,
+`external_key`, `app_local` anywhere in `server/`; `school_contexts.school_id` is bare TEXT with
+no FK and `organizations` has no tenant-slug column. Both are new migrations off
+`SCHEMA_VERSION = 19`. The doc's estimate for the merge side is right, though: `merge()` is a
+linear list of repoint statements, so a crosswalk is one more line plus a test.
+
+Two of its asks turned out cheaper than assumed. Auto-suspending a release when enrollment ends
+(3.5.3) needs no new schema — `affiliations` is already dated, `role='student'` is person-only,
+and a partial unique index makes "currently enrolled at this org" one indexed read. And the
+purpose-creep guard in 3.3.2 binds a concrete enum: `VERIFICATION_METHODS`. The rule is simply
+that no classroom-derived method is ever added to that set and `connector_sync` never gets fed
+by a capture pipeline.
+
+Worth connecting two threads that were tracked separately: 3.3's "familygraph must not become a
+shadow education-record store, including `school_contexts` snapshots" is the same concern as the
+still-pending plaintext-PII migration from the 2026-07-29 review. `school_contexts.allergies`
+and `.activities` are plaintext today while an all-`_ct` `health_safety` table sits next to them.
+Student health data in plaintext, keyed by school, IS the education-record exposure 3.3 is
+trying to prevent. That migration should land before any Profile B school pushes real snapshots.
+
+Deliberately not built: the `PROTECTED_DATA_CLASSES.md` / FERPA-posture doc 3.3 suggests. A
+data-classification posture with FERPA implications is an owner-and-counsel call, not something
+to autogenerate from a sibling repo's suggestion. It's recorded as a fourth item on the doc's
+decision list.
+
+Docs only. No schema, no code, no contract surface, test count unchanged. Committed to
+claude/familygraph-implications-sharing-1lik03.
+
 *End of session notes*
