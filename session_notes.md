@@ -3822,4 +3822,57 @@ decision list.
 Docs only. No schema, no code, no contract surface, test count unchanged. Committed to
 claude/familygraph-implications-sharing-1lik03.
 
+## 2026-08-04 (same session, follow-up) — Owner ruling on scope: identity and anonymity, not FERPA
+
+The operator read the appendix and pushed back on the premise: "I didn't anticipate that
+familygraph would enforce ferpa. The purpose of familygraph is a single, federated source of
+identity for a church or church+school. School specific items need to live in
+parentpoint/teacheraide, while this focuses on identity and anonymity." Recorded as Appendix B
+of `CLASSROOM_AV_IMPLICATIONS.md`.
+
+The ruling is right and the FERPA framing was sloppy on the way in. familygraph never enforces
+FERPA — FERPA binds the school. A vendor is at most a processor under the school's direction,
+and local-first on the institution's own hardware with no telemetry is about as clean a
+processor story as this architecture gets. Whether FERPA attaches is a question about the SCHOOL,
+for counsel. Section 3.3's "add a FERPA-posture doc" suggestion is withdrawn, and A.4 with it.
+The operator's posture is upstream of the question: don't hold the records and it never has to
+be answered here.
+
+The uncomfortable part is where the ruling actually lands. It is NOT the classroom A/V pilot —
+that proposes nothing entering this repo but a crosswalk of opaque keys. It is migration 0017.
+The document vault has treated `iep`, `504`, and `mtss` as first-class subtypes since it
+shipped, with an access matrix keyed on `learning_team` and `assigned_teacher`
+(`documentPolicy.js:81`). An IEP is the canonical education record and no parish has one. That
+is school-specific data held here BY DESIGN, months before this pilot existed.
+
+And 0017 had a real reason: FG "becomes the authoritative ACCESS GATE" so the partner app never
+holds the bytes — one encrypted store, one policy decision, one audit trail, no inbound ports.
+Applying the ruling literally to the vault inverts that and hands ParentPoint the IEP bytes plus
+the job of rebuilding at-rest encryption and the audit trail. The ruling and 0017's security
+posture genuinely conflict. Flagged as a new decision rather than resolved unilaterally, because
+picking either side costs something real.
+
+Proposed line, awaiting confirmation: **FG holds identity, relationships, and access decisions;
+not school-authored content or school-scoped state.** Enrollment STAYS — "this person is a
+student at this org from this date" is a relationship, not an education record, and it is what
+makes the federated view work at all. The pseudonym layer (`sanitize/index.js`, `api/safe.js`)
+stays and is the anonymity half of the ruling; nothing in the pilot touches it. The vault stays
+but should go taxonomy-neutral — FG holds `content_ct` plus a `policy_key` and never parses a
+document, so what makes it LOOK like an education-record store is the taxonomy, not the storage.
+`school_contexts` MOVES: grade, classroom, homeroom teacher, activities, allergies is school
+state with a school's name on it. Blast radius is contained — `schoolContext.js`, the /v1
+read+write pair, the merge repoint at `people.js:504`, the envelope and outbound-agent paths,
+seven test files. A /v1 break, but ParentPoint is the only consumer and is where it belongs.
+
+Two useful consequences. The study-release-onto-FG-rails question (decision 3) is now answered
+NO by the ruling itself — a school-scoped release is school-scoped state — which also makes the
+override-or-base consent trap from the last entry moot instead of something to design around.
+And if `school_contexts` leaves, the plaintext-PII migration pending since 2026-07-29 for
+`allergies`/`activities` never needs writing; the columns go with the table. Do not start that
+work until the scope call is made. The `phones.e164` half of that finding is unrelated and still
+stands.
+
+Nothing built for this ruling. No schema, no code, no migration, test count unchanged.
+`school_contexts` and the vault taxonomy are untouched — Appendix B is a proposal, not a move.
+
 *End of session notes*

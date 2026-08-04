@@ -4,8 +4,9 @@
 AudioScribe side) against a read-only clone of this repo, and carried here by hand because those
 repos have no direct connection to this one. Sections 1-7 are that document **verbatim** — the
 record of intent, unedited. **Appendix A** is this repo's verification of its claims against the
-as-built code, added 2026-08-04, and is where the corrections live. Read the appendix before
-acting on sections 1-7.
+as-built code, added 2026-08-04. **Appendix B** records the owner's scope ruling the same day,
+which withdraws section 3.3's FERPA framing and answers decision 7.3. Read both appendices
+before acting on sections 1-7.
 
 ---
 
@@ -277,9 +278,101 @@ concern, and the migration should land before any Profile B school pushes real s
 Section 3.3 suggests this repo add a `PROTECTED_DATA_CLASSES.md` / FERPA-posture document. It
 does not exist here and was not written in this session: a data-classification posture with
 FERPA implications is an owner-and-counsel call, not something to autogenerate from a sibling
-repo's suggestion. Treat it as a fourth item on section 7's decision list.
+repo's suggestion. **Superseded by Appendix B** — the owner has since ruled against the FERPA
+framing entirely.
 
 ### A.5 What changed in this repo
 
 Nothing but this file and `session_notes.md`. No schema, no code, no contract surface. Test
 count unchanged.
+
+---
+
+## Appendix B — Owner ruling, 2026-08-04: familygraph's scope
+
+**The ruling, in the owner's words:** the purpose of familygraph is a single, federated source
+of identity for a church or church+school. School-specific items live in ParentPoint /
+TeacherAIde. familygraph focuses on **identity and anonymity**. It does not take on a FERPA
+posture.
+
+Three things follow, and the third is the one with teeth.
+
+### B.1 The FERPA framing was wrong
+
+familygraph never "enforces FERPA." FERPA binds the educational institution. A vendor is at most
+a processor acting under the school's direction, and familygraph — local-first on the
+institution's own hardware, no telemetry, no cloud — is about as clean a processor story as this
+architecture allows. Whether FERPA attaches at all is a question about the SCHOOL, answered by
+counsel, not something this repo decides.
+
+So section 3.3's suggestion that familygraph "adds the FERPA-posture treatment its sibling repos
+carry" is withdrawn, and A.4's framing of it as an open decision goes with it. The owner's
+posture is upstream of the whole question: **don't hold the records, and it never has to be
+answered here.**
+
+### B.2 The pilot was never the exposure — migration 0017 was
+
+Worth being blunt, because the ruling doesn't land where the doc was looking. The classroom A/V
+pilot proposes nothing that enters familygraph beyond a crosswalk of opaque keys. But the
+document vault already treats `iep`, `504`, and `mtss` as first-class subtypes
+(`server/integration/documents.js:37`), under an access matrix keyed on `learning_team` and
+`assigned_teacher` staff roles (`server/integration/documentPolicy.js:81`). An IEP is the
+canonical education record. No parish has one. That is school-specific data, held here by
+design, and it predates this pilot by months.
+
+That design had a reason, recorded in the 0017 header: familygraph "becomes the authoritative
+ACCESS GATE" so the partner app never holds the bytes — one encrypted store, one policy
+decision, one audit trail, no inbound ports. Moving accommodation plans to ParentPoint inverts
+it: ParentPoint would hold IEP bytes and would have to rebuild encryption at rest, the access
+matrix, and the audit trail. The ruling and 0017's security posture pull in opposite directions.
+That tension is the decision, not a detail.
+
+### B.3 The line worth drawing, and what moves under it
+
+Proposed, for the owner to confirm: **familygraph holds identity, relationships, and access
+decisions. It does not hold school-authored content or school-scoped state.** That keeps the
+ruling's spirit without discarding what 0017 bought.
+
+**Stays.** Persons, families, memberships and custody, organizations, affiliations. Enrollment is
+an identity fact — "this person is a student at this org, from this date to that date" is a
+relationship, not an education record, and it is exactly what makes the federated view work.
+Opaque codes, encrypted contact PII, and the pseudonym layer (`server/sanitize/index.js`,
+`server/api/safe.js`) that keeps AI workflows from ever seeing a real name. That layer IS the
+anonymity half of the ruling, and nothing in the pilot touches it.
+
+**Stays, reframed.** The documents vault as an encrypted byte store plus an access gate.
+familygraph holds `content_ct` and a derived `policy_key`; it never parses a document and never
+knows what an IEP says. What makes it LOOK like an education-record store is the taxonomy, not
+the storage. If the ruling is applied literally here, the move is to make the vault
+taxonomy-neutral — the school app owns the meaning and hands over a policy key — rather than to
+relocate the bytes into an app with a weaker at-rest story.
+
+**Moves.** `school_contexts`: grade, `classroom_id`, `classroom_name`, homeroom teacher,
+`school_year`, activities, allergies. That is school state with a school's name on it, and under
+the ruling ParentPoint / TeacherAIde own it. The blast radius is contained — one module
+(`server/integration/schoolContext.js`), the `/v1` read+write pair, the merge repoint at
+`server/identity/people.js:504`, the sealed-envelope and outbound-agent paths, and seven test
+files. It is a `/v1` contract break, but ParentPoint is the only consumer and is where the data
+would live anyway.
+
+### B.4 The ruling may retire a pending migration
+
+The plaintext-PII fix outstanding since 2026-07-29 covers `school_contexts.allergies` and
+`.activities`. If that table leaves under B.3, the migration never needs writing — the columns
+go with it. Don't start that work until the scope call is made. The `phones.e164` half of that
+finding is unrelated and still stands on its own.
+
+### B.5 Effect on section 7's decision list
+
+- **Item 3 (moving the study release onto familygraph's consent rails) is answered: no.** A
+  school-scoped study release is school-specific state. The ruling settles it, and A.1's
+  override-or-base trap becomes moot rather than something to design around.
+- **New item: the vault's accommodation taxonomy** — `iep` / `504` / `mtss` in or out, per B.2.
+  This is the only place the ruling contradicts a shipped, deliberate design.
+- Items 1 and 2 are unaffected; both already bind in ParentPoint and TeacherAIde.
+
+### B.6 Still not done here
+
+No code or schema changed for this ruling. `school_contexts` is untouched, the vault taxonomy is
+untouched, and no migration was written. B.3 is a proposal awaiting confirmation, not a
+completed move.
