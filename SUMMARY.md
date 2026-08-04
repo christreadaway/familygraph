@@ -9,6 +9,14 @@ AES-256-GCM encrypted at rest; AI workflows and exports default to pseudonyms;
 PII exports require explicit consent and land in a tier-2 audit trail. It runs
 entirely on the operator's machine - no telemetry, no cloud. Apache-2.0.
 
+**What it is not.** Not a school information system, and not a store of
+education records. Family Graph holds identity, relationships, and access
+decisions; grades, classrooms, attendance, coursework, and anything else a
+school authors about a student live in the school's own apps. Enrollment
+itself is in scope - "this person is a student at this org from this date" is
+a relationship, not an education record. The full boundary is in `CLAUDE.md`;
+the open items against it are in `OPEN_DECISIONS.md`.
+
 **Local install (macOS / Linux, Node.js 20+).** Dependency installs must route
 through Socket Firewall (`sfw`):
 

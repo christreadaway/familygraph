@@ -6,7 +6,8 @@ repos have no direct connection to this one. Sections 1-7 are that document **ve
 record of intent, unedited. **Appendix A** is this repo's verification of its claims against the
 as-built code, added 2026-08-04. **Appendix B** records the owner's scope ruling the same day,
 which withdraws section 3.3's FERPA framing and answers decision 7.3. Read both appendices
-before acting on sections 1-7.
+before acting on sections 1-7. Section 7's decision list is superseded by `OPEN_DECISIONS.md`;
+the scope boundary itself lives in `CLAUDE.md`.
 
 ---
 
@@ -364,12 +365,17 @@ finding is unrelated and still stands on its own.
 
 ### B.5 Effect on section 7's decision list
 
+Section 7 is superseded by **`OPEN_DECISIONS.md`**, which is now the single running list for
+this repo and carries the options, costs, and recommendations. In summary:
+
 - **Item 3 (moving the study release onto familygraph's consent rails) is answered: no.** A
   school-scoped study release is school-specific state. The ruling settles it, and A.1's
-  override-or-base trap becomes moot rather than something to design around.
+  override-or-base trap becomes moot rather than something to design around. Closed as C1.
 - **New item: the vault's accommodation taxonomy** — `iep` / `504` / `mtss` in or out, per B.2.
-  This is the only place the ruling contradicts a shipped, deliberate design.
-- Items 1 and 2 are unaffected; both already bind in ParentPoint and TeacherAIde.
+  The only place the ruling contradicts a shipped, deliberate design. Open as D1, with D2
+  (`school_contexts`) blocked behind it.
+- Items 1 and 2 are unaffected; both already bind in ParentPoint and TeacherAIde. Tracked as D5
+  and D4.
 
 ### B.6 Still not done here
 

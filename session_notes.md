@@ -3875,4 +3875,36 @@ stands.
 Nothing built for this ruling. No schema, no code, no migration, test count unchanged.
 `school_contexts` and the vault taxonomy are untouched — Appendix B is a proposal, not a move.
 
+## 2026-08-04 (same session, follow-up 2) — Scope boundary onto a durable shelf; decisions split out
+
+The ruling was sitting in a pilot-specific doc and the journal, which is the wrong shelf for
+something that fundamental. Moved it to where a future session trips over it before proposing the
+next `school_contexts`: a new "Scope boundary (always on)" section in `CLAUDE.md`, a "What it is
+not" paragraph in `SUMMARY.md`, and a short scope note plus doc-index line in `README.md`.
+
+The `CLAUDE.md` section is written as a rule, not a description — in scope, out of scope,
+enrollment explicitly IN because "student at this org from this date" is a relationship and
+that's what makes federation work, no biometrics, and a flat statement that FG does not enforce
+FERPA and must not be described as doing so. The part that matters most for future sessions is
+the last bullet: `school_contexts` and the vault's `accommodation` taxonomy are named as known
+exceptions that PREDATE the ruling, with instructions not to add to them and never to cite them
+as precedent. Unnamed exceptions are how a boundary quietly stops being a boundary.
+
+Also split the decision list into `OPEN_DECISIONS.md`. It was accumulating inside
+`CLASSROOM_AV_IMPLICATIONS.md` §7, which meant this repo's open questions were buried in one
+pilot's document. The new file carries D1-D5 open (vault taxonomy, `school_contexts`, Profile B
+crosswalk timing, studentCode minting, guardianship rules), C1-C2 closed with reasoning (study
+release onto FG rails — no; FERPA posture — withdrawn), and a final section for outstanding work
+that needs doing rather than deciding (`phones.e164`, the held `school_contexts` plaintext
+columns, cursor data loss). Each open item lists options with costs, a recommendation, who
+decides, and what it blocks.
+
+D1 is the one to look at first. Recommendation is taxonomy-neutral: keep the vault as an
+encrypted byte store and access gate, but move `SUBTYPE_TO_POLICY` and the matrix out so the
+school app derives `policy_key` and passes it in. That satisfies the ruling without surrendering
+0017's one-gate property, and it's the small option. D2 is blocked behind it deliberately —
+same question, and deciding them apart invites an inconsistent answer.
+
+Docs only again. Four files touched plus the new one, no schema, no code, test count unchanged.
+
 *End of session notes*
