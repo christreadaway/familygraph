@@ -3764,4 +3764,147 @@ these are the ones that matter and they need YOU to run them:
 
 Committed to claude/parentpoint-live-google-auth-xu5rxt, not merged.
 
+---
+
+## 2026-08-04 — Classroom A/V implications doc lands here, with an as-built appendix
+
+The operator carried in `familygraphimplications.md`, written the same day in a sibling-repo
+session (TeacherAIde / ParentPoint / AudioScribe) against a read-only clone of this repo. Those
+repos can't reach this one, so the transfer was by hand. It's now
+`CLASSROOM_AV_IMPLICATIONS.md`: sections 1-7 verbatim as the record of intent, plus Appendix A,
+which is this repo checking its claims against the actual code. Body prose untouched, per the
+PRD convention — corrections go in the appendix.
+
+The analysis holds up. Every capability it leans on is real: `p_` minting, `resolve-batch` with
+the conflicts queue, `memberships.custody`, dated `affiliations`, the consent tables, the sealed
+changed-feed, `audit_events` + `entity_changes`. Three corrections.
+
+The one that matters is a consent-semantics trap. Section 6 of the doc calls
+`person_consent_overrides` "strictest-wins." It isn't. `effective()` is **override-or-base per
+field** — a school writing `photo: allow` beats a family's identity-level `deny`. The
+`deny > group_only > allow` restrictive-wins rule is the PERSON-MERGE rule
+(`people.js:435`), which is what section 3.5.1 actually cited, correctly. So the doc's
+recommendation is fine and its table row is fine; only section 6's gloss is wrong. The
+consequence is for open decision 3: if the study release ever moves onto these rails,
+override-or-base is the WRONG semantic for a release, because a school-scoped override could
+silently re-enable classroom capture for a family that denied. Moving it here means writing a
+restrictive-merge variant of `effective()`, not reusing it. That cost now sits in the decision
+instead of being discovered later.
+
+Two smaller ones. The doc cites the v0.1 changed-feed; the contract has been `v0.2` since
+2026-06-19 with `{v0.1, v0.2}` both accepted, so nothing breaks but new work should declare
+v0.2. And sections 3.1 (student crosswalks) and 3.4 (`schoolId <-> org_`) read in places as if
+the crosswalk exists and needs wiring — it does not exist at all. Zero hits for `crosswalk`,
+`external_key`, `app_local` anywhere in `server/`; `school_contexts.school_id` is bare TEXT with
+no FK and `organizations` has no tenant-slug column. Both are new migrations off
+`SCHEMA_VERSION = 19`. The doc's estimate for the merge side is right, though: `merge()` is a
+linear list of repoint statements, so a crosswalk is one more line plus a test.
+
+Two of its asks turned out cheaper than assumed. Auto-suspending a release when enrollment ends
+(3.5.3) needs no new schema — `affiliations` is already dated, `role='student'` is person-only,
+and a partial unique index makes "currently enrolled at this org" one indexed read. And the
+purpose-creep guard in 3.3.2 binds a concrete enum: `VERIFICATION_METHODS`. The rule is simply
+that no classroom-derived method is ever added to that set and `connector_sync` never gets fed
+by a capture pipeline.
+
+Worth connecting two threads that were tracked separately: 3.3's "familygraph must not become a
+shadow education-record store, including `school_contexts` snapshots" is the same concern as the
+still-pending plaintext-PII migration from the 2026-07-29 review. `school_contexts.allergies`
+and `.activities` are plaintext today while an all-`_ct` `health_safety` table sits next to them.
+Student health data in plaintext, keyed by school, IS the education-record exposure 3.3 is
+trying to prevent. That migration should land before any Profile B school pushes real snapshots.
+
+Deliberately not built: the `PROTECTED_DATA_CLASSES.md` / FERPA-posture doc 3.3 suggests. A
+data-classification posture with FERPA implications is an owner-and-counsel call, not something
+to autogenerate from a sibling repo's suggestion. It's recorded as a fourth item on the doc's
+decision list.
+
+Docs only. No schema, no code, no contract surface, test count unchanged. Committed to
+claude/familygraph-implications-sharing-1lik03.
+
+## 2026-08-04 (same session, follow-up) — Owner ruling on scope: identity and anonymity, not FERPA
+
+The operator read the appendix and pushed back on the premise: "I didn't anticipate that
+familygraph would enforce ferpa. The purpose of familygraph is a single, federated source of
+identity for a church or church+school. School specific items need to live in
+parentpoint/teacheraide, while this focuses on identity and anonymity." Recorded as Appendix B
+of `CLASSROOM_AV_IMPLICATIONS.md`.
+
+The ruling is right and the FERPA framing was sloppy on the way in. familygraph never enforces
+FERPA — FERPA binds the school. A vendor is at most a processor under the school's direction,
+and local-first on the institution's own hardware with no telemetry is about as clean a
+processor story as this architecture gets. Whether FERPA attaches is a question about the SCHOOL,
+for counsel. Section 3.3's "add a FERPA-posture doc" suggestion is withdrawn, and A.4 with it.
+The operator's posture is upstream of the question: don't hold the records and it never has to
+be answered here.
+
+The uncomfortable part is where the ruling actually lands. It is NOT the classroom A/V pilot —
+that proposes nothing entering this repo but a crosswalk of opaque keys. It is migration 0017.
+The document vault has treated `iep`, `504`, and `mtss` as first-class subtypes since it
+shipped, with an access matrix keyed on `learning_team` and `assigned_teacher`
+(`documentPolicy.js:81`). An IEP is the canonical education record and no parish has one. That
+is school-specific data held here BY DESIGN, months before this pilot existed.
+
+And 0017 had a real reason: FG "becomes the authoritative ACCESS GATE" so the partner app never
+holds the bytes — one encrypted store, one policy decision, one audit trail, no inbound ports.
+Applying the ruling literally to the vault inverts that and hands ParentPoint the IEP bytes plus
+the job of rebuilding at-rest encryption and the audit trail. The ruling and 0017's security
+posture genuinely conflict. Flagged as a new decision rather than resolved unilaterally, because
+picking either side costs something real.
+
+Proposed line, awaiting confirmation: **FG holds identity, relationships, and access decisions;
+not school-authored content or school-scoped state.** Enrollment STAYS — "this person is a
+student at this org from this date" is a relationship, not an education record, and it is what
+makes the federated view work at all. The pseudonym layer (`sanitize/index.js`, `api/safe.js`)
+stays and is the anonymity half of the ruling; nothing in the pilot touches it. The vault stays
+but should go taxonomy-neutral — FG holds `content_ct` plus a `policy_key` and never parses a
+document, so what makes it LOOK like an education-record store is the taxonomy, not the storage.
+`school_contexts` MOVES: grade, classroom, homeroom teacher, activities, allergies is school
+state with a school's name on it. Blast radius is contained — `schoolContext.js`, the /v1
+read+write pair, the merge repoint at `people.js:504`, the envelope and outbound-agent paths,
+seven test files. A /v1 break, but ParentPoint is the only consumer and is where it belongs.
+
+Two useful consequences. The study-release-onto-FG-rails question (decision 3) is now answered
+NO by the ruling itself — a school-scoped release is school-scoped state — which also makes the
+override-or-base consent trap from the last entry moot instead of something to design around.
+And if `school_contexts` leaves, the plaintext-PII migration pending since 2026-07-29 for
+`allergies`/`activities` never needs writing; the columns go with the table. Do not start that
+work until the scope call is made. The `phones.e164` half of that finding is unrelated and still
+stands.
+
+Nothing built for this ruling. No schema, no code, no migration, test count unchanged.
+`school_contexts` and the vault taxonomy are untouched — Appendix B is a proposal, not a move.
+
+## 2026-08-04 (same session, follow-up 2) — Scope boundary onto a durable shelf; decisions split out
+
+The ruling was sitting in a pilot-specific doc and the journal, which is the wrong shelf for
+something that fundamental. Moved it to where a future session trips over it before proposing the
+next `school_contexts`: a new "Scope boundary (always on)" section in `CLAUDE.md`, a "What it is
+not" paragraph in `SUMMARY.md`, and a short scope note plus doc-index line in `README.md`.
+
+The `CLAUDE.md` section is written as a rule, not a description — in scope, out of scope,
+enrollment explicitly IN because "student at this org from this date" is a relationship and
+that's what makes federation work, no biometrics, and a flat statement that FG does not enforce
+FERPA and must not be described as doing so. The part that matters most for future sessions is
+the last bullet: `school_contexts` and the vault's `accommodation` taxonomy are named as known
+exceptions that PREDATE the ruling, with instructions not to add to them and never to cite them
+as precedent. Unnamed exceptions are how a boundary quietly stops being a boundary.
+
+Also split the decision list into `OPEN_DECISIONS.md`. It was accumulating inside
+`CLASSROOM_AV_IMPLICATIONS.md` §7, which meant this repo's open questions were buried in one
+pilot's document. The new file carries D1-D5 open (vault taxonomy, `school_contexts`, Profile B
+crosswalk timing, studentCode minting, guardianship rules), C1-C2 closed with reasoning (study
+release onto FG rails — no; FERPA posture — withdrawn), and a final section for outstanding work
+that needs doing rather than deciding (`phones.e164`, the held `school_contexts` plaintext
+columns, cursor data loss). Each open item lists options with costs, a recommendation, who
+decides, and what it blocks.
+
+D1 is the one to look at first. Recommendation is taxonomy-neutral: keep the vault as an
+encrypted byte store and access gate, but move `SUBTYPE_TO_POLICY` and the matrix out so the
+school app derives `policy_key` and passes it in. That satisfies the ruling without surrendering
+0017's one-gate property, and it's the small option. D2 is blocked behind it deliberately —
+same question, and deciding them apart invites an inconsistent answer.
+
+Docs only again. Four files touched plus the new one, no schema, no code, test count unchanged.
+
 *End of session notes*

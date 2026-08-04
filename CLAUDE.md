@@ -57,6 +57,40 @@ The point is to keep a malicious or typosquatted npm package from
 landing on disk in this codebase, ever. The operator has accepted the
 one-word cost of typing `sfw` to get that guarantee. Don't erode it.
 
+## Scope boundary (always on)
+
+Owner ruling, 2026-08-04. Family Graph is a single, federated source of
+IDENTITY for a church, or a church and its school. It focuses on identity
+and anonymity. School-specific concerns live in the school apps
+(ParentPoint / TeacherAIde), not here.
+
+The operational line: **Family Graph holds identity, relationships, and
+access decisions. It does not hold school-authored content or
+school-scoped state.**
+
+- **In scope.** People, families, memberships and custody, organizations,
+  dated affiliations, opaque codes, encrypted contact PII, the conflicts
+  queue and merge machinery, the audit trail, and the pseudonym layer that
+  keeps AI workflows from ever seeing a real name.
+- **Enrollment is in scope.** "This person is a student at this org from
+  this date to that date" is a relationship, not an education record, and
+  it is what makes the federated view work at all.
+- **Out of scope.** Grades, classrooms, seating, attendance, transcripts,
+  coursework, participation analytics, or any other artifact a school
+  authors about a student. Never add a column or table for these. If a
+  feature seems to need one, it belongs in ParentPoint or TeacherAIde —
+  flag it and stop.
+- **No biometrics, ever.**
+- Family Graph does not enforce FERPA and must not be described as doing
+  so. FERPA binds the institution; Family Graph is at most a processor
+  running on the institution's own hardware. The posture is to not hold
+  education records in the first place, so the question never attaches
+  here.
+- Two known exceptions predate this ruling: `school_contexts`, and the
+  document vault's `accommodation` taxonomy (`iep` / `504` / `mtss`).
+  Both are open decisions — see `OPEN_DECISIONS.md`. Do not add to
+  either, and never cite either as precedent for new school-scoped state.
+
 ## PII rules (always on)
 
 - No real institution names, people, addresses, phones, or emails in

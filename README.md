@@ -15,9 +15,16 @@ trail.
 
 The "why" lives in [`business_spec.md`](./business_spec.md). The "how" lives
 in [`product_spec.md`](./product_spec.md). The decision history lives in
-[`session_notes.md`](./session_notes.md). The cross-app integration plan
-lives in
+[`session_notes.md`](./session_notes.md), and the decisions still outstanding
+live in [`OPEN_DECISIONS.md`](./OPEN_DECISIONS.md). The cross-app integration
+plan lives in
 [`ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md`](./ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md).
+
+**Scope.** Family Graph is a source of identity, not a school information
+system. It holds identity, relationships, and access decisions; grades,
+classrooms, attendance, and coursework live in the school's own apps.
+Enrollment is in scope - it is a relationship, not an education record. The
+full boundary is in [`CLAUDE.md`](./CLAUDE.md).
 
 ## Provenance note: CDCF submission baseline
 
