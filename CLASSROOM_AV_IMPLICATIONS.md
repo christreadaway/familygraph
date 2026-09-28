@@ -382,3 +382,22 @@ this repo and carries the options, costs, and recommendations. In summary:
 No code or schema changed for this ruling. `school_contexts` is untouched, the vault taxonomy is
 untouched, and no migration was written. B.3 is a proposal awaiting confirmation, not a
 completed move.
+
+---
+
+## Note, 2026-09-28: a crosswalk now exists (A.1.3 is out of date)
+
+A.1.3 says no crosswalk exists and the schema is at `SCHEMA_VERSION = 19`. Both changed on
+2026-09-28. Migration 0020 added `external_refs(source, ref, kind, code)`, and the schema is now
+at `SCHEMA_VERSION = 20`. It links another app's opaque record id to a Family Graph person or
+family code; readers follow the merge alias table, so a merge keeps refs pointing at the
+survivor without a repoint line in `merge()`. Only deliberate imports write it (today the
+MissionIQ import CLI, refs like `contact:<id>`), and `/api/identity/resolve` and
+`/resolve-batch` read it only for the master token or a key named after that source.
+
+It is not yet the crosswalk section 3.1 describes. There is no school-org column and no dating,
+so `(app, school org, external_key) -> p_code` with reassignment across school years still needs
+design, and the `schoolId <-> org_` link from 3.4 is still unbuilt. The same work added the
+community identifier spelling (`p_<hex>` <-> `I<HEX>`, `f_<hex>` <-> `F<HEX>`) and the roster API
+at `/api/identity/roster` under the `roster` scope; see `FAMILYGRAPH_INTEGRATION.md` and
+`README.md`. Nothing in the classroom pilot is wired to either.

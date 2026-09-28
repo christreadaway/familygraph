@@ -1586,6 +1586,11 @@ new consuming-app feature lands, add a flag here and bump `capabilities_version`
 Keep this map in sync with the changelog below (source:
 `server/api/health.js`).
 
+*Note (2026-09-28):* the example above is the 2026-07-01 build. The current
+build reports `schema: 20`, `capabilities_version: 3`, and adds
+`identity_conflict_source_ref` (v2) plus `community_ids` and
+`identity_crosswalk` (v3). See A.8 (changelog), A.9, and A.10.
+
 ## A.2 `POST /api/identity/resolve` now returns a family code
 
 The resolve response is unchanged except it now also:
@@ -1692,3 +1697,142 @@ Capability flag: `identity_conflict_source_ref`.
 |---|---|---|
 | 1 | 2026-07-01 | `capabilities` map on /health; resolve returns family code + attaches emails/phones; resolve-batch; changed feed; issue-key CLI; feedback winner semantics documented. |
 | 2 | 2026-07-01 | resolve/resolve-batch stamp caller `source_ref` (+ `source`) onto opened conflicts (`identity_conflict_source_ref`); per-record `source_ref` in batch. |
+| 3 | 2026-09-28 | Community ids (`I…` / `F…`) and the roster API under `/api/identity/roster` with the new `roster` scope (`community_ids`); crosswalk table `external_refs` (migration 0020, schema 20), read by resolve / resolve-batch (`identity_crosswalk`); resolve returns `families: [codes]` instead of guessing when a person is in several households. |
+
+## A.9 Community identifiers and the roster API (2026-09-28)
+
+Family Graph is the only minter of identity. Doc Anonymizer, MissionIQ, and
+any later consuming app ask Family Graph and never mint their own ids.
+
+**The identifier.** A community id is the Family Graph code re-spelled:
+`p_<16 hex>` <-> `I<16 HEX>` for a person, `f_<16 hex>` <-> `F<16 HEX>` for a
+household. Legacy 8-hex codes render the same way (`I` + 8 hex). Input is
+accepted in any case; output is always uppercase. Convert with the helpers in
+`server/crypto/identifiers.js` (`toCommunityId`, `fromCommunityId`,
+`isCommunityId`, `toCode`), never by hand. On a merge the loser's code becomes
+a permanent alias of the winner, so an older file carrying the loser's id
+still resolves. An id is never reissued, and nothing is minted until every
+review item is decided and the caller commits.
+
+**Routes** (`server/api/roster.js`, engine `server/identity/roster.js`):
+
+| Verb + path | Purpose | Notes |
+|---|---|---|
+| `POST /api/identity/roster/plan` | Dry run | Runs the real import inside a transaction and rolls it back. Writes nothing. |
+| `POST /api/identity/roster/commit` | Write it | 409 `{ error: 'review_incomplete', plan }` while any review item is undecided or a decision is stale; otherwise one transaction, 201. |
+| `GET /api/identity/roster/lookup/:id` | `I…` / `F…` (or `p_` / `f_`) -> current record | Follows merges. Returns `{ kind, code, community_id, status, requested, redirected }`; 404 when unknown. |
+
+**Auth.** All three need the `roster` scope (or the master token). A key for
+Doc Anonymizer carries only that scope:
+
+```
+cd ~/familygraph
+node bin/family-graph.js issue-key docanonymizer roster
+```
+
+A `roster` key sees the people a roster matches but cannot list the directory
+(`pii.read`) or touch connector settings (`import`). HTTP callers other than
+the master token may not send crosswalk refs or code hints, and may not use
+another app's `source` name once that source has crosswalk links (403
+`roster_forbidden`).
+
+**Rate limit.** Plan and commit share a dedicated bucket (capacity 20, refill
+0.5/s). Lookup stays on the PII limiter.
+
+**Request body** (plan and commit):
+
+```jsonc
+{
+  "sheets": [{ "name": "Sheet1", "headers": ["..."], "rows": [["..."]], "mapping": {} }],
+  // or "households": [...]  (not both)
+  "decisions": {
+    "0:3:1":      { "action": "attach", "target": "I0123456789ABCDEF" }, // attach | create | skip
+    "0:3:family": { "action": "create" }                                // attach | create
+  },
+  "source": "docanonymizer",
+  "source_ref": "[one id per upload]",
+  "category": "school",          // church | school | other
+  "tags": [],
+  "idempotency_key": "[8-200 chars of A-Za-z0-9._:-]"  // commit only
+}
+```
+
+A decision `target` is an `I…` / `F…` id or an earlier row's key on the same
+upload (`"0:3:1"`, `"0:3:family"`). A `source_ref` names ONE upload; never
+reuse it. A decision that no longer answers the current question (a `create`
+where the plan now finds a definitive match, or one that would repeat an
+earlier commit of the same `source_ref`) is refused as stale and listed in
+`stale_decisions`; re-plan and ask again.
+
+Limits: 20 MB body, 25 sheets, 20,000 rows, 300 columns, 4,000 chars per cell.
+
+**Response.** Per person: `key`, `slot`, `role`, names, `name_cells`,
+`action` (`matched | new | review | skip`), `community_id` (null in a plan for
+anyone new), `candidates` (each with `community_id`, or `sheet_ref` for
+someone new earlier in the same upload), `review_reasons`, `same_as`,
+`told_apart`. Households follow the same idea. `summary` carries
+`persons { matched, new, review, skipped }`, `families { matched, new, review }`,
+`crosswalk`, and `told_apart`.
+
+**Commit idempotency.** With `idempotency_key`, a retry of the same request by
+the same caller returns the stored result (HTTP 200, `replayed: true`) and
+writes nothing; the same key with a different request is 409
+`idempotency_conflict`. Keys are scoped per caller and kept 7 days in the
+`idempotency_keys` table with an HMAC of the request and the encrypted
+response. Refusals are not stored. Doc Anonymizer sends
+`docanon:<session>:<32 hex of sha256 of the commit body>` on every commit.
+
+**Matching.** Roster imports use strict mode: only an exact first name or a
+nickname-table pair proves identity, a birthdate or Jr/Sr conflict vetoes an
+automatic match, different house or unit numbers are different places, and
+anything the rules cannot settle comes back as a review item. The full rule
+set lives in `server/identity/roster.js` and `server/identity/matching.js`. Plan and commit run on the
+request thread; a 2,000-row roster holds other Family Graph requests for
+about 10 seconds.
+
+## A.10 Crosswalk and `/api/identity/resolve` (2026-09-28)
+
+Migration 0020 (`SCHEMA_VERSION` 20) adds `external_refs (source, ref, kind,
+code)`, linking another app's record id to a Family Graph code. MissionIQ refs
+are `contact:<id>`, `child:<id>`, `family:<id>`. Only deliberate imports write
+it (the `import-missioniq` CLI, or a roster commit with refs from the master
+token). `/resolve` and `/resolve-batch` read it and never write it.
+
+- **Who may read it.** The master token, or a scoped key whose NAME equals the
+  `source`. MissionIQ's key is therefore issued as
+  `family-graph issue-key missioniq` (default scopes). A key under any other
+  name that sends a record ref for a source with crosswalk links gets 403
+  `crosswalk_forbidden`, with the fix in `detail`. It is never quietly
+  resolved by name.
+- **A hit** comes back as `{ code, action: 'attached', via: 'crosswalk',
+  score: 1, reasons: ['linked_record'] }`, but only while the incoming record
+  still describes that person (exact first name, a real nickname, or the same
+  birthdate with a resembling first name, and no birthdate or Jr/Sr
+  contradiction). Otherwise the record goes through the normal resolver,
+  nothing is attached to the linked person, and the result carries
+  `via: 'crosswalk_mismatch'`.
+- **`with_family`** and the `family` key: one active household -> that
+  household. Several -> the one crosswalk-linked from the same source if
+  exactly one qualifies, else no `family` and `families: [codes]` instead.
+  A caller should not stamp a household code in that case.
+
+Resolve got stricter globally in the same pass: same surname plus same
+address alone is no longer a definitive match (it fused spouses), and a
+birthdate or Jr/Sr conflict vetoes an automatic merge.
+
+**MissionIQ import CLI.** One-time link of MissionIQ's existing people:
+
+```
+cd ~/familygraph
+node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --dry-run
+node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --category church
+```
+
+It opens MissionIQ's SQLite read-only, runs families, contacts, and children
+through the roster engine, asks the operator about each uncertain item in the
+terminal, and writes nothing until the operator types YES. Safe to re-run.
+Before running it, make sure MissionIQ talks to Family Graph with the master
+token or a key named `missioniq`, or its "Sync now" is refused once the
+import has linked its records.
+
+Tests at the end of this pass: 772 (771 pass, 1 skipped on root).

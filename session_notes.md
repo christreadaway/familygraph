@@ -3907,4 +3907,101 @@ same question, and deciding them apart invites an inconsistent answer.
 
 Docs only again. Four files touched plus the new one, no schema, no code, test count unchanged.
 
+## 2026-09-28 - Community ids, the roster API, the MissionIQ import, and a strict matcher
+
+The owner's goal: every person a spreadsheet surfaces (school roster, parishioner list) gets one
+lifelong id, never a second one in any product, and two humans never share one. Anything the rules
+can't settle goes to a person, but the obvious cases have to be automatic in both directions or the
+verification burden kills it. Family Graph stays the ONLY minter. Branch
+claude/gracious-archimedes-8xhkgx.
+
+The id is not a new column. It is the existing code re-spelled: `p_<16 hex>` <-> `I<16 HEX>`,
+`f_<16 hex>` <-> `F<16 HEX>`, legacy 8-hex codes the same way. Helpers live in
+`server/crypto/identifiers.js`. Any case on input, uppercase on output. A merge leaves the loser as a
+permanent alias, so a file anonymized before the merge still restores. Minting a parallel id space
+would have meant a second crosswalk to keep honest forever; re-spelling the code costs nothing.
+
+The roster API is mounted at `/api/identity/roster`: `POST /plan` runs the real import inside a
+transaction and rolls it back, `POST /commit` refuses with 409 `review_incomplete` while any review
+item is undecided, `GET /lookup/:id` follows merges. Commit takes an optional `idempotency_key`
+(stored in the existing `idempotency_keys` table from 0012, 7 days); same key and same request
+replays the stored result, same key and a different request is 409 `idempotency_conflict`. Decisions
+that no longer answer the current question come back as `stale_decisions` instead of being applied.
+Body cap 20 MB, 25 sheets, 20,000 rows. Plan and commit get their own rate-limit bucket (20, 0.5/s).
+
+**New auth surface, noted here as CLAUDE.md requires: the `roster` scope.** Added to
+`server/auth/api-keys.js` and enforced by its own `bearerAuth` on the roster router. Why not reuse
+an existing scope: minting lifelong ids is a different power from reading PII or running imports,
+and Doc Anonymizer should hold exactly that power and nothing else. Its key is issued as
+`family-graph issue-key docanonymizer roster`. An earlier cut on this branch rode on `pii.read` +
+`import`; `import` also reaches `/api/connectors`, so it was replaced before release. Non-master
+callers can't send crosswalk refs or code hints, and can't borrow another app's source name once
+that source has crosswalk links (403 `roster_forbidden`).
+
+Migration 0020 adds the crosswalk, `external_refs(source, ref, kind, code)`, SCHEMA_VERSION 20.
+Only deliberate imports write it. `/api/identity/resolve` and `/resolve-batch` read it, but only for
+the master token or a key whose NAME equals the source, and a hit counts only if the incoming record
+still describes that person. Otherwise the record goes through the normal resolver and the result
+says `via: 'crosswalk_mismatch'`. Capabilities moved to v3 with `community_ids` and
+`identity_crosswalk`.
+
+The MissionIQ import is `family-graph import-missioniq <missioniq.db> [--dry-run] [--category ...]
+[--include-deceased]`. It opens MissionIQ's SQLite read-only in one read transaction, runs families,
+contacts and children through the roster engine, asks in the terminal about each uncertain item, and
+writes nothing until the operator types YES. Re-runs recognize linked records by MissionIQ id. On the
+demo data (300 households, 1,289 people) it took 4 seconds and asked 10 questions; a re-run asked 0.
+Logs go to `cli.log`, counts only.
+
+Trade-off worth writing down: a scoped MissionIQ key under the wrong name gets a 403
+`crosswalk_forbidden` that names the fix, not a silent fall back to fuzzy resolution. The fallback
+would have looked like it worked while quietly re-matching people the crosswalk already settled.
+The operator cost is one reissue (`issue-key missioniq`) before running the import.
+
+The matcher got a strict mode for roster and MissionIQ imports. Only an exact first name or a
+nickname-table pair proves identity; Luis/Luisa, Paul/Paula and friends can send a pair to review,
+never auto-match. Same name plus birthdate, or same name plus the same home address, is automatic.
+Shared inbox with a first name that doesn't line up is a spouse or child: different person, same
+household, never asked. Jr/Sr, different birthdates with nothing else shared, and adult-versus-child
+records settle automatically too. Placeholder names (TBD, Mom), lone initials, and businesses in a
+name column go to review. The design choice throughout was review over guessing, but the review
+queue had to shrink or nobody would work it: a realistic 500-family roster went from 884 questions
+to 30, with 0 wrong matches.
+
+Two fixes were global, so connectors and `/resolve` changed behavior too. Same surname plus same
+address alone used to be definitive, which fused spouses; now it isn't, and a birthdate or Jr/Sr
+conflict vetoes any automatic merge. And addresses: "134 Pine St" and "106 Pine St" read as the
+same place. House numbers, unit, building, floor, PO box, rural route and numbered streets now all
+have to agree. A part present on only one side is still ignored, because forms drop units.
+
+Doc Anonymizer calls the roster API for tabular files only. One trade-off lives on this side of the
+wire: a one-column sheet is sent only under a person-name header, and everyone on it becomes a
+review item. A bare list of names has nothing to confirm identity with, so one click each beats a
+guess.
+
+Then the bug hunt. Eight finders across identity, rules, security, robustness, and the cross-system
+contract, each finding checked by independent skeptics: 40 confirmed (11 critical, 5 high, 10
+medium, 14 low), none refuted. All fixed except the large-roster speed target. An independent review
+of the fix diff found 10 more (3 high), all fixed with regression tests. The fixes are what shaped
+the contract above: the dedicated `roster` scope and rate bucket, commit idempotency so a retried
+commit can't mint twice, and stale decisions (including one that would repeat an earlier commit of
+the same `source_ref`) refused instead of applied.
+
+What didn't get fixed: plan and commit still run on the request thread. A 2,000-row plan went from
+~33 s to ~9 s, but for that long every other Family Graph request waits. Accepted for now because
+roster uploads are rare, operator-initiated, and inside the firewall. A worker is future work, and it
+is the first thing to revisit if a big school roster lands during a busy week.
+
+Tests went from about 630 at the start of the session to 772 (771 pass, 1 skipped because it cannot
+run as root).
+
+SFW note (required by the install rule): in the build container the Socket Firewall binary could not
+be downloaded (proxy 403 on the release download), so dependencies were installed with
+`SFW_BYPASS=1 npm ci --no-audit --no-fund` from the pinned lockfile, following the precedent in the
+earlier entries. The preinstall guard was not touched. On the Spark server always use:
+
+```
+cd ~/familygraph
+SFW=1 sfw npm ci
+```
+
 *End of session notes*

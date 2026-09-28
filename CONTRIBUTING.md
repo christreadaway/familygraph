@@ -22,7 +22,8 @@ ever import it.
 npm install -g sfw
 
 # install dependencies (the SFW=1 marker satisfies the guard)
-SFW=1 sfw npm install
+cd ~/familygraph
+SFW=1 sfw npm ci
 SFW=1 sfw npm run client:install
 
 # build the dashboard and run
@@ -38,6 +39,7 @@ reason.
 ## Running the tests
 
 ```sh
+cd ~/familygraph
 npm test          # server suite, via node:test (no extra runner)
 npm run test:e2e  # optional Playwright browser tests
 ```
@@ -54,8 +56,12 @@ tree.
   `up(db)` export. Bump `SCHEMA_VERSION` in `server/db/index.js` and add a
   one-line comment describing the new version.
 - **Auth surfaces** follow the existing `bearerImport` / `bearerRead` /
-  `bearerMaster` / `bearerIntegration` scope pattern. Don't invent a new auth
-  surface without saying why in `session_notes.md`.
+  `bearerMaster` / `bearerIntegration` / `bearerRoster` scope pattern
+  (`bearerRoster` is the `roster` scope that guards `/api/identity/roster`).
+  Don't invent a new auth surface without saying why in `session_notes.md`.
+- **Family Graph is the only minter of identity.** Community ids (`I...` /
+  `F...`) are Family Graph codes re-spelled; convert them with the helpers in
+  `server/crypto/identifiers.js`, never by hand.
 - **Build logging in.** Runtime events should be logged so a few lines of
   `server.log` are enough to start debugging. The log redactor must strip
   credentials, tokens, and PII before anything lands on disk.

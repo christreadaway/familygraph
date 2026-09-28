@@ -192,7 +192,7 @@ Family Graph couldn't reach the API endpoint. Either:
 Pull the operator status from the CLI:
 
 ```
-cd ~/family-graph
+cd ~/familygraph
 node bin/family-graph.js connector status
 ```
 
@@ -239,6 +239,7 @@ above. The CLI exposes the same operations the dashboard does, so you
 can verify a connector before opening a browser:
 
 ```sh
+cd ~/familygraph
 node bin/family-graph.js connector status
 node bin/family-graph.js connector test facts
 node bin/family-graph.js connector sync facts
@@ -248,7 +249,12 @@ node bin/family-graph.js connector sync facts
 or MP `/tables/Households` with `$top=1`) and writes nothing. `connector
 sync` runs the full pull through the same import pipeline that file
 ingest uses; it's safe to run repeatedly because the resolver
-deduplicates by definitive signal (exact email/phone/strong address). If
+deduplicates by definitive signal (exact email or phone with a first name
+that lines up, or exact first + last name with the same birthdate or the
+same home address). As of
+2026-09-28 a shared surname and address alone is no longer definitive (it
+fused spouses), and a birthdate or Jr/Sr conflict vetoes an automatic
+merge; those cases land in the conflicts queue instead. If
 something breaks, the most recent attempt is always one row in
 `connector_runs` and one matching `import_runs` row, both visible from
 the dashboard's Imports log.

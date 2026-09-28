@@ -22,7 +22,8 @@ through Socket Firewall (`sfw`):
 
 ```
 npm install -g sfw
-SFW=1 sfw npm install
+cd ~/familygraph
+SFW=1 sfw npm ci
 SFW=1 sfw npm run client:install
 npm run client:build
 npm start
@@ -48,3 +49,29 @@ admin Bearer token with `node bin/family-graph.js show-token`, then open
 a scoped Bearer key (issued via the dashboard or `POST /api/keys`) and plug into
 the same identity, household, consent, and webhook contract. See
 `INTEGRATION_GUIDE.md`.
+
+**Community identifiers.** Family Graph is the only minter of identity across
+the community's apps. Every person gets a lifelong `I` id and every household
+an `F` id, which are its own codes re-spelled (`p_<hex>` = `I<HEX>`,
+`f_<hex>` = `F<HEX>`). An id is never reissued, and a merged-away id stays a
+permanent alias of the winner. Doc Anonymizer asks Family Graph for these ids
+when it scrubs a spreadsheet, through the roster API at `/api/identity/roster`
+(`POST /plan` dry run, `POST /commit`, `GET /lookup/:id`), which needs the
+`roster` scope. Strict matching settles the obvious cases automatically in both
+directions and sends anything uncertain to a person; nothing is minted until
+every review item is decided.
+
+```
+cd ~/familygraph
+node bin/family-graph.js issue-key docanonymizer roster
+node bin/family-graph.js issue-key missioniq
+node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --dry-run
+node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --category church
+```
+
+The MissionIQ import reads MissionIQ's database read-only, asks the operator
+about each uncertain record in the terminal, writes nothing until `YES`, and is
+safe to re-run. It links MissionIQ records to Family Graph codes in a crosswalk
+table; after that, MissionIQ's "Sync now" must use the master token or a key
+named exactly `missioniq`, or it is refused with `crosswalk_forbidden`. Details
+are in `INTEGRATION_GUIDE.md`.

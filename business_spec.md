@@ -8,7 +8,7 @@
 |---|---|
 | **Author** | Chris Treadaway |
 | **Status** | v1 shipped to the pilot institution; v0.2 of the integration contract live; a connector in flight as the first demonstrator |
-| **Last updated** | 2026-05-15 (was: initial draft April 2026) |
+| **Last updated** | 2026-09-28 (community identifiers; was 2026-05-15, initial draft April 2026) |
 | **Document type** | Business spec (the "why," not the "how") |
 | **Companion docs** | `product_spec.md` (the "how"), `FAMILYGRAPH_INTEGRATION.md` (the wire contract), `INTEGRATION_GUIDE.md` (how any app integrates), `ARCHITECTURE_MEMO_FAMILY_MANAGEMENT.md` (the original integration plan), `session_notes.md` (decision log) |
 
@@ -51,6 +51,7 @@ A single, local source of truth for family identity, with a documented contract 
 - **Owns the master record** for every person and household in the community. Names, contact info, household links, custody flags, photo and directory consent, safe-environment certifications.
 - **Ingests data from any source.** A SIS export, a parish management report, a Google Sheet, an Excel workbook, a hand-typed CSV from a clipboard - any list of people can be federated into the ledger regardless of where it came from. Many parishes don't use a formal platform at all; they keep records in spreadsheets or on paper. Family Graph serves all of them. Shipped handlers cover common formats and systems (FACTS, RenWeb, Ministry Platform, Google Sheets, Excel, generic CSV); consuming apps can also write directly through the API.
 - **Auto-merges high-confidence matches; surfaces ambiguous pairs to the operator** for review. Creates new entries for genuinely new people. Resolution rules accumulate over time and reduce the queue depth.
+- **Is the only minter of community identifiers.** Every person gets a lifelong `I…` id and every household an `F…` id, the same ids in every product that touches them (Doc Anonymizer, MissionIQ, and later the school apps). Other apps ask Family Graph; they never mint their own. See the September 2026 addendum below.
 - **Builds household and relationship structure.** Multiple addresses per family. Custody designations. Family-to-family links for divorced parents and connected households. Free-form notes for the situations real people don't fit into clean schemas.
 - **Serves identity to authorized apps over a versioned contract.** Apps read household-and-person objects through `GET /v1/persons/:id` and friends. Apps suggest new identities through `POST /v1/persons`. Per-school consent overrides, diocesan-EIM linkage, and archive / reinstate workflows are all first-class endpoints.
 - **Notifies apps when state changes.** Signed webhooks (`person.updated`, `consent.updated`, `household.deleted`, etc.) keep every consumer's cache fresh without a polling tax.
@@ -240,6 +241,22 @@ tests. Decisions worth recording at the business-spec level:
 - **Every meaningful write is logged in `entity_changes` with a full row snapshot.** Create, update, archive, reinstate, merge, split — each emits a row with before/after JSON (BLOB columns base64-encoded; the dataKey is still required to decrypt PII). The write and the log row are wrapped in a single transaction so a log failure rolls back the data write. The audit trail and the data are never out of sync.
 - **The webhook delivery surface is its own first-class subsystem.** HMAC-SHA256 signed payloads, exponential backoff retry (30s / 2m / 10m / 1h / 6h), school-hint filtering, soft-unsubscribe that preserves the row + secret for resubscribe. Loopback / RFC1918 / link-local destinations are rejected at subscription time. Plain http:// is permitted with a logged warning; the operator owns network-level confidentiality.
 - **The first connector is the first demonstration of the contract; the generic integration guide is the deliverable for the next consumer.** The app-agnostic docs are what ship: `INTEGRATION_GUIDE.md` (how any app integrates) and `FAMILYGRAPH_INTEGRATION.md` (the wire contract). Both are versioned so a connector can pin its code to a specific contract revision, and any one app's connector is just an exercise of those generic patterns rather than a doc of its own.
+
+---
+
+## Addenda from community identifiers (September 2026)
+
+The owner's goal: every community member a spreadsheet surfaces (a school roster, a parishioner list) gets one lifelong identifier, the same human is never issued a second one in any product, and two humans never share one. "No mistakes" means anything the rules cannot settle goes to a person, but the obvious cases have to be automatic in both directions so the review burden stays small. Decisions worth recording at the business-spec level:
+
+- **Family Graph is the only minter of identity.** It decides whether someone already exists and holds the people, households, encrypted contact data, the crosswalk, and the audit trail. Doc Anonymizer and MissionIQ ask; they never mint.
+- **The community id IS the Family Graph code, re-spelled.** `p_<16 hex>` is `I<16 HEX>` for an individual, `f_<16 hex>` is `F<16 HEX>` for a household (legacy 8-hex codes render the same way). Any case is accepted on input; output is always uppercase. When two records merge, the loser's id becomes a permanent alias of the winner, so older files still restore. An id is never reissued.
+- **Nothing is minted until every review item is decided and the operator confirms.** Roster imports go through a dry-run plan that writes nothing, then a commit that is refused while any review item is undecided. Commits are idempotent, so a retry after a dropped connection cannot mint twice.
+- **Strict matching for roster and MissionIQ imports.** Only an exact first name or a real nickname proves identity; near spellings (Luis/Luisa) and cross-language pairs (John/Sean) can send a pair to review but never auto-match. Shared inboxes and phones are treated as household signals, not identity, when the first names do not line up (a spouse, a child). Jr vs Sr or a birthdate conflict rules a match out, and different house or unit numbers are different addresses, so they never confirm one. Two resolver fixes apply everywhere, including connectors: same surname plus same address alone is no longer definitive (it fused spouses), and a birthdate or Jr/Sr conflict vetoes an automatic merge. On a realistic 500-family synthetic roster: zero wrong matches and 30 questions, down from 884; a re-import asks nothing.
+- **A crosswalk links other apps' record ids to Family Graph codes.** It is written only by deliberate imports (today, the one-time `family-graph import-missioniq` CLI, which reads MissionIQ's database and never writes to it). MissionIQ's "Sync now" reads it, but a crosswalk hit is honored only while the incoming record still describes that person.
+- **Doc Anonymizer uses community ids for spreadsheets only.** Name cells in xlsx / xls / ods / csv files become `[I…]` and household columns `[F…]`, after the operator answers every review card in the preview. PDFs, Word files, slides, and text make zero Family Graph calls.
+- **A new `roster` scope.** Doc Anonymizer's key carries only `roster` (`/api/identity/roster` plan, commit, lookup). The master token also works. MissionIQ's key must be named `missioniq` (or MissionIQ uses the master token) to read its own crosswalk links.
+- **Deployment.** Family Graph and Doc Anonymizer run on one local server inside the firewall, each listening on 127.0.0.1; the operator reaches them through an SSH tunnel or a LAN bind. Logs hold counts, codes, and timings, never names, contact details, birthdates, document text, or keys.
+- **Known limit.** Plan and commit run on Family Graph's request thread, so a 2,000-row roster holds other requests for roughly ten seconds. Moving large jobs to a worker is future work.
 
 ---
 

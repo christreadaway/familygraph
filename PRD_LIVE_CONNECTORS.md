@@ -724,3 +724,11 @@ operator notification. All shipped in this pass:
     with a `crun_…` code; pre-flight returns `409 already_running` and
     `400 config_error` correctly.
 
+## Appendix D - Resolver changes that reach connectors (2026-09-28)
+
+The community-identity work (roster API, crosswalk, MissionIQ import) did not change the connectors themselves, but it changed the resolver they share, so §5.6 rule 1 now reads differently in practice:
+
+- **Same surname + same address is no longer definitive.** The "address-line1 ≥ 0.85 with name overlap" signal in §5.6 used to auto-merge spouses into one person. It now goes to review. Different house numbers, units, PO boxes and the like are treated as different places ("134 Pine St" and "106 Pine St" used to read as the same address).
+- **Vetoes.** A birthdate conflict or a Jr/Sr conflict now blocks any automatic merge, on FACTS and Ministry Platform rows the same as file imports.
+- **Scopes stay separate.** The new `/api/identity/roster` endpoints use their own `roster` scope and their own rate-limit bucket. They deliberately do not accept the `import` scope, because `import` also reaches `/api/connectors/*`. A Doc Anonymizer key (`issue-key docanonymizer roster`) cannot trigger a connector sync.
+- **Crosswalk is not written by connectors.** The `external_refs` table (migration 0020, `SCHEMA_VERSION` 20) is written only by deliberate imports like `family-graph import-missioniq`. Connector runs still resolve every row through the normal resolver.

@@ -211,7 +211,12 @@ Activate this mode only on explicit request. Defaults:
   `up(db)` export. Bump `SCHEMA_VERSION` in `server/db/index.js` and add a
   one-line comment describing the new version.
 - New API routes follow the existing `bearerImport` / `bearerRead` /
-  `bearerMaster` scope pattern; never invent a new auth surface without
-  noting it in `session_notes.md`.
+  `bearerMaster` scope pattern (plus `bearerRoster`, the `roster` scope
+  that guards `/api/identity/roster`); never invent a new auth surface
+  without noting it in `session_notes.md`.
+- Family Graph is the only minter of identity. Community ids (`I…` /
+  `F…`) are the Family Graph codes re-spelled; convert with the helpers
+  in `server/crypto/identifiers.js`, never by hand. Other apps (Doc
+  Anonymizer, MissionIQ) ask Family Graph and never mint their own.
 - Encrypted PII columns end in `_ct`. Searchable HMAC columns end in
   `_hash`. Never add a plaintext PII column.

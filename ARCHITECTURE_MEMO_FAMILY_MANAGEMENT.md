@@ -128,6 +128,14 @@ delegating identity to Family Graph:
 └─────────────────────────┘         └─────────────────────────┘
 ```
 
+### Whole-roster imports and the crosswalk (added 2026-09-28)
+
+Apps that bring in a whole spreadsheet (Doc Anonymizer today) use the roster API at `/api/identity/roster` instead of one resolve call per row. `POST /plan` is a dry run that writes nothing and lists every item a person must decide; `POST /commit` is refused with `409 review_incomplete` until every item is decided, then runs as one transaction (optional `idempotency_key` makes a retry safe). `GET /lookup/:id` returns the current record for an id, following merges. All three need the `roster` scope (or the master token).
+
+Records from another app are linked by a crosswalk table (`external_refs`: source, ref, kind, code). It is written only by deliberate imports, such as the one-time `family-graph import-missioniq` CLI. `/api/identity/resolve` reads it only for the master token or a scoped key whose name equals the source; any other caller sending that source's refs, once the source has crosswalk links, gets `403 crosswalk_forbidden`. A crosswalk hit is used only while the incoming record still describes that person.
+
+Family Graph is the only minter of identity. Nothing is minted until every review item is decided.
+
 Family Graph's role is purely identity. The integrating app keeps owning
 donations, engagement events, in-kind gifts, and donor research notes
 - it just keys them by FG's `p_*` / `f_*` codes instead of maintaining
@@ -146,6 +154,10 @@ Every entity in Family Graph has a stable, opaque hex code with a type prefix.
 | Email | `e_` | `e_b91c4f23` | Reference for contact-channel records |
 | Phone | `ph_` | `ph_2d8a5e91` | Reference for contact-channel records |
 | Address | `addr_` | `addr_4c7f2a91` | Reference for location data |
+
+### Community ids (added 2026-09-28)
+
+Outside Family Graph, person and family codes travel as community ids: the same code re-spelled in uppercase with a one-letter prefix. `p_<hex>` becomes `I<HEX>` (individual), `f_<hex>` becomes `F<HEX>` (family). Current codes carry 16 hex characters; legacy 8-hex codes render the same way. Input is accepted in any case; output is always uppercase. The roster API and Doc Anonymizer key files use this form, and `GET /api/health` advertises it with the `community_ids` capability flag.
 
 ### Permanence rules
 
@@ -174,7 +186,7 @@ Two acceptable token shapes in v1:
    `POST /api/keys`. Each token starts with the prefix `sk_`,
    has a name (the consuming app), and a list of scopes drawn from
    `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`,
-   `import`, `rules.write`, or `*`. The token is shown to the operator
+   `import`, `roster`, `rules.write`, `integration`, or `*`. The token is shown to the operator
    exactly once; only its SHA-256 hash is persisted. Revoke by name in
    the dashboard at any time; the next call from that app fails with
    `401 unauthorized` and a structured `reason` of

@@ -11,6 +11,17 @@
 > everything below the title bar applies regardless of how the shell
 > is wrapped.
 
+> **Note (2026-09-28):** The status above is historical. Schema is now
+> v20 (crosswalk table `external_refs`), `/api/health` reports
+> CAPABILITIES_VERSION 3 with `community_ids` and `identity_crosswalk`
+> flags, and the server test suite is 772 tests. Community identifiers
+> (`I…` for a person, `F…` for a household) are the Family Graph codes
+> re-spelled (`p_…` ↔ `I…`, `f_…` ↔ `F…`); `<IdCode>` should accept
+> either spelling. New routes live under `/api/identity/roster`
+> (`POST /plan`, `POST /commit`, `GET /lookup/:id`, `roster` scope).
+> The "schema 17" values in the examples below are illustrative. See
+> `README.md` and `session_notes.md` for current detail.
+
 This document is the contract between design and engineering. Read it once end-to-end before touching the dashboard. The companion design system PDF (`Family Graph — Institutional Design System.pdf`) is the visual reference; this file is the build instructions.
 
 ---

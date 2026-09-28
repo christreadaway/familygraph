@@ -36,8 +36,24 @@ checkout.
   identifiers, not PII. Exporting real PII requires explicit consent and a
   destination, and is recorded in a tier-2 audit trail.
 - **Scoped access.** Apps authenticate with per-app Bearer keys scoped to the
-  smallest capability they need (`pii.read`, `import`, `integration`, etc.)
-  rather than sharing the master token.
+  smallest capability they need (`pii.read`, `import`, `roster`,
+  `integration`, etc.) rather than sharing the master token. Doc Anonymizer's
+  key carries only `roster` (`family-graph issue-key docanonymizer roster`).
+- **Identity is minted in one place.** Only Family Graph issues community ids
+  (`I…` / `F…`, the Family Graph code re-spelled). Roster commits are refused
+  (409) while any review item is undecided, and a retried commit with the same
+  `idempotency_key` replays the stored result instead of writing twice.
+  Non-master callers may not send crosswalk refs or code hints, or use another
+  app's source name once it has crosswalk links (403 `roster_forbidden`).
+  The crosswalk is read by `/api/identity/resolve` only for the master token or
+  a key named after the source; any other caller sending that source's record
+  refs, once it has crosswalk links, gets 403 `crosswalk_forbidden`.
+- **Logs hold no PII.** Logs record counts, codes, and timings only, never
+  names, emails, phones, addresses, birthdates, or keys
+  (`~/.family-graph/logs/server.log` and `cli.log`).
+- **Container binding.** The Dockerfile binds `0.0.0.0` inside the container;
+  publish it as `-p 127.0.0.1:3500:3500` so it stays on the host. On the Spark
+  server, reach it through an SSH tunnel or a LAN bind inside the firewall.
 - **Supply chain.** Every dependency install must route through Socket Firewall
   (`sfw`), which checks fetched packages against Socket's risk database before
   they touch disk. See `CONTRIBUTING.md`.

@@ -128,6 +128,24 @@ two different answers:
   separate installs) would be diocese-level federation, deliberately
   not designed yet.
 
+> **Update, 2026-09-28:** "one human = one code" now reaches past
+> Family Graph. The `p_` / `f_` codes are shown to other apps as
+> community ids, the same code re-spelled (`p_<16 hex>` <-> `I<16 HEX>`,
+> `f_<16 hex>` <-> `F<16 HEX>`, legacy 8-hex codes too) via the helpers
+> in `server/crypto/identifiers.js`. Family Graph stays the only minter;
+> Doc Anonymizer and MissionIQ ask it and never mint their own. Merge
+> aliases still apply, so an older file carrying a loser's id restores.
+> Spreadsheet rosters go through `/api/identity/roster` (plan, then
+> commit, `roster` scope) under stricter matching than the resolver
+> above: only exact names or nickname-table pairs prove a first name,
+> and anything the rules cannot settle is a review item a person
+> decides before anything is minted. MissionIQ records are linked
+> through the `external_refs` crosswalk (migration 0020, schema 20).
+> Two resolver rules changed globally the same day: same surname plus
+> same address alone is no longer a definitive match (it fused
+> spouses), and a birthdate or Jr/Sr conflict vetoes an automatic
+> merge. See `README.md` and `session_notes.md` for the full contract.
+
 The operator's likely scenarios, all expressed as one identity with
 multiple dated affiliations and covered by a test
 ("multi-community" in `tests/organizations.test.js`):

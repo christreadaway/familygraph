@@ -18,7 +18,7 @@
 - `server/`            — Express HTTP API, identity store, sanitize/desanitize, folder-watch agent, audit log, backup/restore
 - `client/`            — React 18 dashboard (Vite-built). Served from the same Express process.
 - `tests/`             — `node:test` suites covering crypto, identity, resolver, sources, sanitize, audit, auth, API, folder watch, backup
-- `bin/family-graph.js`     — operator CLI (`start`, `rotate-secret`, `backup`, `restore`, `show-token`)
+- `bin/family-graph.js`     — operator CLI (`start`, `rotate-secret`, `backup`, `restore`, `show-token`, `issue-key`, `import-missioniq`, …)
 
 ---
 
@@ -36,7 +36,9 @@ node bin/family-graph.js show-token # paste into the dashboard the first time
 ```
 
 Other CLI entry points: `status`, `rotate-secret`, `backup [passphrase]`,
-`list-backups`, `prune-backups [keep=10]`, `restore <passphrase> <src> <dest>`.
+`list-backups`, `prune-backups [keep=10]`, `restore <passphrase> <src> <dest>`,
+`issue-key <name> [scope,scope,…]` (Doc Anonymizer gets `issue-key docanonymizer roster`),
+`import-missioniq <missioniq.db> [--dry-run] [--category church|school|other] [--include-deceased]`.
 
 Environment overrides:
 
@@ -114,9 +116,18 @@ exactly 8 or exactly 16, nothing between.
 | Token set | `tk_` | `tk_a1b2c3d4` | |
 | Audit row | `au_` | `au_aabbccdd` | |
 
-All codes are non-semantic 8-char hex with a 4-byte CSPRNG entropy. Codes are
+All codes are non-semantic hex from a CSPRNG: 16 chars (8 bytes) for new
+codes, 8 chars (4 bytes) for legacy ones. Codes are
 permanent; merges produce alias rows; nothing is reused or reissued. The
 alias chain is followed transitively at read time.
+
+**Community ids (2026-09-28).** The lifelong id other apps see is the same
+code re-spelled: `p_<hex>` <-> `I<HEX>`, `f_<hex>` <-> `F<HEX>` (16-hex and
+legacy 8-hex both). Any case accepted on input, always emitted uppercase.
+Helpers `toCommunityId`, `fromCommunityId`, `isCommunityId`, `toCode` in
+`server/crypto/identifiers.js`. Family Graph is the only minter; Doc
+Anonymizer and MissionIQ never mint. A merged loser's id keeps resolving to
+the winner, so older anonymized files still restore.
 
 ---
 
@@ -141,9 +152,11 @@ Top-level tables:
 - `token_sets` (encrypted sanitize round-trip mappings)
 - `audit_events` (tier 1 internal + tier 2 external-export consent)
 - `profiles`, `settings`
+- `external_refs` (source, ref, kind, code) - crosswalk from another app's record id to a Family Graph code (migration 0020)
+- `idempotency_keys` - roster commit replay store: request HMAC + encrypted response, 7 days (migration 0012)
 
 The schema is versioned (`schema_version` table) and applied idempotently on
-startup.
+startup. Current `SCHEMA_VERSION` is 20.
 
 ---
 
@@ -174,7 +187,7 @@ calling app for audit purposes (defaults to `unknown_app`).
 
 ### Open
 
-- `GET /api/health` → `{ status, schema, time }`
+- `GET /api/health` → `{ status, schema, time, capabilities_version, capabilities, … }`. `CAPABILITIES_VERSION` is 3; flags include `community_ids` and `identity_crosswalk`.
 
 ### Safe surface (loopback only, no PII ever)
 
@@ -225,8 +238,29 @@ calling app for audit purposes (defaults to `unknown_app`).
 | `GET` | `/api/imports` | list past import runs (filter `?category=...`) |
 | `GET` | `/api/imports/:code` | one run + the affected family/person/address codes |
 | `POST` | `/api/identity/match` | external-app peek. Body: `{record}`. Returns `{action, confidence, reasons, definitive, candidate, thresholds}`. No write. |
-| `POST` | `/api/identity/resolve` | external-app commit. Body: `{record, source?, source_ref?}`. Runs the resolver, returns `{code, action, score, reasons, conflict?}`. The calling app keys its domain data by `code`. |
+| `POST` | `/api/identity/resolve` | external-app commit. Body: `{record, source?, source_ref?}`. Runs the resolver, returns `{code, action, score, reasons, conflict?}`. The calling app keys its domain data by `code`. Also reads the `external_refs` crosswalk (see below). |
 | `POST` | `/api/identity/feedback` | external-app same/different decision. Body: `{left_code, right_code, decision: 'same'\|'different', winner_code?, notes?}`. `'different'` becomes a sticky non-match (suppresses future re-flagging). |
+| `POST` | `/api/identity/roster/plan` | `roster` scope. Dry run of a roster import (runs inside a transaction, rolled back). Body: `{sheets: [{name?, headers, rows, mapping?}]}` or `{households: [...]}`, plus `decisions?`, `source?`, `source_ref?`, `category?`, `tags?`. Returns per-person/household `action` (matched\|new\|review\|skip), `community_id`, candidates, review reasons, `stale_decisions`, and a summary. |
+| `POST` | `/api/identity/roster/commit` | `roster` scope. Refused with 409 `review_incomplete` while any review item is undecided; otherwise one transaction. Optional `idempotency_key` (8-200 chars): same key + same request replays the stored result (`replayed: true`), same key + different request is 409 `idempotency_conflict`. |
+| `GET` | `/api/identity/roster/lookup/:id` | `roster` scope. `I…`/`F…` (or `p_`/`f_`) → current record, following merges. |
+
+Roster limits: 20 MB body, 25 sheets, 20,000 rows, 300 columns, 4,000 chars
+per cell. Plan/commit share a dedicated rate-limit bucket (capacity 20,
+0.5/s) and run on the request thread, so a 2,000-row roster holds other
+requests for about 10 s. Callers other than the master token may not send
+crosswalk refs or code hints, or use another app's source name once that
+source has crosswalk links (403 `roster_forbidden`). A `source_ref` names
+one upload and must not be reused; decisions that no longer answer the
+current question are refused as stale.
+
+**Crosswalk.** `external_refs` is written only by deliberate imports (the
+MissionIQ CLI; refs `contact:<id>`, `child:<id>`, `family:<id>`).
+`/api/identity/resolve` and `/resolve-batch` read it only for the master
+token or a scoped key whose name equals the source (so MissionIQ's key is
+issued as `issue-key missioniq`); any other scoped key sending that source's
+refs gets 403 `crosswalk_forbidden`. A hit is returned only if the record
+still describes that person; otherwise it goes through the normal resolver
+and the result carries `via: 'crosswalk_mismatch'`.
 
 Aliases are followed transparently: `GET /api/families/:loser` returns the
 surviving family's data with the surviving code in `family.code`.
@@ -304,9 +338,27 @@ after manual edits.
 
 **Critical correctness note.** The upstream identity engine collapses two persons with
 unrelated first names at the same address into one person. Family
-Graph does NOT - Mary Escamilla and John Torre at 123 Main St are a
-couple, not duplicates. Address only becomes a person-merge signal
+Graph does NOT - two adults with unrelated first names at 123 Main St
+are a couple, not duplicates. Address only becomes a person-merge signal
 when paired with a name overlap; otherwise it's a family signal.
+
+**Global fixes (2026-09-28).** Same surname + same address alone is no
+longer definitive (it fused spouses). A birthdate conflict or a Jr/Sr
+conflict vetoes an automatic merge. Addresses with different house
+numbers, units, PO boxes and the like are different places.
+
+**Strict mode (roster imports and the MissionIQ import).** Only an exact
+first name or a nickname-table pair proves identity; a near spelling
+(Luis/Luisa) or cross-language pair (John/Sean) can only send a pair to
+review. Automatic "same": exact email or phone with a lined-up first name;
+same first + last + birthdate; same first + last + home address; a
+name-only person in a known household with exactly that name; a crosswalk
+link that still fits. Automatic "different": shared inbox but a different
+first name (same household), Jr vs Sr, different birthdates with nothing
+else shared, adult vs child record with nothing matching, two adults whose
+emails, phones and addresses all differ. Everything else that matches on
+first and last name (or birthdate plus one name) goes to a person. Nothing
+is minted until every review item is decided.
 
 ---
 
@@ -451,7 +503,7 @@ client/src/
 
 ## Test surface
 
-`npm test` runs **202 cases** (see `test_suite.md` for the full map)
+`npm test` runs **772 cases** (see `test_suite.md` for the full map)
 across:
 
 - `tests/identifiers.test.js` — code generation, validation, prefix disambiguation
@@ -467,7 +519,7 @@ across:
 - `tests/backup.test.js` — hot copy, encrypted-backup round trip, wrong-passphrase rejection
 - `tests/api.test.js` — open health, 401 without token, PII surface, safe surface excludes PII, sanitize round-trip, import preview/run, tier-2 audit, 404 JSON, 400 on invalid code, family merge, conflict resolve
 
-All 177 pass against `node:test` (Node 20+).
+As of 2026-09-28, 771 pass and 1 is skipped (it cannot run as root) against `node:test` (Node 20+). The list above is the original v1 set; later suites (roster, crosswalk, MissionIQ import, strict matching and others) live alongside it.
 
 The dashboard does not ship with a separate unit-test suite in v1; the
 `vite build` (`npm run client:build`) is treated as a structural test
@@ -494,7 +546,7 @@ token is reachable. CI runs both `npm test` and `npm run client:build`.
 - Bitemporal point-in-time queries (explicitly out of scope per session_notes)
 
 **v1.x extensions added in this build (all included in `npm test`):**
-- Per-app scoped API keys: `api_keys` table, `POST /api/keys` provisioning, `DELETE /api/keys/:code` revoke, scope-aware `bearerAuth`. Scopes: `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`, `import`, `rules.write`, `*`. Master token always satisfies any scope.
+- Per-app scoped API keys: `api_keys` table, `POST /api/keys` provisioning, `DELETE /api/keys/:code` revoke, scope-aware `bearerAuth`. Scopes: `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`, `import`, `roster`, `rules.write`, `integration`, `*`. Master token always satisfies any scope.
 - Resolution-rule engine: `resolution_rules` consulted by the resolver. Actions are `auto_merge`, `never_merge`, `boost`, `penalize`. CRUD via `/api/rules`. Dashboard editor at `/rules`.
 - compromise NER as the third sanitize layer (loaded lazily so the system still works if removed).
 - Numbered migrations runner (`server/db/migrations/`) layered on top of the bootstrap schema. Each migration runs in a transaction; `schema_version` is updated after success.
@@ -504,6 +556,7 @@ token is reachable. CI runs both `npm test` and `npm run client:build`.
 - HMAC-backed search at `/api/search` (name → persons + their families; email → emails; phone → phones). Substring scan over encrypted columns is intentionally not supported.
 - Membership history at `/api/membership-history/person/:code` and `/family/:code` — every row including ended ones, with `reason`.
 - Family-to-family relationships endpoint `/api/relationships` (add / list / remove). UI exposed in `FamilyDetail`.
+- Roster API (`/api/identity/roster`), community ids, the `external_refs` crosswalk, and the `import-missioniq` CLI (2026-09-28). See Identifier system and API contract above.
 - Bulk export at `/api/export` with safe (codes only) and PII (consent + destination + reason → tier-2 audit event) modes.
 
 ---

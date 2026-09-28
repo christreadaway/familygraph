@@ -66,10 +66,18 @@ of the plaintext-PII work below.
 
 ### D3. Profile B: build the crosswalk and the org link, and when?
 
-Neither exists today. `crosswalk`, `external_key`, and `app_local` return zero
-hits across `server/`; `school_contexts.school_id` is a bare `TEXT` with no
-foreign key; `organizations` has no tenant-slug column. Both would be new
-migrations off `SCHEMA_VERSION = 19`.
+Neither exists today in the form Profile B needs. `school_contexts.school_id`
+is a bare `TEXT` with no foreign key; `organizations` has no tenant-slug
+column. Both would be new migrations off `SCHEMA_VERSION = 20`.
+
+Update 2026-09-28: a general crosswalk now exists. Migration 0020 added
+`external_refs(source, ref, kind, code)`, which links another app's record id
+to a Family Graph code. It was built for the MissionIQ import
+(`family-graph import-missioniq`) and is read by `/api/identity/resolve` and
+`/resolve-batch`. `kind` is limited to `person` and `family`, so there is still
+no org crosswalk, and no school app writes student refs into it yet. When
+Profile B lands, student crosswalks should reuse `external_refs` rather than
+add a second table; the org link is still open.
 
 Both are Profile B work (`CLASSROOM_AV_IMPLICATIONS.md` §5). The pilot runs
 Profile A today, explicitly doesn't block on the profile choice, and a school

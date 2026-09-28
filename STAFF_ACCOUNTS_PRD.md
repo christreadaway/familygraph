@@ -193,3 +193,14 @@ shipped system deliberately went further.
 4. **A 403 does not end a staff session.** The dashboard treats
    `missing_scope` as "this surface isn't yours," not "your credential
    is dead" — only a 401 clears the stored session.
+
+## Appendix note (2026-09-28): community identifiers
+
+The community id work added one scope, `roster`, which guards
+`/api/identity/roster` (plan, commit, lookup). Staff accounts draw from
+the same vocabulary minus `*`, so `roster` is grantable to a staff
+account like any other scope. §5's duplicate rule still holds: roster
+imports and `import-missioniq` auto-link an incoming row only on the
+strict matching rules, send anything uncertain to a named human, and
+never collapse two existing records. Merges still go through the
+conflicts queue.

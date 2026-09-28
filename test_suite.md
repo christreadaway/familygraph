@@ -3,13 +3,16 @@
 Two suites, both required green before merging:
 
 1. **Server tests** — `npm test`. Built on Node's `node:test` runner; one
-   subtest tree per `tests/*.test.js` file. **206 tests, all passing.**
+   subtest tree per `tests/*.test.js` file. As of 2026-09-28: **772 tests,
+   771 passing, 1 skipped** (it cannot run as root).
 2. **End-to-end browser tests** — `npm run test:e2e`. Playwright-driven.
    Boots an isolated Family Graph at `127.0.0.1:13500` against a temp
    `$FAMILY_GRAPH_HOME` and drives the React dashboard with the headless
    Chromium shell. **12 tests, all passing.**
 
-Total: **218 tests, all green.** First-time setup for Playwright:
+The per-file tables below predate the 2026-09-28 community-identity work and
+are not exhaustive; see "Community identity (2026-09-28)" for the new files.
+First-time setup for Playwright:
 `npm run test:e2e:install` (downloads the headless-shell chromium build to
 `/opt/pw-browsers/`).
 
@@ -295,6 +298,18 @@ pseudonym).
 | "do not contact" flag shows as a pill on the member row | After a PATCH on one member, the row pill renders + employer chip renders. |
 | Bulk do-not-call flags every active member | The do-not-call panel button bulk-flags every member with the supplied reason. |
 | Families list > search by last name + quick "Add to do-not-call" | `?q=<surname>` filters the list server-side; the row's quick-action button + dialog reason apply do-not-call across the household. |
+
+## Community identity (2026-09-28)
+
+Roster API, strict matching, crosswalk, and the MissionIQ import. Counts live in the files; one line each here.
+
+- `tests/roster.test.js` - `/api/identity/roster` plan (dry run, writes nothing), commit (409 `review_incomplete` until every item is decided), lookup of `I…`/`F…` ids following merges, `roster` scope.
+- `tests/roster-fixes.test.js` - regressions from the 2026-09-28 fix pass: same-named children, renamed crosswalk links, `roster_forbidden`, idempotent retries, stale decisions (409 with fresh plan), the dedicated roster rate-limit bucket, request caps.
+- Roster commit `idempotency_key` (in `tests/roster-fixes.test.js`): same request replays (200, `replayed:true`, nothing written), different request gets 409 `idempotency_conflict`, refusals not stored. The older `tests/integration-idempotency.test.js` covers the `/v1` `X-Request-Id` store the roster keys share.
+- `tests/matching-strict-names.test.js` - strict first-name rules: exact or nickname-table pair proves identity; near spellings and cross-language pairs are review-only.
+- `tests/resolver-strict-perf.test.js` - the strict candidate pre-filter keeps exactly what the full scorer would, and contact lookups return the same rows as before.
+- `tests/resolve-crosswalk.test.js` - `/resolve` and `/resolve-batch` read `external_refs` only for the master token or a key named after the source (403 `crosswalk_forbidden` otherwise); `crosswalk_mismatch` when the record no longer describes the linked person.
+- `tests/missioniq.test.js` + `tests/missioniq-cli.test.js` - `family-graph import-missioniq`: read-only open, dry run, terminal review prompts, nothing written until YES, safe re-run, consistent read snapshot, contradictory answers re-asked.
 
 ## What's NOT covered (known gaps)
 

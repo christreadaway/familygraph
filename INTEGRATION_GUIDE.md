@@ -8,7 +8,10 @@ self-contained and app-agnostic - hand it to any team integrating
 with a FamilyGraph install.
 
 **Status:** v0.2 of the contract, May 2026. The contract is versioned
-via the `X-FG-Contract-Version` header (current value: `v0.1`).
+via the `X-FG-Contract-Version` header (current value: `v0.2`; `v0.1`
+is still accepted). Community identifiers, the roster API, and the
+identity crosswalk were added 2026-09-28 (§4.3, §4.4); they live on the
+`/api` surface and do not change the `/v1` contract version.
 
 ---
 
@@ -204,6 +207,112 @@ changes also flow as metadata-only ChangeEvents in the sealed sync batch.
 and writes a Tier-2 audit on every store and fetch. The operator manages
 the vault locally via `/api/documents` (master bearer). Wire shapes and
 the full access matrix are in `FAMILYGRAPH_INTEGRATION.md` §7.
+
+### 4.3 Community identifiers and the roster API (`roster` scope)
+
+Added 2026-09-28. Every person a roster or parishioner list surfaces gets
+one lifelong identifier, and every household one family identifier. The
+community id IS the FamilyGraph code, re-spelled: `p_<16 hex>` is
+`I<16 HEX>` and `f_<16 hex>` is `F<16 HEX>` (legacy 8-hex codes render
+the same way, `I` + 8 hex). FG accepts any case on input and always
+emits uppercase. FamilyGraph is the only minter; a sibling app asks FG
+and never mints its own. Merges turn the loser code into a permanent
+alias of the winner, so an old id still looks up. An id is never
+reissued.
+
+The API is mounted at `/api/identity/roster`:
+
+| Verb + path | Purpose |
+|---|---|
+| `POST /api/identity/roster/plan` | Dry run. Runs the real import inside a transaction and rolls it back. Writes nothing. Returns every item that needs a human |
+| `POST /api/identity/roster/commit` | Writes it in one transaction, 201. Refused with `409 { error: 'review_incomplete', plan }` while any review item is undecided |
+| `GET /api/identity/roster/lookup/:id` | `I…`/`F…` (or `p_`/`f_`) to the current record, following merges: `{ kind, code, community_id, status, requested, redirected }`; 404 `not_found` |
+
+All three need the `roster` scope (or the master token). Issue a
+roster-only key for a caller that should see the people a roster
+matches but not the directory or connector settings:
+
+```sh
+cd ~/familygraph
+node bin/family-graph.js issue-key docanonymizer roster
+```
+
+Body for plan and commit:
+
+```jsonc
+{
+  "sheets": [{ "name": "Sheet1", "headers": ["..."], "rows": [["..."]], "mapping": {} }],
+  // or "households": [...] - not both
+  "decisions": {
+    "0:3:1":      { "action": "attach", "target": "I0123456789ABCDEF" },  // attach | create | skip
+    "0:3:family": { "action": "create" }                                  // attach | create
+  },
+  "source": "your-app",
+  "source_ref": "upload-2026-09-28-001",   // names ONE upload; never reuse
+  "category": "school",                     // church | school | other
+  "tags": [],
+  "idempotency_key": "your-app:abc123"      // commit only; 8-200 of [A-Za-z0-9._:-]
+}
+```
+
+- Decision keys are `<sheet>:<row>:<slot>` for people and
+  `<sheet>:<row>:family` for households. A `target` is an `I…`/`F…` id
+  or an earlier row's key on the same upload (`"0:3:1"`,
+  `"0:3:family"`), because that row's id is not known yet.
+- Output per person: `key`, `slot`, `role`, names, `name_cells`,
+  `action` (`matched | new | review | skip`), `community_id` (null in a
+  plan for anyone new), `candidates` (each with `community_id`, or
+  `sheet_ref` for someone new earlier in the same upload),
+  `review_reasons`, `same_as`, `told_apart`. Households follow the same
+  idea. `summary` counts persons `{matched, new, review, skipped}`,
+  families `{matched, new, review}`, `crosswalk`, and `told_apart`.
+- A decision that no longer answers the current question (a `create`
+  where the plan now finds a definitive match, or one that would repeat
+  an earlier commit of the same `source_ref`) is refused as stale; the
+  plan lists `stale_decisions`. Re-plan and ask again.
+- Idempotency: same `idempotency_key` + same request returns the stored
+  result with HTTP 200 and `"replayed": true`, writing nothing. Same key
+  + a different request is `409 idempotency_conflict`. Keys are scoped
+  per caller and kept 7 days. Refusals are not stored.
+- A caller other than the master token may not send crosswalk refs or
+  code hints, and may not use another app's `source` name once that
+  source has crosswalk links: `403 roster_forbidden`.
+- Limits: 20 MB body, 25 sheets, 20,000 rows, 300 columns, 4,000 chars
+  per cell. Plan and commit have their own rate-limit bucket (§13.1).
+  They run on FG's request thread, so a very large roster (2,000 rows is
+  roughly 10 s) holds other FG requests for that long.
+
+Matching is strict: an exact email or phone only counts when the first
+name lines up, same name needs a birthdate or the same home address to
+confirm, Jr/Sr and birthdate conflicts veto, and anything short of
+certain becomes a review item for a person. The full rule set lives in
+the code (`server/identity/roster.js` and `server/identity/matching.js`).
+
+### 4.4 Crosswalk on `/api/identity/resolve`
+
+Added 2026-09-28 (migration 0020, `SCHEMA_VERSION` 20). The
+`external_refs` table links another app's record id to a FG code, keyed
+by `(source, ref)`. MissionIQ's refs are `contact:<id>`, `child:<id>`,
+and `family:<id>`. Only deliberate imports write it (the
+`family-graph import-missioniq` CLI). `POST /api/identity/resolve` and
+`/resolve-batch` read it when the body carries `source` and a
+`source_ref` (per record on `/resolve-batch`):
+
+- Only the master token or a scoped key whose NAME equals the source
+  may read that source's crosswalk. MissionIQ's key must be issued as
+  `family-graph issue-key missioniq`. A key under any other name that
+  sends that source's record refs, once the source has crosswalk links,
+  gets `403 crosswalk_forbidden` naming the fix. It is never silently
+  resolved by name.
+- A hit comes back as `{ code, action: 'attached', via: 'crosswalk' }`
+  only if the incoming record still describes that person (exact first
+  name, a real nickname, or the same birthdate with a resembling first
+  name, and no birthdate or Jr/Sr contradiction). Otherwise the record
+  goes through the normal resolver, nothing is attached to the linked
+  person, and the result carries `via: 'crosswalk_mismatch'`.
+- `with_family`: one active household returns that household; several
+  return the one crosswalk-linked from the same source if exactly one
+  qualifies, else no `family` plus `families: [codes]`.
 
 ## 5. Versioning
 
@@ -499,8 +608,8 @@ confidential; operators who care about confidentiality use HTTPS.
 POST <your-url>
 Content-Type: application/json
 X-FG-Signature: sha256=<hmac-sha256-hex-of-body-using-your-secret>
-X-FG-Contract-Version: v0.1
-User-Agent: familygraph-webhook/0.1
+X-FG-Contract-Version: v0.2
+User-Agent: familygraph-webhook/0.2
 
 {
   "event": "person.updated",
@@ -633,7 +742,7 @@ async function createPerson(person, requestId) {
     method: 'POST',
     headers: {
       'authorization': `Bearer ${TOKEN}`,
-      'x-fg-contract-version': 'v0.1',
+      'x-fg-contract-version': 'v0.2',
       'x-source-app': 'your-app',
       'x-source-tenant': 'your-tenant',
       'x-request-id': requestId,         // ← idempotency key
@@ -686,10 +795,12 @@ care what was there, just overwrite" semantics.
 |---|---|---|
 | 400 | Malformed input | Fix the body and retry |
 | 401 | Missing / invalid bearer | Provision a new key |
-| 403 | Bearer is valid but lacks the required scope | Ask the operator to add `integration` |
+| 403 | Bearer is valid but lacks the required scope | Ask the operator to add `integration` (or `roster` for `/api/identity/roster`) |
+| 403 `crosswalk_forbidden` / `roster_forbidden` | Key may not use that source's crosswalk (§4.3, §4.4) | Use the key named after the source (`issue-key missioniq`) or the master token |
 | 404 | Entity not found | Either it was archived (look at the changed feed) or the id is wrong |
+| 409 | Roster commit: `review_incomplete` (body carries the plan), `idempotency_conflict`, or a decision target that is not a valid id / earlier row | Answer every review item and re-commit; use a new key for a different request |
 | 412 | If-Match mismatch (stale cache) | Re-fetch, re-apply |
-| 413 | Payload too large (256KB on `/v1`, 20MB on `/api/import`) | Split the request |
+| 413 | Payload too large (256KB on `/v1`, 20MB on `/api/import` and `/api/identity/roster`) | Split the request |
 | 426 | Unsupported `X-FG-Contract-Version` | Upgrade your client |
 | 429 | Rate limit exceeded | Honour `Retry-After`; back off |
 | 5xx | FG bug or transient failure | Retry with the same `X-Request-Id` |
@@ -720,6 +831,8 @@ the relevant log line.
 | Per-school photo consent override | ✅ source of truth | cached mirror |
 | EIM certifications | ✅ source of truth (diocese-of-record cached) | cached mirror |
 | Identity ID (`personId`, `householdId`) | ✅ issuer | store on every entity that references a person |
+| Community id (`I…` / `F…`, the same codes re-spelled) | ✅ sole minter | store it; never mint your own |
+| Crosswalk (your record id to FG code) | ✅ written by deliberate imports only | send `source` + `source_ref` on resolve |
 | Student → grade / classroom / activities | mirror (read-only, pushed by sibling) | ✅ source of truth |
 | School role (teacher / coach / admin) | ❌ | ✅ source of truth |
 | Messaging / lunch / attendance / scores / volunteer hours | ❌ | ✅ source of truth |
@@ -746,6 +859,10 @@ sweeps and bursty admin sessions don't trip them:
 | `/api/...` (PII + admin) | 200 | 10/s | 600 |
 | `/api/sanitize` + `/api/desanitize` | 30 | 1/s | 60 |
 | `/api/import` | 20 | 0.5/s | 30 |
+| `/api/identity/roster/plan` + `/commit` | 20 | 0.5/s | 30 |
+
+Roster lookup (`GET /api/identity/roster/lookup/:id`) uses the `/api`
+PII bucket.
 
 When a bucket is exhausted, FG responds `429 Too Many Requests` with
 `Retry-After: <seconds>` and `X-RateLimit-Bucket: <name>`. Honour the
@@ -802,18 +919,21 @@ straightforward client cache:
 ### 13.5 Health check
 
 `GET /api/health` is unauthenticated and returns FG's schema
-version, counts, and watch-state. Use this for liveness probes —
+version, counts, and watch-state, plus a capabilities block
+(`capabilities_version` 3; the `community_ids` and
+`identity_crosswalk` flags say the roster API and the resolve
+crosswalk are present). Use this for liveness probes —
 don't probe `/v1/` because that requires a real bearer.
 
 ## 14. Versioning your own client
 
-Bake the `X-FG-Contract-Version: v0.1` header into your HTTP client
+Bake the `X-FG-Contract-Version: v0.2` header into your HTTP client
 as a constant. When FG bumps the major version, your CI will start
 seeing `426 Upgrade Required` immediately, which is your signal to
 review the changelog and update the constant.
 
 We recommend tagging your client release with the contract version
-it speaks (`my-app v3.1.2 (FG contract v0.1)`) so an operator
+it speaks (`my-app v3.1.2 (FG contract v0.2)`) so an operator
 debugging a mismatch knows what to expect.
 
 ## 15. Implementation checklist
@@ -821,7 +941,7 @@ debugging a mismatch knows what to expect.
 When you're ready to wire FG into a sibling app:
 
 - [ ] Get an `sk_…` key from the operator with the `integration` scope.
-- [ ] Pin `X-FG-Contract-Version: v0.1` in your HTTP client.
+- [ ] Pin `X-FG-Contract-Version: v0.2` in your HTTP client.
 - [ ] Set `X-Source-App` and `X-Source-Tenant` on every call.
 - [ ] Generate a fresh `X-Request-Id` per logical write.
 - [ ] Store `personId` and `householdId` on every entity that
@@ -862,7 +982,7 @@ changelog will spell out what changed.
 
 ---
 
-**Last updated:** 2026-05-15. See also:
+**Last updated:** 2026-09-28 (community ids, roster API, crosswalk). See also:
 
 - `FAMILYGRAPH_INTEGRATION.md` — the contract spec (with v0.1, v0.2,
   and audit-pass appendices).

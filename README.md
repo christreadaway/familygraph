@@ -67,7 +67,8 @@ Then run every install in this repo through `sfw` with the marker env
 var set:
 
 ```sh
-SFW=1 sfw npm install
+cd ~/familygraph
+SFW=1 sfw npm ci
 SFW=1 sfw npm run client:install
 ```
 
@@ -84,7 +85,8 @@ reason. Do not bypass for convenience.
 ## Run it (macOS / Linux)
 
 ```sh
-SFW=1 sfw npm install
+cd ~/familygraph
+SFW=1 sfw npm ci
 SFW=1 sfw npm run client:install
 npm run client:build
 npm start
@@ -98,8 +100,32 @@ built-in profiles, and starts the folder-watch agent on `~/.family-graph/watch`.
 Print the master Bearer token (paste into the dashboard the first time):
 
 ```sh
+cd ~/familygraph
 node bin/family-graph.js show-token
 ```
+
+---
+
+## Run it (Docker, or the Spark server)
+
+The `Dockerfile` builds one image that serves the API and the dashboard on
+port 3500, with every dependency install inside it going through `sfw`.
+All state lives in the `/data` volume.
+
+```sh
+cd ~/familygraph
+docker build -t familygraph .
+docker run -v fgdata:/data -p 127.0.0.1:3500:3500 familygraph
+```
+
+Inside the container Family Graph binds `0.0.0.0` (it has to, to be
+reachable on the container interface). The `-p 127.0.0.1:3500:3500` is what
+keeps it on the host only. Never publish it as plain `-p 3500:3500`.
+
+On the Spark server (Family Graph and Doc Anonymizer side by side inside the
+firewall), both services listen on `127.0.0.1`. Reach them from your laptop
+through an SSH tunnel, or a LAN bind that stays inside the firewall. Doc
+Anonymizer talks to Family Graph at `http://127.0.0.1:3500` on the same box.
 
 ---
 
@@ -136,7 +162,7 @@ shipped with Windows) also works.
    ```
 
 4. **(Probably not needed)** `better-sqlite3` ships prebuilt Windows
-   binaries for Node 20+, so `sfw npm install` should succeed without a
+   binaries for Node 20+, so `sfw npm ci` should succeed without a
    C++ toolchain. If you ever see a `node-gyp` failure, install the
    build tools once:
    ```powershell
@@ -150,7 +176,7 @@ shipped with Windows) also works.
 git clone https://github.com/christreadaway/familygraph.git
 cd familygraph
 $env:SFW = "1"
-sfw npm install
+sfw npm ci
 sfw npm run client:install
 npm run client:build
 npm start
@@ -237,7 +263,8 @@ Alternatively, register a Scheduled Task that runs at logon with
 | `node bin/family-graph.js start` | Default. Runs the API server + folder-watch agent. |
 | `node bin/family-graph.js status` | Prints schema version, profile, audit count, backup count, key + watch dir paths. |
 | `node bin/family-graph.js show-token` | Prints the master Bearer token. |
-| `node bin/family-graph.js issue-key <name> [scopes]` | Provisions a scoped API key for a consuming app and prints the `sk_…` token once. Default scopes: `pii.read,pii.write,sanitize,audit.write`. Name the key after the app's sync source (`issue-key missioniq`): `/api/identity/resolve` honors a source's crosswalk links only for that key or the master token. |
+| `node bin/family-graph.js issue-key <name> [scopes]` | Provisions a scoped API key for a consuming app and prints the `sk_…` token once (only its hash is stored). Default scopes: `pii.read,pii.write,sanitize,audit.write`. Doc Anonymizer: `issue-key docanonymizer roster` (the `roster` scope only). MissionIQ: `issue-key missioniq` with default scopes - the name must be exactly `missioniq`, because `/api/identity/resolve` honors a source's crosswalk links only for the key named after that source or the master token. |
+| `node bin/family-graph.js import-missioniq <missioniq.db> [--dry-run] [--category church\|school\|other] [--include-deceased]` | One-time (re-runnable) import of everyone MissionIQ knows, each with one lifelong id. Reads MissionIQ's database read-only, asks you about every uncertain match in the terminal, and writes nothing until you type `YES`. See "Importing MissionIQ" below. |
 | `node bin/family-graph.js rotate-secret` | Regenerates the master Bearer token. The data + HMAC keys are preserved so existing ciphertext keeps decrypting. |
 | `node bin/family-graph.js backup [passphrase]` | Hot snapshot. Encrypted with PBKDF2 + AES-256-GCM if a passphrase is given. |
 | `node bin/family-graph.js list-backups` | Lists files in the backups directory. |
@@ -356,16 +383,146 @@ existing **paste / file-upload** path still works exactly the same.
 
 ---
 
+## Community ids (I… / F…)
+
+Every community member a spreadsheet surfaces gets one lifelong id: `I` +
+hex for the individual, `F` + hex for the family (household). The same
+human never gets a second id, in any app, and two humans never share one.
+Family Graph is the only place ids are minted. Doc Anonymizer and MissionIQ
+ask Family Graph; they never mint their own.
+
+The community id IS the Family Graph code, re-spelled: `p_<16 hex>` is
+`I<16 HEX>`, `f_<16 hex>` is `F<16 HEX>` (legacy 8-hex codes work the same
+way). Any case is accepted on input; ids are always emitted uppercase. When
+two records are merged, the losing code becomes a permanent alias of the
+winner, so an older anonymized file still restores. Nothing is minted until
+every review item is decided and the operator confirms.
+
+### Roster API (`/api/identity/roster`, `roster` scope)
+
+All three routes need the `roster` scope (or the master token). Doc
+Anonymizer's key carries only that scope:
+
+```sh
+cd ~/familygraph
+node bin/family-graph.js issue-key docanonymizer roster
+```
+
+- `POST /api/identity/roster/plan` - dry run. Runs the real import inside a
+  transaction and rolls it back, so it writes nothing. Returns every person
+  and household as `matched`, `new`, `review`, or `skip`, with candidates
+  and plain reasons for each review item.
+- `POST /api/identity/roster/commit` - writes it in one transaction.
+  Refused with `409 review_incomplete` (and the plan) while any review item
+  is undecided or any decision has gone stale. Success is `201`. An optional
+  `idempotency_key` makes retries safe: the same key and request replays the
+  stored result (`200`, `replayed: true`, nothing written); the same key with
+  a different request is `409 idempotency_conflict`. Keys are kept 7 days.
+- `GET /api/identity/roster/lookup/:id` - an `I…`/`F…` id (or `p_`/`f_`
+  code) to the current record, following merges.
+
+Body for plan and commit: `{ sheets: [{ name?, headers, rows, mapping? }] }`
+or `{ households: [...] }`, plus `decisions?`, `source?`, `source_ref?`,
+`category?` (`church` / `school` / `other`), and `tags?`. A `source_ref`
+names one upload; never reuse it. Limits: 20 MB body, 25 sheets, 20,000
+rows, 300 columns, 4,000 characters per cell. Plan and commit share their
+own rate bucket (burst 20, then 30/min). A scoped key may not send
+crosswalk refs or code hints, or use another app's source name once that
+source has crosswalk links (`403 roster_forbidden`).
+
+Plan and commit run on the request thread. A 2,000-row roster takes about
+9 seconds to plan and holds other Family Graph requests for that long.
+
+The full contract is in [`INTEGRATION_GUIDE.md`](./INTEGRATION_GUIDE.md).
+
+### Strict matching (roster imports and the MissionIQ import)
+
+Obvious cases are automatic in both directions; anything the rules can't
+settle goes to a person.
+
+- **Same person, automatically:** exact email or phone AND a first name that
+  lines up (exact, or a nickname that stands for one full name); same first
+  + last name AND same birthdate; same first + last name AND the same home
+  address; a name-only row in a household already known with exactly that
+  name; a MissionIQ record imported before (unless it has since changed into
+  someone else).
+- **Different person, automatically:** a shared inbox or phone with a first
+  name that doesn't line up (a spouse, a child - same household); Jr vs Sr,
+  II vs III; different birthdates with nothing else shared; an adult row
+  against a child record with no matching birthdate, email, or phone; two
+  adults whose emails, phones, and addresses all differ. (Different house or
+  unit numbers are different addresses, so they never confirm a match.)
+- **Asked:** same name with nothing to confirm or rule out; same name and
+  inbox but a different birthdate; several strong candidates; a stored link
+  that no longer fits; placeholder names (TBD, Mom), a lone initial, or a
+  business in a name column.
+
+Only an exact name or a nickname-table pair proves a first name. Near
+spellings (Luis/Luisa, Daniel/Daniela) and cross-language pairs (John/Sean,
+Joseph/Jose) can send a pair to review, never auto-match. The nickname
+table covers common English short forms and Spanish forms (Lupe/Guadalupe,
+Paco/Francisco, Nacho/Ignacio).
+
+### Importing MissionIQ
+
+Run this once before any roster is anonymized, so Family Graph already
+knows everyone MissionIQ knows:
+
+```sh
+cd ~/familygraph
+node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --dry-run
+node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --category church
+```
+
+It opens MissionIQ's SQLite file read-only (one consistent snapshot) and
+reads its families, contacts, and children through the same strict engine.
+Each uncertain item is asked in the terminal: a number means "same as that
+candidate", `n` new, `s` not a person (people only), `q` stop. Nothing is
+written until you type `YES`.
+
+- `--dry-run` shows the plan and how many items would need a decision, then
+  stops. Nothing written.
+- `--category church|school|other` tags the import run.
+- `--include-deceased` imports households MissionIQ marks deceased. Left out
+  by default, along with the "Unmatched Donations" holding family, empty
+  households, and emergency contacts.
+
+Every imported MissionIQ record is linked in the crosswalk (`contact:<id>`,
+`child:<id>`, `family:<id>`), so a re-run recognizes them by their MissionIQ
+id and only asks about new or changed records. A do-not-contact flag carries
+over (set, never cleared). A Family Graph code MissionIQ already stored is
+honored only while the record still agrees with it. If one of your answers
+went stale mid-run, it is dropped and re-asked; a contradictory answer is
+re-asked without losing the others.
+
+At the end it lists MissionIQ records that still carry an old Family Graph
+id, with the correct one. MissionIQ's "Sync now" keeps a stored id, so
+correct those ids in MissionIQ itself. Until MissionIQ can re-check or
+re-stamp everything, re-run `import-missioniq` to link new records strictly.
+
+**Before you run it:** if MissionIQ talks to Family Graph with a scoped key,
+that key must be named `missioniq` (`issue-key missioniq`, then put the
+token in MissionIQ's `FAMILYGRAPH_TOKEN` and restart MissionIQ). A key under
+any other name gets `403 crosswalk_forbidden` on "Sync now" once the import
+has linked MissionIQ's records. The master token also works.
+
+Logs for the run go to `~/.family-graph/logs/cli.log` (counts only, never
+names), not into the prompts. Paste its tail into a chat when something
+goes wrong.
+
+---
+
 ## API (summary)
 
-- `GET /api/health` — open. Returns schema version, watch state, audit count, etc.
+- `GET /api/health` — open. Returns schema version (currently 20), watch state, audit count, and a capabilities block (`capabilities_version` 3; flags include `community_ids` and `identity_crosswalk`) so consuming apps can tell what this Family Graph supports.
 - `GET /api/safe/...` — loopback only, no PII ever.
 - Everything else under `/api/` requires a Bearer token.
 
 The Bearer can be the master token (full access) or a per-app `sk_…` scoped
 token issued via `POST /api/keys` with one or more of the scopes
 `pii.read`, `pii.write`, `sanitize`, `audit.read`, `audit.write`, `import`,
-`rules.write`, `integration`, or `*`.
+`roster`, `rules.write`, `integration`, or `*`. `roster` reaches only the
+roster plan / commit / lookup routes (see "Community ids" above).
 
 Consuming apps SHOULD set the `X-Family-Graph-Actor` header to a short
 stable identifier (e.g. `donor_app`, `engagement_app`). It is recorded on
@@ -625,8 +782,10 @@ assignment feature; see
 ### External-app identity API
 
 Consuming apps bring in their own domain data (donations, engagement
-events) and delegate the identity decision to Family Graph. Three
-endpoints under `/api/identity/`:
+events) and delegate the identity decision to Family Graph. The main
+endpoints under `/api/identity/` (plus `POST /api/identity/resolve-batch`,
+up to 1,000 records per call, and `GET /api/identity/changed`, a PII-free
+feed of merges and other code changes):
 
 - `POST /api/identity/match` — read-only peek. Body: `{ record: {...} }`.
   Returns `{ action, confidence, reasons, definitive, candidate, thresholds }`
@@ -634,7 +793,13 @@ endpoints under `/api/identity/`:
 - `POST /api/identity/resolve` — commit. Same input shape; runs the
   resolver and writes the outcome. Returns `{ code, action, score,
   reasons, conflict? }` — the calling app stores its domain data keyed
-  by `code`.
+  by `code`. Optional `source`, `source_ref`, and `with_family`. When the
+  caller is the master token or the key named after `source` and the record
+  was linked by a deliberate import (the MissionIQ import), the linked
+  person comes back directly (`via: "crosswalk"`) as long as the record
+  still describes them; otherwise it goes through the normal resolver and
+  says `via: "crosswalk_mismatch"`. A key under another name sending that
+  source's record refs gets `403 crosswalk_forbidden`, naming the fix.
 - `POST /api/identity/feedback` — the calling app records `same` or
   `different` for a pair. `different` is "sticky": future imports will
   not re-flag that pair as a conflict. `same` merges with the supplied
@@ -798,11 +963,15 @@ correctness fix. The decision flow:
    - Exact phone (multi-value, country-code stripped, concatenation split)
    - Exact name + exact DOB — promoted to definitive because child
      rosters frequently lack email/phone
-   - Address line1 ≥ 0.85 similarity AND a name overlap
+   - Address line1 > 0.85 similarity AND both first and last name line
+     up (fixed 2026-09-28: a shared surname at one address used to be
+     enough, which fused spouses)
 2. **Definitive-signal vetoes** drop confidence below auto-merge:
    - Different states on otherwise-matching addresses (catches
      inherited-mailbox / cross-generation cases)
    - Address similarity < 0.5
+   - A birthdate conflict (or a possible day/month or century misreading)
+   - A Jr/Sr (generational suffix) conflict
 3. **Soft additive signals** (capped at 1.0):
    - last name suffix-aware: exact +0.30, similar +0.20
      (Smith Jr. == Smith)
@@ -850,18 +1019,18 @@ to the same family; the person resolver leaves them as distinct persons.
 | `FAMILY_GRAPH_OUT_DIR` | `$FAMILY_GRAPH_HOME/out` | folder-watch output |
 | `FAMILY_GRAPH_PORT` | `3500` | |
 | `FAMILY_GRAPH_BIND` | `127.0.0.1` | loopback by default |
-| `FAMILY_GRAPH_AUTO_MERGE` | `0.92` | resolver auto-merge threshold |
-| `FAMILY_GRAPH_REVIEW` | `0.7` | resolver conflict-queue threshold |
+| `FAMILY_GRAPH_AUTO_MERGE` | `0.85` | resolver auto-merge threshold |
+| `FAMILY_GRAPH_REVIEW` | `0.30` | resolver conflict-queue threshold |
 | `FAMILY_GRAPH_DISABLE_WATCH` | unset | set to `1` to disable the folder-watch agent |
 | `FAMILY_GRAPH_WATCH_PROCESS_EXISTING` | unset | set to `1` to process files already present at startup |
 | `FAMILY_GRAPH_DISABLE_NOTIFY` | unset | set to `1` to disable the notification dispatcher loop |
 | `FAMILY_GRAPH_DISABLE_INTEGRATION_WEBHOOKS` | unset | set to `1` to disable the integration webhook dispatcher (pending rows accumulate until re-enabled) |
 | `FAMILY_GRAPH_DISABLE_FEDERATION_PUSH` | unset | set to `1` to disable the federation pusher (fat hex-keyed hydration/reconciliation batches to `federationPush` subscriptions) |
 | `FAMILY_GRAPH_DISABLE_PARTNER_OUTBOUND` | unset | set to `1` to disable the partner app outbound check-in scheduler entirely. Dormant anyway when no pairing is enabled. |
-| `FAMILY_GRAPH_DISABLE_RATE_LIMIT` | unset | set to `1` to disable per-Bearer-token rate limiting on `/api` and `/v1`. Defaults: 600/min for `/api`, 1200/min for `/v1`, 60/min for `/api/sanitize`, 30/min for `/api/import`. Disable only for diagnostics; the limits are deliberately generous and shouldn't trip legitimate integration traffic. |
+| `FAMILY_GRAPH_DISABLE_RATE_LIMIT` | unset | set to `1` to disable per-Bearer-token rate limiting on `/api` and `/v1`. Defaults: 600/min for `/api`, 1200/min for `/v1`, 60/min for `/api/sanitize`, 30/min for `/api/import`, 30/min (burst 20) for roster plan/commit. Disable only for diagnostics; the limits are deliberately generous and shouldn't trip legitimate integration traffic. |
 | `FAMILY_GRAPH_POSTMARK_TOKEN` | unset | Postmark server token for outbound email. The `from` address and stream are configured in Settings; the token is read only from the environment. |
 | `FAMILY_GRAPH_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent` |
-| `FAMILY_GRAPH_LOG_FILE` | `$FAMILY_GRAPH_HOME/logs/server.log` | JSON-lines log destination (mirrored to stderr) |
+| `FAMILY_GRAPH_LOG_FILE` | `$FAMILY_GRAPH_HOME/logs/server.log` | JSON-lines log destination (mirrored to stderr). `import-missioniq` writes to `$FAMILY_GRAPH_HOME/logs/cli.log` instead, unless this is set. |
 | `FAMILY_GRAPH_LOG_MAX_BYTES` | `10485760` (10 MB) | rotation cap: past this size the file is renamed to `server.log.1` (one prior generation kept) and a fresh file starts |
 
 The active profile (Dashboard → Profiles) overrides `FAMILY_GRAPH_AUTO_MERGE` /
@@ -899,7 +1068,14 @@ What's logged:
 - `*.sweep_failed` — background sweep failures (conflict assignments,
   reminders, idempotency keys, token sets) at `warn`; sweeps stay
   non-fatal.
+- `roster.plan.*` / `roster.commit.*` - roster imports: counts, timings,
+  and refusal reasons, never names or contact details.
+- `identity.resolve.crosswalk_forbidden` / `crosswalk_mismatch` - a
+  MissionIQ-linked record was refused or no longer fit its link.
 - `notify.dispatch_failed`, `folder_watch.start_failed`, etc.
+
+`import-missioniq` logs to its own file, `~/.family-graph/logs/cli.log`
+(counts only), so log lines never land in the middle of its prompts.
 
 The file rotates when it exceeds `FAMILY_GRAPH_LOG_MAX_BYTES` (default
 10 MB): `server.log` becomes `server.log.1` (replacing any previous
@@ -1009,15 +1185,15 @@ read tokens via `var(--…)` rather than re-declaring colors. The
 ## Test
 
 ```sh
-# server tests (206 cases via node:test — see test_suite.md)
+cd ~/familygraph
+# server tests (772 cases via node:test; 1 skips when run as root)
 npm test
 # end-to-end browser tests (12 cases via Playwright)
 npm run test:e2e:install   # one-time chromium download
 npm run test:e2e
-npm test
 
 # verify the dashboard builds
-npm run client:install      # first time only
+SFW=1 sfw npm run client:install   # first time only
 npm run client:build
 ```
 
@@ -1031,7 +1207,9 @@ and that the design tokens resolve. CI should run both.
 ## Posture
 
 - **Local-first.** Default bind is `127.0.0.1`. The safe API surface
-  enforces loopback origin.
+  enforces loopback origin. In Docker, publish as `-p 127.0.0.1:3500:3500`.
+- **Logs carry counts, codes, and timings.** Never names, emails, phones,
+  addresses, birthdates, document text, or keys.
 - **PII encrypted at rest.** Every PII column stores AES-256-GCM ciphertext;
   search uses HMAC-SHA256 over normalized values. The data + HMAC keys live
   in `secret.key` (mode 0600). SQLCipher is not required.

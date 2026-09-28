@@ -11,7 +11,9 @@
 //   - Score each candidate using matching.scoreMatch — vendored from
 //     the upstream identity engine — which returns { confidence, reasons, definitive }.
 //   - DECISION GATE:
-//       definitive (exact email/phone/strong address) AND no address conflict
+//       definitive (exact email/phone with a first name that lines up, or
+//       exact first + last name with the same birthdate or home address;
+//       no birthdate or Jr/Sr conflict) AND no address conflict
 //                                            → auto_merge
 //       confidence ≥ thresholds.autoMerge   → auto_merge (attach)
 //       confidence ≥ thresholds.review      → enqueue conflict

@@ -87,7 +87,7 @@
 
   <div class="section">
     <h3>Situation</h3>
-    <p>School rosters and parishioner lists are about to run through Doc Anonymizer so AI can work on them safely. Without a shared identifier, the same mother would get a different code in every file, and nobody could tell that "Maria Garcia" on the parish list and on the school roster is one person. MissionIQ already holds most of the community, and some of its stored links came from a looser matcher that could fuse spouses.</p>
+    <p>School rosters and parishioner lists are about to run through Doc Anonymizer so AI can work on them safely. Without a shared identifier, the same mother would get a different code in every file, and nobody could tell that "Maria Garcia" on the parish list and on the school roster is one person. MissionIQ already holds most of the community, some of it linked by a looser matcher.</p>
   </div>
 
   <div class="section">
@@ -98,6 +98,7 @@
       <li>Connected Doc Anonymizer to Family Graph for spreadsheets: names become IDs, questions appear in the preview, and nothing is written until you confirm.</li>
       <li>Rewrote matching so obvious cases settle on their own in both directions, and only real ambiguity reaches a person.</li>
       <li>Locked it down: both apps listen on the Spark server only, keys are scoped, and logs hold counts, never names.</li>
+      <li>Ran an independent bug hunt: 40 defects fixed, plus 10 caught reviewing the fixes.</li>
     </ul>
   </div>
 
@@ -107,14 +108,14 @@
       <ul>
         <li><strong>@@QUESTIONS@@ of @@PEOPLE@@</strong> people needed a decision on the MissionIQ import; a re-run needed <strong>0</strong>.</li>
         <li><strong>0 wrong matches</strong> and <strong>30 questions</strong> (1 in 33 people) on a 500-family roster; before the rework it was 884 questions.</li>
-        <li>Fixed two old matcher bugs that could merge spouses, or neighbors on one street.</li>
+        <li>Fixed old matcher bugs that could merge spouses or neighbors.</li>
       </ul>
     </div>
     <div>
       <h3>What's next</h3>
       <ul>
-        <li>Merge both branches, then run <span class="mono">import-missioniq</span> on the Spark server once, answering its few questions.</li>
-        <li>Update MissionIQ so new contacts use the exact link.</li>
+        <li>Pull main on the Spark server and run <span class="mono">import-missioniq</span> once, answering its few questions.</li>
+        <li>If MissionIQ uses a scoped key, reissue it named <span class="mono">missioniq</span> first.</li>
         <li>Anonymize the first real roster and keep the key file in the backup routine.</li>
       </ul>
     </div>
@@ -189,8 +190,8 @@
       <!-- operator -->
       <rect x="20" y="150" width="112" height="70" rx="10" fill="#ffffff" stroke="#1f2a44"/>
       <text x="34" y="176" font-size="11.5" font-weight="700" fill="#1f2a44">Operator</text>
-      <text x="34" y="192" font-size="9" fill="#1c2433">browser over SSH</text>
-      <text x="34" y="205" font-size="9" fill="#1c2433">tunnel or LAN</text>
+      <text x="34" y="192" font-size="9" fill="#1c2433">Mac browser over</text>
+      <text x="34" y="205" font-size="9" fill="#1c2433">an SSH tunnel</text>
       <line x1="132" y1="185" x2="162" y2="185" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
 
       <!-- future -->
@@ -263,6 +264,7 @@
         <li><strong>Never reissued.</strong> An ID is never given to anyone else, even after the person leaves.</li>
         <li><strong>Merges redirect.</strong> If two records turn out to be one person, the old ID points to the survivor forever, so older files still restore.</li>
         <li><strong>Nothing minted on a guess.</strong> An ID is created only after every open question is answered and you confirm.</li>
+        <li><strong>Retry-safe.</strong> If the connection drops mid-save, resending can never create a second ID; the file stays locked until the outcome is known.</li>
       </ul>
     </div>
     <div class="card">
@@ -414,7 +416,7 @@ every [?] is answered</span></div>
 <section class="page">
   <div class="kicker">How matching decides</div>
   <h2>Automatic when it is obvious, a question only when it is not</h2>
-  <p>Every incoming person is compared with the people Family Graph already knows. Three outcomes are possible, and the bar for each is written down below.</p>
+  <p>Each incoming person is compared with everyone Family Graph knows. Three outcomes:</p>
 
   <div class="two" style="grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
     <div class="card" style="border-color:#0f766e">
@@ -445,7 +447,8 @@ every [?] is answered</span></div>
         <li>Two possible matches at once</li>
         <li>A stored MissionIQ link that no longer fits the record</li>
         <li>The same name twice in one household</li>
-        <li>Placeholder names ("TBD"), initials, or a business in a name column</li>
+        <li>Look-alike first names (Luis / Luisa)</li>
+        <li>Placeholders ("TBD"), initials, or a business name</li>
       </ul>
     </div>
   </div>
@@ -486,10 +489,11 @@ every [?] is answered</span></div>
     <div class="card">
       <h3>Security posture</h3>
       <ul>
-        <li>Family Graph, Doc Anonymizer, and Ollama listen on 127.0.0.1 only. You reach them through an SSH tunnel or a LAN address inside the firewall.</li>
+        <li>Family Graph, Doc Anonymizer, and Ollama listen on 127.0.0.1 only. From your Mac you reach them through an SSH tunnel (below); Doc Anonymizer refuses any other address.</li>
         <li>Doc Anonymizer refuses any Family Graph address that is not on this machine or the local network. There is no override.</li>
         <li>Doc Anonymizer's Family Graph key carries only the <span class="mono">roster</span> scope. It is stored in a file only the owner can read, never shown again, never logged.</li>
         <li>Contact details in Family Graph are encrypted at rest; searches use keyed hashes.</li>
+        <li>Doc Anonymizer refuses requests from other websites, and a changed Family Graph address never receives the stored key.</li>
         <li>Uploaded files are deleted the moment processing ends or fails.</li>
       </ul>
     </div>
@@ -499,21 +503,22 @@ every [?] is answered</span></div>
         <li><strong>Logged:</strong> file name, sizes, counts matched / new / asked, import run code, timings, and full error details.</li>
         <li><strong>Never logged:</strong> names, emails, phones, addresses, document text, replacement values, or keys.</li>
         <li>Family Graph: <span class="mono">~/.family-graph/logs/server.log</span> and <span class="mono">cli.log</span>.</li>
-        <li>Doc Anonymizer: <span class="mono">~/doc-anonymizer/logs/</span>.</li>
+        <li>Doc Anonymizer: <span class="mono">~/doc-anonymizer/anonymizer.log</span>.</li>
         <li>Paste the last lines into a chat when something breaks; they are safe to share.</li>
       </ul>
     </div>
   </div>
 
   <div class="section">
-    <h3>First-time setup (after both branches are merged)</h3>
+    <h3>First-time setup on the Spark server</h3>
     <div class="cmd">cd ~/familygraph
-git pull &amp;&amp; SFW=1 sfw npm ci
+git checkout main &amp;&amp; git pull &amp;&amp; SFW=1 sfw npm ci
 node bin/family-graph.js start                     # leave this window running
 node bin/family-graph.js issue-key docanonymizer roster
-node bin/family-graph.js import-missioniq ~/missioniq/data/missioniq.db --dry-run
-node bin/family-graph.js import-missioniq ~/missioniq/data/missioniq.db --category church</div>
-    <p class="caption">Paste the issued key once into Doc Anonymizer's [ FAMILY GRAPH ] panel. Run the last three in a second Terminal window. The dry run shows the counts and how many questions to expect; the real run asks them and writes only after you type YES. Exact paths are in each README.</p>
+node bin/family-graph.js issue-key missioniq       # only if MissionIQ uses a scoped key
+node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --dry-run
+node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --category church</div>
+    <p class="caption">Paste the docanonymizer key into Doc Anonymizer's [ FAMILY GRAPH ] panel, and the missioniq key into MissionIQ's FAMILYGRAPH_TOKEN. Run everything after start in a second Terminal window. To use the apps from your Mac, open a tunnel first: <span class="mono">ssh -L 5000:127.0.0.1:5000 -L 3500:127.0.0.1:3500 [you]@[spark-server]</span>, then browse to http://127.0.0.1:5000. The dry run shows the counts and how many questions to expect; the real run asks them and writes only after you type YES. Exact paths are in each README.</p>
   </div>
 
   <div class="two" style="margin-top:6px">
@@ -527,7 +532,8 @@ node bin/family-graph.js import-missioniq ~/missioniq/data/missioniq.db --catego
     <div class="card">
       <h3>Known follow-ups</h3>
       <ul>
-        <li>MissionIQ: "re-check all" button, student sync, and household re-stamp, so new contacts use exact links.</li>
+        <li>MissionIQ: "re-check all" button, student sync, and household re-stamp, so new contacts use exact links. Until then, re-run the import to link new records.</li>
+        <li>A 2,000-row roster keeps Family Graph busy for about 10 seconds.</li>
         <li>@@STALE_NOTE@@</li>
       </ul>
     </div>
