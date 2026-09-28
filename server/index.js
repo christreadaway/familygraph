@@ -199,11 +199,12 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/notifications', bearerMaster, piiRateLimit, buildNotifications({ db }));
   app.use('/api/scan', bearerWrite, piiRateLimit, buildScan({ db, secrets, thresholds }));
   // Roster imports that issue community identifiers (I… / F…). Mounted
-  // before /api/identity so its per-route scopes apply: plan = pii.read,
-  // commit = import.
+  // before /api/identity so its own scope applies: `roster` for plan,
+  // commit, and lookup - the only scope Doc Anonymizer's key carries.
+  const bearerRoster = auth.bearerAuth(secrets, { db, scope: 'roster' });
   app.use('/api/identity/roster', buildRoster({
     db, secrets, thresholds,
-    auth: { read: bearerRead, import: bearerImport },
+    auth: { read: bearerRoster, import: bearerRoster },
     rate: { pii: piiRateLimit, import: importRateLimit },
   }));
   // External-app identity API. Consuming apps call these endpoints to

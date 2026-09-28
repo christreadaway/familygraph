@@ -10,7 +10,12 @@ const { newCode } = require('../crypto/identifiers');
 //   'sanitize'         — may call /api/sanitize and /api/desanitize
 //   'audit.read'       — may read /api/audit
 //   'audit.write'      — may post /api/audit/external-export
-//   'import'           — may run bulk imports
+//   'import'           — may run bulk imports (and configure connectors)
+//   'roster'           — may plan and commit roster imports that issue
+//                        community ids (/api/identity/roster) and look an
+//                        id up - nothing else. Doc Anonymizer's key carries
+//                        only this: it never needs the whole directory
+//                        (pii.read) or connector settings (import).
 //   'rules.write'      — may CRUD resolution rules
 //   'integration'      — may call the /v1 Integration contract surface.
 //                        Distinct from pii.read/pii.write because the
@@ -20,7 +25,7 @@ const { newCode } = require('../crypto/identifiers');
 //   '*'                — full access (equivalent to the master token)
 const VALID_SCOPES = new Set([
   'pii.read', 'pii.write', 'sanitize', 'audit.read', 'audit.write',
-  'import', 'rules.write', 'integration', '*',
+  'import', 'roster', 'rules.write', 'integration', '*',
 ]);
 
 function hash(token) {

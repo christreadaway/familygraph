@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Community Identity Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  @page { size: 8.5in 11in; margin: 0; }
+  :root {
+    --ink: #1c2433;
+    --muted: #5b6475;
+    --line: #d9dee7;
+    --soft: #f4f6f9;
+    --navy: #1f2a44;
+    --teal: #0f766e;
+    --teal-soft: #e6f4f2;
+    --amber: #b45309;
+    --amber-soft: #fdf3e6;
+    --slate: #475569;
+    --red: #9f1239;
+    --red-soft: #fcebef;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #ffffff; color: var(--ink); }
+  body { font-family: 'Inter', sans-serif; font-size: 10.5pt; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page { width: 8.5in; height: 11in; padding: 0.6in 0.65in 0.55in; position: relative; overflow: hidden; page-break-after: always; break-after: page; }
+  .page:last-child { page-break-after: auto; break-after: auto; }
+  h1, h2, h3 { font-family: 'Montserrat', sans-serif; line-height: 1.2; margin: 0; color: var(--navy); }
+  h1 { font-size: 25pt; font-weight: 800; letter-spacing: -0.2px; }
+  h2 { font-size: 15pt; font-weight: 700; margin-bottom: 8px; }
+  h3 { font-size: 10.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--teal); margin-bottom: 6px; }
+  p { margin: 0 0 8px; max-width: 7.2in; }
+  ul { margin: 0; padding-left: 18px; max-width: 7.2in; }
+  li { margin: 0 0 4px; }
+  .kicker { font-family: 'Montserrat', sans-serif; font-size: 9pt; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--teal); margin-bottom: 6px; }
+  .subtitle { font-size: 11.5pt; color: var(--muted); margin-top: 6px; }
+  .sowhat { font-size: 13pt; line-height: 1.38; font-weight: 500; color: var(--navy); margin-top: 12px; padding: 10px 14px; border-left: 4px solid var(--teal); background: var(--teal-soft); max-width: 7.2in; }
+  .glance { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0 10px; }
+  .metric { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: #fff; }
+  .metric .num { font-family: 'Montserrat', sans-serif; font-weight: 800; font-size: 20pt; color: var(--navy); line-height: 1.1; }
+  .metric .lbl { font-size: 8.5pt; color: var(--muted); line-height: 1.3; margin-top: 4px; }
+  .section { margin-top: 10px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .two > * { min-width: 0; }
+  .footer { position: absolute; left: 0.65in; right: 0.65in; bottom: 0.3in; font-size: 8pt; color: var(--muted); display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 6px; }
+  .caption { font-size: 8.5pt; color: var(--muted); margin-top: 4px; }
+  .figure { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fff; margin: 8px 0 10px; }
+  svg text { font-family: 'Inter', sans-serif; }
+  .tbl { width: 100%; border-collapse: collapse; font-size: 9pt; margin-top: 4px; }
+  .tbl th, .tbl td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.35; }
+  .tbl th { font-family: 'Montserrat', sans-serif; font-size: 8.5pt; letter-spacing: 0.5px; text-transform: uppercase; color: var(--slate); background: var(--soft); }
+  .pill { display: inline-block; font-size: 8pt; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
+  .same { background: var(--teal-soft); color: var(--teal); }
+  .diff { background: var(--red-soft); color: var(--red); }
+  .ask { background: var(--amber-soft); color: var(--amber); }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #fff; }
+  .card h3 { margin-bottom: 4px; }
+  .card ul { padding-left: 16px; font-size: 9.2pt; }
+  .card li { margin-bottom: 3px; line-height: 1.35; }
+  code, .mono { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 8.8pt; background: var(--soft); padding: 0 3px; border-radius: 3px; }
+  .term { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 7.1pt; line-height: 1.42; white-space: pre; border-radius: 6px; padding: 8px 9px; overflow: hidden; height: 2.2in; }
+  .term.dark { background: #111827; color: #e5e7eb; }
+  .term.dark .cursor { color: #34d399; font-weight: 700; }
+  .term.light { background: #ffffff; color: #111111; border: 1px solid #111111; }
+  .term .muted { color: #6b7280; }
+  .btnmock { background: #111111; color: #ffffff; padding: 0 2px; }
+  .cmd { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 8.3pt; background: var(--navy); color: #e8edf5; padding: 8px 10px; border-radius: 6px; line-height: 1.45; white-space: pre; overflow: hidden; }
+</style>
+</head>
+<body>
+
+<!-- =========================================================== PAGE 1 -->
+<section class="page">
+  <div class="kicker">Community Identity &middot; [Parish Name] and School</div>
+  <h1>One Person, One ID, Everywhere</h1>
+  <div class="subtitle">How MissionIQ, Family Graph, and Doc Anonymizer share a lifelong identifier for every family and every person.</div>
+  <div class="sowhat">Every parishioner, parent, and student now carries one permanent ID (I&hellip; for a person, F&hellip; for a family) that no product ever issues twice, and a roster can be sent through AI without a single real name leaving the Spark server.</div>
+
+  <div class="glance">
+    <div class="metric"><div class="num">@@PEOPLE@@</div><div class="lbl">people imported from MissionIQ demo data in @@IMPORT_SECONDS@@ seconds</div></div>
+    <div class="metric"><div class="num">@@QUESTIONS@@</div><div class="lbl">questions a person had to answer; the rest settled automatically</div></div>
+    <div class="metric"><div class="num">0</div><div class="lbl">wrong matches on a 500-family test roster</div></div>
+    <div class="metric"><div class="num">@@TESTS@@</div><div class="lbl">automated tests passing across both products</div></div>
+  </div>
+
+  <div class="section">
+    <h3>Situation</h3>
+    <p>School rosters and parishioner lists are about to run through Doc Anonymizer so AI can work on them safely. Without a shared identifier, the same mother would get a different code in every file, and nobody could tell that "Maria Garcia" on the parish list and on the school roster is one person. MissionIQ already holds most of the community, and some of its stored links came from a looser matcher that could fuse spouses.</p>
+  </div>
+
+  <div class="section">
+    <h3>What we did</h3>
+    <ul>
+      <li>Made Family Graph the only system that issues IDs, and gave its codes a readable form: <span class="mono">I</span> + 16 hex for a person, <span class="mono">F</span> + 16 hex for a family.</li>
+      <li>Built a one-time, read-only MissionIQ import that links every MissionIQ record to its Family Graph person, so later lookups are exact, not guesses.</li>
+      <li>Connected Doc Anonymizer to Family Graph for spreadsheets: names become IDs, questions appear in the preview, and nothing is written until you confirm.</li>
+      <li>Rewrote matching so obvious cases settle on their own in both directions, and only real ambiguity reaches a person.</li>
+      <li>Locked it down: both apps listen on the Spark server only, keys are scoped, and logs hold counts, never names.</li>
+    </ul>
+  </div>
+
+  <div class="section two">
+    <div>
+      <h3>Results</h3>
+      <ul>
+        <li><strong>@@QUESTIONS@@ of @@PEOPLE@@</strong> people needed a decision on the MissionIQ import; a re-run needed <strong>0</strong>.</li>
+        <li><strong>0 wrong matches</strong> and <strong>30 questions</strong> (1 in 33 people) on a 500-family roster; before the rework it was 884 questions.</li>
+        <li>Fixed two old matcher bugs that could merge spouses, or neighbors on one street.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>What's next</h3>
+      <ul>
+        <li>Merge both branches, then run <span class="mono">import-missioniq</span> on the Spark server once, answering its few questions.</li>
+        <li>Update MissionIQ so new contacts use the exact link.</li>
+        <li>Anonymize the first real roster and keep the key file in the backup routine.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer"><span>Prepared @@DATE@@ &middot; Operations, [Parish Name]</span><span>Page 1 of 6</span></div>
+</section>
+
+<!-- =========================================================== PAGE 2 -->
+<section class="page">
+  <div class="kicker">The system map</div>
+  <h2>Three products, one identity registry, one server</h2>
+  <p>Family Graph is the registry: it alone decides whether someone already exists and issues IDs. MissionIQ and Doc Anonymizer ask it; they never mint an identity of their own.</p>
+
+  <div class="figure">
+    <svg viewBox="0 0 700 430" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+        <marker id="arrT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/></marker>
+      </defs>
+      <!-- firewall -->
+      <rect x="8" y="8" width="684" height="414" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 5"/>
+      <text x="24" y="30" font-size="11" font-weight="700" fill="#475569" letter-spacing="1">INSIDE THE FIREWALL</text>
+      <!-- spark box -->
+      <rect x="150" y="48" width="528" height="346" rx="12" fill="#ffffff" stroke="#1f2a44" stroke-width="1.5"/>
+      <text x="166" y="70" font-size="11" font-weight="700" fill="#1f2a44" letter-spacing="1">SPARK SERVER</text>
+      <text x="166" y="86" font-size="9.5" fill="#5b6475">every service listens on 127.0.0.1 only</text>
+
+      <!-- Family Graph -->
+      <rect x="360" y="120" width="300" height="130" rx="10" fill="#e6f4f2" stroke="#0f766e" stroke-width="1.5"/>
+      <text x="376" y="144" font-size="13" font-weight="700" fill="#0f766e">Family Graph</text>
+      <text x="376" y="160" font-size="9.5" fill="#1c2433">identity registry &middot; 127.0.0.1:3500</text>
+      <text x="376" y="182" font-size="9.5" fill="#1c2433">&#8226; people, households, encrypted contact data</text>
+      <text x="376" y="197" font-size="9.5" fill="#1c2433">&#8226; issues I&#8230; and F&#8230; IDs, never twice</text>
+      <text x="376" y="212" font-size="9.5" fill="#1c2433">&#8226; crosswalk: MissionIQ record &#8594; person</text>
+      <text x="376" y="227" font-size="9.5" fill="#1c2433">&#8226; audit trail of every match and decision</text>
+
+      <!-- Doc Anonymizer -->
+      <rect x="166" y="120" width="160" height="130" rx="10" fill="#ffffff" stroke="#1f2a44"/>
+      <text x="180" y="144" font-size="13" font-weight="700" fill="#1f2a44">Doc Anonymizer</text>
+      <text x="180" y="160" font-size="9.5" fill="#1c2433">127.0.0.1:5000</text>
+      <text x="180" y="182" font-size="9.5" fill="#1c2433">&#8226; any file: PDF, Word,</text>
+      <text x="180" y="196" font-size="9.5" fill="#1c2433">  scans, slides, sheets</text>
+      <text x="180" y="212" font-size="9.5" fill="#1c2433">&#8226; spreadsheets also get</text>
+      <text x="180" y="226" font-size="9.5" fill="#1c2433">  community IDs</text>
+
+      <!-- Ollama -->
+      <rect x="166" y="290" width="160" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+      <text x="180" y="314" font-size="12" font-weight="700" fill="#1f2a44">Local AI model</text>
+      <text x="180" y="330" font-size="9.5" fill="#1c2433">Ollama &middot; 127.0.0.1:11434</text>
+      <text x="180" y="350" font-size="9.5" fill="#1c2433">finds names and contact</text>
+      <text x="180" y="364" font-size="9.5" fill="#1c2433">details; never leaves box</text>
+
+      <!-- MissionIQ -->
+      <rect x="360" y="290" width="300" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+      <text x="376" y="314" font-size="12" font-weight="700" fill="#1f2a44">MissionIQ</text>
+      <text x="376" y="330" font-size="9.5" fill="#1c2433">donor platform &middot; its own database file</text>
+      <text x="376" y="350" font-size="9.5" fill="#1c2433">&#8226; one-time import: read-only, never written</text>
+      <text x="376" y="364" font-size="9.5" fill="#1c2433">&#8226; "Sync now" gets the exact linked ID back</text>
+
+      <!-- arrows -->
+      <line x1="326" y1="170" x2="356" y2="170" stroke="#0f766e" stroke-width="2" marker-end="url(#arrT)"/>
+      <line x1="356" y1="200" x2="330" y2="200" stroke="#0f766e" stroke-width="2" marker-end="url(#arrT)"/>
+      <text x="330" y="112" font-size="8.5" fill="#0f766e" font-weight="600">roster plan / commit</text>
+      <line x1="246" y1="250" x2="246" y2="286" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="252" y="272" font-size="8.5" fill="#475569">detect PII</text>
+      <line x1="470" y1="290" x2="470" y2="254" stroke="#0f766e" stroke-width="2" marker-end="url(#arrT)"/>
+      <text x="476" y="276" font-size="8.5" fill="#0f766e" font-weight="600">import (read-only)</text>
+      <line x1="580" y1="254" x2="580" y2="286" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="586" y="276" font-size="8.5" fill="#475569">exact IDs</text>
+
+      <!-- operator -->
+      <rect x="20" y="150" width="112" height="70" rx="10" fill="#ffffff" stroke="#1f2a44"/>
+      <text x="34" y="176" font-size="11.5" font-weight="700" fill="#1f2a44">Operator</text>
+      <text x="34" y="192" font-size="9" fill="#1c2433">browser over SSH</text>
+      <text x="34" y="205" font-size="9" fill="#1c2433">tunnel or LAN</text>
+      <line x1="132" y1="185" x2="162" y2="185" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+      <!-- future -->
+      <rect x="20" y="300" width="112" height="86" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="4 3"/>
+      <text x="34" y="324" font-size="11" font-weight="700" fill="#475569">Later</text>
+      <text x="34" y="340" font-size="9" fill="#475569">ParentPoint,</text>
+      <text x="34" y="353" font-size="9" fill="#475569">TeacherAIde read</text>
+      <text x="34" y="366" font-size="9" fill="#475569">the same IDs</text>
+
+      <!-- outside -->
+      <text x="24" y="412" font-size="9" fill="#9f1239" font-weight="600">Nothing on this page talks to the internet. The only outside call is GitHub, and only when you press Push.</text>
+    </svg>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h3>Who owns what</h3>
+      <ul>
+        <li><strong>Family Graph</strong> owns identity: who exists, who belongs to which household, and every ID.</li>
+        <li><strong>MissionIQ</strong> owns giving and donor work. It keys that work to Family Graph IDs.</li>
+        <li><strong>Doc Anonymizer</strong> owns documents. It asks Family Graph for IDs and keeps the key that restores names.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>What each side can see</h3>
+      <ul>
+        <li>The AI model sees only anonymized text, never a real name.</li>
+        <li>Doc Anonymizer's key carries one scope, <span class="mono">roster</span>: plan and commit rosters, look up an ID. It cannot browse the directory, change settings, or delete anyone.</li>
+        <li>MissionIQ's file is opened read-only; nothing is ever written back into it.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer"><span>Community Identity Overview</span><span>Page 2 of 6</span></div>
+</section>
+
+<!-- =========================================================== PAGE 3 -->
+<section class="page">
+  <div class="kicker">The identifier</div>
+  <h2>One code, two spellings, never reissued</h2>
+  <p>The community ID is Family Graph's own code, written so a spreadsheet and a person can read it. Nothing is translated or stored twice.</p>
+
+  <div class="figure">
+    <svg viewBox="0 0 700 250" width="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/></marker></defs>
+      <rect x="20" y="20" width="300" height="90" rx="10" fill="#f4f6f9" stroke="#d9dee7"/>
+      <text x="36" y="46" font-size="10" font-weight="700" fill="#475569" letter-spacing="1">INSIDE FAMILY GRAPH</text>
+      <text x="36" y="74" font-size="16" font-family="Menlo, monospace" fill="#1f2a44">p_3a4f9c2b1d0e7f21</text>
+      <text x="36" y="96" font-size="9.5" fill="#5b6475">a person code, lowercase, with p_</text>
+      <rect x="380" y="20" width="300" height="90" rx="10" fill="#e6f4f2" stroke="#0f766e"/>
+      <text x="396" y="46" font-size="10" font-weight="700" fill="#0f766e" letter-spacing="1">ON A ROSTER OR IN AI OUTPUT</text>
+      <text x="396" y="74" font-size="16" font-family="Menlo, monospace" fill="#0f766e">I3A4F9C2B1D0E7F21</text>
+      <text x="396" y="96" font-size="9.5" fill="#1c2433">I = individual, then the same 16 hex digits</text>
+      <line x1="322" y1="58" x2="376" y2="58" stroke="#0f766e" stroke-width="2" marker-end="url(#a3)" marker-start="url(#a3)"/>
+
+      <rect x="20" y="140" width="300" height="90" rx="10" fill="#f4f6f9" stroke="#d9dee7"/>
+      <text x="36" y="194" font-size="16" font-family="Menlo, monospace" fill="#1f2a44">f_91c07be24d5a3e10</text>
+      <text x="36" y="216" font-size="9.5" fill="#5b6475">a family (household) code</text>
+      <rect x="380" y="140" width="300" height="90" rx="10" fill="#e6f4f2" stroke="#0f766e"/>
+      <text x="396" y="194" font-size="16" font-family="Menlo, monospace" fill="#0f766e">F91C07BE24D5A3E10</text>
+      <text x="396" y="216" font-size="9.5" fill="#1c2433">F = family; the letter keeps Excel from mangling it</text>
+      <line x1="322" y1="178" x2="376" y2="178" stroke="#0f766e" stroke-width="2" marker-end="url(#a3)" marker-start="url(#a3)"/>
+    </svg>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h3>The promises</h3>
+      <ul>
+        <li><strong>One human, one ID, for life.</strong> The same mother keeps her ID on the parish list, next year's roster, and in MissionIQ.</li>
+        <li><strong>Never reissued.</strong> An ID is never given to anyone else, even after the person leaves.</li>
+        <li><strong>Merges redirect.</strong> If two records turn out to be one person, the old ID points to the survivor forever, so older files still restore.</li>
+        <li><strong>Nothing minted on a guess.</strong> An ID is created only after every open question is answered and you confirm.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>The crosswalk</h3>
+      <ul>
+        <li>Each imported MissionIQ record is linked to its person: <span class="mono">contact:&lt;id&gt;</span>, <span class="mono">child:&lt;id&gt;</span>, <span class="mono">family:&lt;id&gt;</span>.</li>
+        <li>From then on, "MissionIQ contact X" <em>is</em> that person. Lookups are exact, never re-matched by name.</li>
+        <li>Only a deliberate import writes a link. Everyday lookups read links; they never create them, so a loose guess can never become permanent.</li>
+        <li>If a linked record later changes into someone else (a different first name and birthdate), it comes back as a question.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Where the ID shows up in a scrubbed spreadsheet</h3>
+    <table class="tbl">
+      <tr><th style="width:26%">Column</th><th style="width:30%">Before</th><th>After</th></tr>
+      <tr><td>Student First Name</td><td>Emma</td><td><span class="mono">[I3A4F9C2B1D0E7F21]</span></td></tr>
+      <tr><td>Student Last Name</td><td>Smith</td><td><span class="mono">[PERSON_7C1B0A94E2D3]</span> (per-value token, as before)</td></tr>
+      <tr><td>Parent Email</td><td>jane@example.org</td><td><span class="mono">[EMAIL_3F0A91C2B7E4]</span></td></tr>
+      <tr><td>Household (added if missing)</td><td>&nbsp;</td><td><span class="mono">[F91C07BE24D5A3E10]</span>, removed again on restore</td></tr>
+    </table>
+    <p class="caption">PDFs, Word files, scans, and slides are anonymized exactly as before. Community IDs apply only to spreadsheets, and only when Family Graph is connected.</p>
+  </div>
+  <div class="footer"><span>Community Identity Overview</span><span>Page 3 of 6</span></div>
+</section>
+
+<!-- =========================================================== PAGE 4 -->
+<section class="page">
+  <div class="kicker">The two flows</div>
+  <h2>Bringing people in, and sending a roster through AI</h2>
+
+  <h3 style="margin-top:6px">Flow A &middot; One-time MissionIQ import (command line on the Spark server)</h3>
+  <div class="figure">
+    <svg viewBox="0 0 700 150" width="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker></defs>
+      <g font-size="9.5">
+        <rect x="6" y="20" width="118" height="70" rx="8" fill="#fff" stroke="#94a3b8"/>
+        <text x="16" y="42" font-weight="700" fill="#1f2a44">1. Read</text>
+        <text x="16" y="58" fill="#1c2433">MissionIQ file,</text>
+        <text x="16" y="72" fill="#1c2433">read-only</text>
+        <rect x="144" y="20" width="118" height="70" rx="8" fill="#fff" stroke="#94a3b8"/>
+        <text x="154" y="42" font-weight="700" fill="#1f2a44">2. Plan</text>
+        <text x="154" y="58" fill="#1c2433">match everyone,</text>
+        <text x="154" y="72" fill="#1c2433">write nothing</text>
+        <rect x="282" y="20" width="118" height="70" rx="8" fill="#fdf3e6" stroke="#b45309"/>
+        <text x="292" y="42" font-weight="700" fill="#b45309">3. Ask</text>
+        <text x="292" y="58" fill="#1c2433">only the real</text>
+        <text x="292" y="72" fill="#1c2433">questions</text>
+        <rect x="420" y="20" width="118" height="70" rx="8" fill="#fff" stroke="#94a3b8"/>
+        <text x="430" y="42" font-weight="700" fill="#1f2a44">4. Confirm</text>
+        <text x="430" y="58" fill="#1c2433">type YES, or</text>
+        <text x="430" y="72" fill="#1c2433">nothing is written</text>
+        <rect x="558" y="20" width="136" height="70" rx="8" fill="#e6f4f2" stroke="#0f766e"/>
+        <text x="568" y="42" font-weight="700" fill="#0f766e">5. Commit + link</text>
+        <text x="568" y="58" fill="#1c2433">IDs issued, every</text>
+        <text x="568" y="72" fill="#1c2433">record in crosswalk</text>
+      </g>
+      <line x1="124" y1="55" x2="140" y2="55" stroke="#475569" stroke-width="1.5" marker-end="url(#a4)"/>
+      <line x1="262" y1="55" x2="278" y2="55" stroke="#475569" stroke-width="1.5" marker-end="url(#a4)"/>
+      <line x1="400" y1="55" x2="416" y2="55" stroke="#475569" stroke-width="1.5" marker-end="url(#a4)"/>
+      <line x1="538" y1="55" x2="554" y2="55" stroke="#475569" stroke-width="1.5" marker-end="url(#a4)"/>
+      <text x="6" y="118" font-size="9" fill="#5b6475">Safe to re-run any time: records imported before are recognized by their MissionIQ ID, so only new or changed records are matched again.</text>
+      <text x="6" y="134" font-size="9" fill="#5b6475">Left out on purpose: the "Unmatched Donations" holding family, emergency contacts, and deceased households unless you ask for them.</text>
+    </svg>
+  </div>
+
+  <h3>Flow B &middot; A roster through Doc Anonymizer (browser)</h3>
+  <div class="figure">
+    <svg viewBox="0 0 700 250" width="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+      <marker id="a5t" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/></marker></defs>
+      <text x="6" y="16" font-size="9" font-weight="700" fill="#475569" letter-spacing="1">DOC ANONYMIZER</text>
+      <text x="6" y="244" font-size="9" font-weight="700" fill="#0f766e" letter-spacing="1">FAMILY GRAPH</text>
+      <g font-size="9.5">
+        <rect x="6" y="26" width="104" height="62" rx="8" fill="#fff" stroke="#94a3b8"/><text x="14" y="46" font-weight="700" fill="#1f2a44">Upload</text><text x="14" y="62" fill="#1c2433">spreadsheet</text><text x="14" y="76" fill="#1c2433">or CSV</text>
+        <rect x="124" y="26" width="104" height="62" rx="8" fill="#fff" stroke="#94a3b8"/><text x="132" y="46" font-weight="700" fill="#1f2a44">Detect</text><text x="132" y="62" fill="#1c2433">local AI finds</text><text x="132" y="76" fill="#1c2433">names, emails</text>
+        <rect x="242" y="26" width="104" height="62" rx="8" fill="#fdf3e6" stroke="#b45309"/><text x="250" y="46" font-weight="700" fill="#b45309">Preview</text><text x="250" y="62" fill="#1c2433">[x] matched [+] new</text><text x="250" y="76" fill="#1c2433">[?] you decide</text>
+        <rect x="360" y="26" width="104" height="62" rx="8" fill="#fff" stroke="#94a3b8"/><text x="368" y="46" font-weight="700" fill="#1f2a44">Confirm</text><text x="368" y="62" fill="#1c2433">blocked until</text><text x="368" y="76" fill="#1c2433">every [?] answered</text>
+        <rect x="478" y="26" width="104" height="62" rx="8" fill="#fff" stroke="#94a3b8"/><text x="486" y="46" font-weight="700" fill="#1f2a44">Scrub + verify</text><text x="486" y="62" fill="#1c2433">IDs in name cells,</text><text x="486" y="76" fill="#1c2433">zero leftovers</text>
+        <rect x="596" y="26" width="98" height="62" rx="8" fill="#e6f4f2" stroke="#0f766e"/><text x="604" y="46" font-weight="700" fill="#0f766e">Download</text><text x="604" y="62" fill="#1c2433">file + key file</text><text x="604" y="76" fill="#1c2433">(keep the key)</text>
+
+        <rect x="124" y="150" width="222" height="72" rx="8" fill="#e6f4f2" stroke="#0f766e"/><text x="134" y="172" font-weight="700" fill="#0f766e">Plan (read-only)</text><text x="134" y="188" fill="#1c2433">runs the real import in a transaction,</text><text x="134" y="202" fill="#1c2433">then rolls it back: shows exactly what</text><text x="134" y="216" fill="#1c2433">will happen, writes nothing</text>
+        <rect x="360" y="150" width="222" height="72" rx="8" fill="#e6f4f2" stroke="#0f766e"/><text x="370" y="172" font-weight="700" fill="#0f766e">Commit</text><text x="370" y="188" fill="#1c2433">refused while any question is open;</text><text x="370" y="202" fill="#1c2433">otherwise one transaction: IDs, audit,</text><text x="370" y="216" fill="#1c2433">"different people" remembered</text>
+      </g>
+      <line x1="110" y1="57" x2="120" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#a5)"/>
+      <line x1="228" y1="57" x2="238" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#a5)"/>
+      <line x1="346" y1="57" x2="356" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#a5)"/>
+      <line x1="464" y1="57" x2="474" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#a5)"/>
+      <line x1="582" y1="57" x2="592" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#a5)"/>
+      <path d="M200,88 L200,146" stroke="#0f766e" stroke-width="2" fill="none" marker-end="url(#a5t)"/>
+      <path d="M270,146 L270,92" stroke="#0f766e" stroke-width="2" fill="none" marker-end="url(#a5t)"/>
+      <text x="206" y="118" font-size="8.5" fill="#0f766e" font-weight="600">sheet rows</text>
+      <text x="276" y="128" font-size="8.5" fill="#0f766e" font-weight="600">IDs + questions</text>
+      <path d="M412,88 L412,146" stroke="#0f766e" stroke-width="2" fill="none" marker-end="url(#a5t)"/>
+      <path d="M470,146 L500,92" stroke="#0f766e" stroke-width="2" fill="none" marker-end="url(#a5t)"/>
+      <text x="418" y="118" font-size="8.5" fill="#0f766e" font-weight="600">your answers</text>
+      <text x="492" y="128" font-size="8.5" fill="#0f766e" font-weight="600">final IDs</text>
+      <text x="600" y="120" font-size="9" fill="#5b6475">Restore later:</text>
+      <text x="600" y="134" font-size="9" fill="#5b6475">AI output + key</text>
+      <text x="600" y="148" font-size="9" fill="#5b6475">file = real names,</text>
+      <text x="600" y="162" font-size="9" fill="#5b6475">even if the AI</text>
+      <text x="600" y="176" font-size="9" fill="#5b6475">lowercased an ID</text>
+    </svg>
+  </div>
+  <p class="caption">If Family Graph is unreachable, Doc Anonymizer says so and stops the community step; it never quietly falls back to a file without IDs.</p>
+
+  <h3 style="margin-top:12px">What you will see</h3>
+  <div class="two">
+    <div>
+      <div class="term dark">MissionIQ: 300 households, 667 adults,
+           622 students
+  people:     1279 new, 10 need you
+  households:  300 new,  0 need you
+
+[4/10] PERSON  Rosa Schmidt  grandparent
+        in Schmidt Family
+   why: a possible match, not a certain one
+   1) same person as I5E0B2C7A91D4F386
+      Rosa Schmidt  adult  Schmidt Family
+   n) a different person - give them a new id
+   s) not a real person - leave them out
+   q) stop now - nothing is written
+  &gt; <span class="cursor">1</span></div>
+      <p class="caption">The MissionIQ import in Terminal. A number means "same person", n means new. Nothing is written until you type YES at the end.</p>
+    </div>
+    <div>
+      <div class="term light">COMMUNITY IDS - who is who, from Family Graph
+PEOPLE       412 known   37 new   2 need you
+HOUSEHOLDS   160 known   12 new   0 need you
+               9 told apart automatically
+
+[?] ROW 14  PERSON  Emma Lee  (child)
+possible match, not a certain one
+  <b>Emma Lee</b>  I5E0B...F386
+  child - grade 3 - Lee Family
+  <span class="btnmock">[ SAME PERSON ]</span>
+<span class="btnmock">[ NEW PERSON ]</span>  <span class="btnmock">[ NOT A PERSON ]</span>
+
+<span class="muted">[ CONFIRM AND SCRUB ] stays off until
+every [?] is answered</span></div>
+      <p class="caption">The Doc Anonymizer preview. Every other row shows [x] known or [+] new, with a way to overrule it.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Community Identity Overview</span><span>Page 4 of 6</span></div>
+</section>
+
+<!-- =========================================================== PAGE 5 -->
+<section class="page">
+  <div class="kicker">How matching decides</div>
+  <h2>Automatic when it is obvious, a question only when it is not</h2>
+  <p>Every incoming person is compared with the people Family Graph already knows. Three outcomes are possible, and the bar for each is written down below.</p>
+
+  <div class="two" style="grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+    <div class="card" style="border-color:#0f766e">
+      <h3 style="color:#0f766e">Same person, automatically</h3>
+      <ul>
+        <li>Same email or phone <em>and</em> the first name lines up (Lupe = Guadalupe, Bob = Robert)</li>
+        <li>Same first and last name <em>and</em> same birthdate</li>
+        <li>Same first and last name <em>and</em> same home address</li>
+        <li>A student listed by name only, in a household we already know</li>
+        <li>A MissionIQ record imported before (the crosswalk)</li>
+      </ul>
+    </div>
+    <div class="card" style="border-color:#9f1239">
+      <h3 style="color:#9f1239">Different person, automatically</h3>
+      <ul>
+        <li>Shared inbox, different first name: a spouse or a child, not the same person</li>
+        <li>Jr and Sr, or II and III</li>
+        <li>Different birthdates, with nothing else shared</li>
+        <li>An adult row against a child record at one address (John and John Jr.)</li>
+        <li>In one upload: same-named students in different grades, or same-named parents with different emails and homes</li>
+      </ul>
+    </div>
+    <div class="card" style="border-color:#b45309">
+      <h3 style="color:#b45309">Ask a person</h3>
+      <ul>
+        <li>Same first and last name, nothing to confirm or rule out</li>
+        <li>Same name, same inbox, different birthdate (maybe a typo)</li>
+        <li>Two possible matches at once</li>
+        <li>A stored MissionIQ link that no longer fits the record</li>
+        <li>The same name twice in one household</li>
+        <li>Placeholder names ("TBD"), initials, or a business in a name column</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Households follow the same idea</h3>
+    <table class="tbl">
+      <tr><th style="width:44%">Evidence</th><th style="width:16%">Outcome</th><th>Why</th></tr>
+      <tr><td>People already known on the row all belong to one household</td><td><span class="pill same">same</span></td><td>They vouch for it, in the role they hold there.</td></tr>
+      <tr><td>Someone new shares the family email or phone, and a surname fits</td><td><span class="pill same">same</span></td><td>A spouse on the family inbox joins the family.</td></tr>
+      <tr><td>Same exact address and a surname in common</td><td><span class="pill same">same</span></td><td>An address alone is not enough; people move.</td></tr>
+      <tr><td>Same address, no surname in common, nobody known</td><td><span class="pill diff">new</span></td><td>A different family moved in.</td></tr>
+      <tr><td>A grown-up child now listed as a parent, or a grandparent on a daughter's row</td><td><span class="pill diff">new</span></td><td>Their other household does not pull this one in.</td></tr>
+      <tr><td>Only children are known and a new adult lives elsewhere</td><td><span class="pill ask">ask</span></td><td>Could be the other parent's home (divorced parents).</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <h3>Measured on test data</h3>
+    <table class="tbl">
+      <tr><th>Run</th><th>People</th><th>Questions</th><th>Wrong matches</th></tr>
+      <tr><td>MissionIQ demo data, first import</td><td>@@PEOPLE@@</td><td>@@QUESTIONS@@</td><td>0</td></tr>
+      <tr><td>Same import, run again</td><td>@@PEOPLE@@</td><td>0</td><td>0</td></tr>
+      <tr><td>500-family roster, first time (before the rework)</td><td>1,000</td><td>884</td><td>0</td></tr>
+      <tr><td>500-family roster, first time (after)</td><td>1,000</td><td>30</td><td>0</td></tr>
+      <tr><td>Same roster, re-imported</td><td>1,000</td><td>0</td><td>0</td></tr>
+    </table>
+  </div>
+  <div class="footer"><span>Community Identity Overview</span><span>Page 5 of 6</span></div>
+</section>
+
+<!-- =========================================================== PAGE 6 -->
+<section class="page">
+  <div class="kicker">Running it on the Spark server</div>
+  <h2>Security, logging, and the commands you will use</h2>
+
+  <div class="two">
+    <div class="card">
+      <h3>Security posture</h3>
+      <ul>
+        <li>Family Graph, Doc Anonymizer, and Ollama listen on 127.0.0.1 only. You reach them through an SSH tunnel or a LAN address inside the firewall.</li>
+        <li>Doc Anonymizer refuses any Family Graph address that is not on this machine or the local network. There is no override.</li>
+        <li>Doc Anonymizer's Family Graph key carries only the <span class="mono">roster</span> scope. It is stored in a file only the owner can read, never shown again, never logged.</li>
+        <li>Contact details in Family Graph are encrypted at rest; searches use keyed hashes.</li>
+        <li>Uploaded files are deleted the moment processing ends or fails.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>What the logs hold</h3>
+      <ul>
+        <li><strong>Logged:</strong> file name, sizes, counts matched / new / asked, import run code, timings, and full error details.</li>
+        <li><strong>Never logged:</strong> names, emails, phones, addresses, document text, replacement values, or keys.</li>
+        <li>Family Graph: <span class="mono">~/.family-graph/logs/server.log</span> and <span class="mono">cli.log</span>.</li>
+        <li>Doc Anonymizer: <span class="mono">~/doc-anonymizer/logs/</span>.</li>
+        <li>Paste the last lines into a chat when something breaks; they are safe to share.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>First-time setup (after both branches are merged)</h3>
+    <div class="cmd">cd ~/familygraph
+git pull &amp;&amp; SFW=1 sfw npm ci
+node bin/family-graph.js start                     # leave this window running
+node bin/family-graph.js issue-key docanonymizer roster
+node bin/family-graph.js import-missioniq ~/missioniq/data/missioniq.db --dry-run
+node bin/family-graph.js import-missioniq ~/missioniq/data/missioniq.db --category church</div>
+    <p class="caption">Paste the issued key once into Doc Anonymizer's [ FAMILY GRAPH ] panel. Run the last three in a second Terminal window. The dry run shows the counts and how many questions to expect; the real run asks them and writes only after you type YES. Exact paths are in each README.</p>
+  </div>
+
+  <div class="two" style="margin-top:6px">
+    <div class="card">
+      <h3>Keep in the backup routine</h3>
+      <ul>
+        <li>Family Graph: <span class="mono">family-graph backup &lt;passphrase&gt;</span> (encrypted).</li>
+        <li>Doc Anonymizer: the <span class="mono">keys/</span> folder. Without a key file an anonymized document cannot be restored.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Known follow-ups</h3>
+      <ul>
+        <li>MissionIQ: "re-check all" button, student sync, and household re-stamp, so new contacts use exact links.</li>
+        <li>@@STALE_NOTE@@</li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer"><span>Community Identity Overview</span><span>Page 6 of 6</span></div>
+</section>
+
+</body>
+</html>

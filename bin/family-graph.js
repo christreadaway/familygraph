@@ -324,7 +324,8 @@ switch (cmd) {
       // eslint-disable-next-line no-console
       console.error('usage: family-graph issue-key <name> [scope,scope,...]');
       console.error('  default scopes: pii.read,pii.write,sanitize,audit.write');
-      console.error('  valid scopes:   pii.read, pii.write, sanitize, audit.read, audit.write, import, rules.write, integration, *');
+      console.error('  valid scopes:   pii.read, pii.write, sanitize, audit.read, audit.write, import, roster, rules.write, integration, *');
+      console.error('  Doc Anonymizer: family-graph issue-key docanonymizer roster');
       process.exit(2);
     }
     const config = require('../server/config');

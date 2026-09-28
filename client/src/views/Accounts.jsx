@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
-const GRANTABLE_SCOPES = ['pii.read', 'pii.write', 'sanitize', 'audit.read', 'audit.write', 'import', 'rules.write', 'integration'];
+const GRANTABLE_SCOPES = ['pii.read', 'pii.write', 'sanitize', 'audit.read', 'audit.write', 'import', 'roster', 'rules.write', 'integration'];
 
 function ScopeChecks({ picked, onChange }) {
   return (

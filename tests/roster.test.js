@@ -644,7 +644,7 @@ function request(port, { method = 'GET', path = '/', headers = {}, body } = {}) 
   });
 }
 
-test('api > scopes: plan needs pii.read, commit needs import; 409 on open reviews; big bodies accepted', async t => {
+test('api > scopes: plan, commit, and lookup need the roster scope; 409 on open reviews; big bodies accepted', async t => {
   process.env.FAMILY_GRAPH_DISABLE_RATE_LIMIT = '1';
   const { buildApp } = require('../server');
   const { db, dir } = newDb();
@@ -654,23 +654,30 @@ test('api > scopes: plan needs pii.read, commit needs import; 409 on open review
   t.after(async () => { await new Promise(r => server.close(r)); db.close(); cleanup(dir); });
 
   const readOnly = apiKeys.provision(db, { name: 'reader', scopes: ['pii.read'] });
-  const anon = apiKeys.provision(db, { name: 'docanonymizer', scopes: ['pii.read', 'import'] });
+  const importer = apiKeys.provision(db, { name: 'importer', scopes: ['import'] });
+  const anon = apiKeys.provision(db, { name: 'docanonymizer', scopes: ['roster'] });
   const H = tok => ({ authorization: `Bearer ${tok}` });
 
   assert.equal((await request(port, { method: 'POST', path: '/api/identity/roster/plan', body: { sheets: [SCHOOL] } })).status, 401);
-  const p = await request(port, { method: 'POST', path: '/api/identity/roster/plan', headers: H(readOnly.token), body: { sheets: [SCHOOL] } });
+  for (const other of [readOnly, importer]) {
+    assert.equal((await request(port, { method: 'POST', path: '/api/identity/roster/plan', headers: H(other.token), body: { sheets: [SCHOOL] } })).status, 403);
+    assert.equal((await request(port, { method: 'POST', path: '/api/identity/roster/commit', headers: H(other.token), body: { sheets: [SCHOOL] } })).status, 403);
+  }
+  const p = await request(port, { method: 'POST', path: '/api/identity/roster/plan', headers: H(anon.token), body: { sheets: [SCHOOL] } });
   assert.equal(p.status, 200);
   assert.equal(p.body.committed, false);
-  const denied = await request(port, { method: 'POST', path: '/api/identity/roster/commit', headers: H(readOnly.token), body: { sheets: [SCHOOL] } });
-  assert.equal(denied.status, 403);
+  // The roster key reaches nothing else: not the directory, not connectors.
+  assert.equal((await request(port, { path: '/api/families', headers: H(anon.token) })).status, 403);
+  assert.equal((await request(port, { method: 'PATCH', path: '/api/connectors/facts', headers: H(anon.token), body: { enabled: true } })).status, 403);
   const ok = await request(port, { method: 'POST', path: '/api/identity/roster/commit', headers: H(anon.token), body: { sheets: [SCHOOL], source: 'docanonymizer' } });
   assert.equal(ok.status, 201);
   assert.equal(ok.body.committed, true);
   const someone = ok.body.sheets[0].rows[0].persons[0].community_id;
-  const look = await request(port, { path: `/api/identity/roster/lookup/${someone}`, headers: H(readOnly.token) });
+  const look = await request(port, { path: `/api/identity/roster/lookup/${someone}`, headers: H(anon.token) });
   assert.equal(look.status, 200);
   assert.equal(look.body.kind, 'person');
-  assert.equal((await request(port, { path: '/api/identity/roster/lookup/nope', headers: H(readOnly.token) })).status, 404);
+  assert.equal((await request(port, { path: '/api/identity/roster/lookup/nope', headers: H(anon.token) })).status, 404);
+  assert.equal((await request(port, { path: `/api/identity/roster/lookup/${someone}`, headers: H(readOnly.token) })).status, 403);
 
   // An open review: 409, nothing written, the plan comes back.
   people.create(db, secrets, { given_name: 'Mary', family_name: 'Ortiz' });

@@ -2,13 +2,13 @@
 
 // Roster API - community identifiers for school rosters and parishioner lists.
 //
-//   POST /api/identity/roster/plan    (pii.read)  dry run: what would happen,
-//                                                 every item that needs a human
-//   POST /api/identity/roster/commit  (import)    write it; refused (409, no
-//                                                 writes) while anything is
-//                                                 undecided
-//   GET  /api/identity/roster/lookup/:id (pii.read) I…/F… (or p_/f_) ->
-//                                                 current record, following merges
+//   POST /api/identity/roster/plan    (roster)  dry run: what would happen,
+//                                               every item that needs a human
+//   POST /api/identity/roster/commit  (roster)  write it; refused (409, no
+//                                               writes) while anything is
+//                                               undecided
+//   GET  /api/identity/roster/lookup/:id (roster) I…/F… (or p_/f_) ->
+//                                               current record, following merges
 //
 // Body for plan and commit:
 //   { sheets: [{ name?, headers: [..], rows: [[..], ..], mapping? }],
@@ -16,9 +16,11 @@
 //                   "<sheet>:<row>:family": {action, target?} },
 //     source?, source_ref?, category?: 'school'|'church'|'other', tags? }
 //
-// Scopes: planning only reads (the dry run is rolled back), so pii.read. A
-// commit is an import and needs the `import` scope - a key for Doc Anonymizer
-// is provisioned with exactly ['pii.read', 'import'].
+// Scope: all three need `roster`, and a key for Doc Anonymizer carries only
+// that (`family-graph issue-key docanonymizer roster`). It sees the people a
+// roster matches - that is the point - but cannot list the directory
+// (pii.read) or touch connector settings (import). The master token works too.
+// (Changed 2026-09-28 from pii.read + import, which reached /api/connectors.)
 
 const express = require('express');
 const roster = require('../identity/roster');
