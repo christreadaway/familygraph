@@ -73,9 +73,66 @@ function isValidCode(code, kind = null) {
   return LEGACY_8HEX_KINDS.has(k) && /^[0-9a-f]{8}$/.test(suffix);
 }
 
+// ---------------------------------------------------------------------------
+// Community identifiers (owner decision 2026-09-28).
+//
+// Every person and every family gets ONE identifier for life, shared by every
+// product that touches the community (Doc Anonymizer, the partner apps, this
+// registry). Family Graph is the only minter. The community id is not a
+// second code: it is the existing person/family code rendered for humans and
+// spreadsheets.
+//
+//   p_3a4f9c2b1d0e7f21  <->  I3A4F9C2B1D0E7F21   (individual)
+//   f_9b0c11d2e3f4a5b6  <->  F9B0C11D2E3F4A5B6   (family)
+//
+// The mapping is lossless in both directions, so nothing that already stores
+// p_/f_ codes has to migrate, and a merge keeps working through the alias
+// table exactly as it does for the underlying code. The leading letter keeps
+// Excel from ever reading the id as a number. Input is case-insensitive;
+// output is always uppercase.
+// ---------------------------------------------------------------------------
+
+const COMMUNITY_PREFIX = { person: 'I', family: 'F' };
+const COMMUNITY_KIND = { I: 'person', F: 'family' };
+const COMMUNITY_ID_RE = /^([FI])([0-9A-F]{16}|[0-9A-F]{8})$/i;
+
+function toCommunityId(code) {
+  if (!isValidCode(code)) return null;
+  const kind = kindOf(code);
+  const letter = COMMUNITY_PREFIX[kind];
+  if (!letter) return null;
+  return letter + code.slice(PREFIXES[kind].length).toUpperCase();
+}
+
+function fromCommunityId(id) {
+  if (typeof id !== 'string') return null;
+  const m = COMMUNITY_ID_RE.exec(id.trim());
+  if (!m) return null;
+  const kind = COMMUNITY_KIND[m[1].toUpperCase()];
+  return PREFIXES[kind] + m[2].toLowerCase();
+}
+
+function isCommunityId(id, kind = null) {
+  const code = fromCommunityId(id);
+  if (!code) return false;
+  return !kind || kindOf(code) === kind;
+}
+
+// Accept either form wherever a caller hands us a person/family reference.
+function toCode(ref) {
+  if (typeof ref !== 'string') return null;
+  if (isValidCode(ref)) return ref;
+  return fromCommunityId(ref);
+}
+
 module.exports = {
   PREFIXES,
   newCode,
   kindOf,
   isValidCode,
+  COMMUNITY_ID_RE,
+  toCommunityId,
+  fromCommunityId,
+  isCommunityId,
+  toCode,
 };

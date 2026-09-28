@@ -34,6 +34,7 @@ const buildRelationships = require('./api/relationships');
 const buildNotifications = require('./api/notifications');
 const buildScan = require('./api/scan');
 const buildIdentityApi = require('./api/identity');
+const buildRoster = require('./api/roster');
 const buildConnectors = require('./api/connectors');
 const buildPartnerPairings = require('./api/partner-pairings');
 const buildDocuments = require('./api/documents');
@@ -132,6 +133,8 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/sanitize', express.json({ limit: '20mb' }));
   app.use('/api/desanitize', express.json({ limit: '20mb' }));
   app.use('/api/scan', express.json({ limit: '20mb' }));
+  // Roster plan/commit carry a whole spreadsheet (thousands of rows).
+  app.use('/api/identity/roster', express.json({ limit: '20mb' }));
   // Document vault store accepts a base64 file body; the 10 MB raw cap is ~13.4
   // MB base64, so a 16 MB JSON limit gives headroom (the byte cap is enforced
   // in documents.store, not here).
@@ -195,6 +198,14 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/export', bearerRead, piiRateLimit, buildExport({ db, secrets }));
   app.use('/api/notifications', bearerMaster, piiRateLimit, buildNotifications({ db }));
   app.use('/api/scan', bearerWrite, piiRateLimit, buildScan({ db, secrets, thresholds }));
+  // Roster imports that issue community identifiers (I… / F…). Mounted
+  // before /api/identity so its per-route scopes apply: plan = pii.read,
+  // commit = import.
+  app.use('/api/identity/roster', buildRoster({
+    db, secrets, thresholds,
+    auth: { read: bearerRead, import: bearerImport },
+    rate: { pii: piiRateLimit, import: importRateLimit },
+  }));
   // External-app identity API. Consuming apps call these endpoints to
   // delegate match/resolve to Family Graph.
   app.use('/api/identity', method2scope(bearerRead, bearerWrite), piiRateLimit, buildIdentityApi({ db, secrets, thresholds }));

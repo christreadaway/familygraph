@@ -147,6 +147,33 @@ function similarity(a, b) {
   return 1 - levenshtein(na, nb) / Math.max(na.length, nb.length);
 }
 
+// Optimal-string-alignment distance: an adjacent swap costs one edit.
+function _osaDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const d = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) d[i][0] = i;
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      }
+    }
+  }
+  return d[m][n];
+}
+
+function transposedSimilarity(a, b) {
+  const na = normalize(a);
+  const nb = normalize(b);
+  if (!na || !nb) return 0;
+  return 1 - _osaDistance(na, nb) / Math.max(na.length, nb.length);
+}
+
 function nameSimilarityIgnoringSuffix(a, b) {
   return similarity(stripSuffix(a).baseName, stripSuffix(b).baseName);
 }
@@ -291,6 +318,57 @@ function areNicknames(a, b) {
   return !!(eq && eq.has(nb));
 }
 
+// How many nickname groups a name belongs to. "Chris" is Christopher OR
+// Christine; "Pat" is Patrick OR Patricia; "John" sits in three groups. A
+// nickname match through an ambiguous name is not proof of identity - twins
+// named Christopher and Christine share a surname, a birthday, and "Chris".
+const NICKNAME_GROUP_COUNT = new Map();
+for (const group of NICKNAME_GROUPS) {
+  for (const name of new Set(group)) {
+    NICKNAME_GROUP_COUNT.set(name, (NICKNAME_GROUP_COUNT.get(name) || 0) + 1);
+  }
+}
+
+function nicknameAmbiguous(name) {
+  return (NICKNAME_GROUP_COUNT.get(normalize(name)) || 0) > 1;
+}
+
+// Generational suffixes only. Professional ones (MD, PhD, Esq) say nothing
+// about which generation a record belongs to.
+const GENERATIONAL_SUFFIX = {
+  jr: 'jr', junior: 'jr',
+  sr: 'sr', senior: 'sr',
+  ii: 'ii', '2nd': 'ii',
+  iii: 'iii', '3rd': 'iii',
+  iv: 'iv', '4th': 'iv',
+  v: 'v', '5th': 'v',
+  vi: 'vi', vii: 'vii', viii: 'viii',
+};
+
+function _genSuffixIn(str) {
+  if (!str) return null;
+  for (const part of String(str).split(/[\s,]+/)) {
+    const k = part.toLowerCase().replace(/\./g, '');
+    if (GENERATIONAL_SUFFIX[k]) return GENERATIONAL_SUFFIX[k];
+  }
+  return null;
+}
+
+// The generational suffix a record carries, from an explicit suffix field or
+// folded into the family name ("Smith Jr."). Null when none.
+function generationalSuffix(rec) {
+  if (!rec) return null;
+  return _genSuffixIn(rec.suffix) || _genSuffixIn(stripSuffix(rec.family_name).suffix);
+}
+
+// ISO date for comparison, or null when the value can't be read as a date.
+// Lazy require keeps this module free of load-order coupling.
+function normalizeDob(v) {
+  if (v == null || v === '') return null;
+  const { normalizeDate } = require('../sources/normalize');
+  return normalizeDate(v);
+}
+
 function isPrefixMatch(a, b) {
   const na = normalize(a);
   const nb = normalize(b);
@@ -371,16 +449,71 @@ function splitPhones(field) {
 
 // ---------- the matcher ----------
 
+// Confidence ceiling for a pair that carries a hard contradiction (different
+// birthdates, Jr vs Sr, conflicting address on a contact match). Below every
+// built-in autoMerge threshold (0.80 / 0.85 / 0.90), so the pair can only
+// ever reach a human, never an automatic merge.
+const VETO_CAP = 0.7;
+
 // Score how likely two records are the same person, using only the fields
 // the caller chose to provide. Returns { confidence: 0..1, reasons: [] }.
 //
 // Record shape (loose — only the keys we read):
-//   { given_name, family_name, email, emails[], phone, phones[],
+//   { given_name, family_name, suffix, email, emails[], phone, phones[],
 //     date_of_birth, address_line1, city, state, zip }
-function scoreMatch(a, b) {
+//
+// Hard vetoes (always on, 2026-09-28): two different birthdates, or two
+// different generational suffixes (Jr / Sr / III), can never be definitive -
+// a shared family email or a shared address is exactly what a father and son
+// have in common.
+//
+// opts.strict (roster imports that mint community identifiers, where a wrong
+// merge gives two humans one id and nobody finds out):
+//   - an email/phone match needs the first name to line up (exact, nickname,
+//     or short form) or the birthdate to match; spouses share a family inbox
+//     and a child is often listed under a parent's email
+//   - a suffix present on only one side ("John Smith" vs "John Smith Jr")
+//     blocks a definitive match
+//   - a nickname that belongs to more than one name family (Chris, Pat,
+//     Alex, Sam, Kate) does not count as a first-name match for definitive
+//     name+birthdate or name+address matches
+function scoreMatch(a, b, opts = {}) {
+  const strict = !!(opts && opts.strict);
   const reasons = [];
   let confidence = 0;
   let definitive = false;
+
+  // Signals every path needs, computed once.
+  const fs = (a.given_name && b.given_name) ? firstNameMatchesCompound(a.given_name, b.given_name) : null;
+  const givenAligned = fs !== null && fs >= 0.90;
+  const nickAmbiguous = fs !== null && fs < 1.0 && fs >= 0.90 &&
+    (nicknameAmbiguous(a.given_name) || nicknameAmbiguous(b.given_name));
+  const dobA = a.date_of_birth ? (normalizeDob(a.date_of_birth) || null) : null;
+  const dobB = b.date_of_birth ? (normalizeDob(b.date_of_birth) || null) : null;
+  let dobExact = false;
+  let dobConflict = false;
+  if (a.date_of_birth && b.date_of_birth) {
+    if (dobA && dobB) {
+      dobExact = dobA === dobB;
+      dobConflict = dobA !== dobB;
+    } else {
+      // Unreadable on one side: equal raw text still counts, but a mismatch
+      // proves nothing.
+      dobExact = String(a.date_of_birth).trim() === String(b.date_of_birth).trim();
+    }
+  }
+  const sfxA = generationalSuffix(a);
+  const sfxB = generationalSuffix(b);
+  const suffixConflict = !!(sfxA && sfxB && sfxA !== sfxB);
+  const suffixOneSided = !!sfxA !== !!sfxB;
+
+  function vetoes() {
+    const v = [];
+    if (dobConflict) v.push('dob_conflict');
+    if (suffixConflict) v.push('suffix_conflict');
+    if (strict && suffixOneSided) v.push('suffix_one_sided');
+    return v;
+  }
 
   // ---- Email (DEFINITIVE)
   const emailsA = a.emails && a.emails.length ? a.emails : splitEmails(a.email);
@@ -417,8 +550,9 @@ function scoreMatch(a, b) {
   // gets noted as an alternate address. But explicitly-conflicting addresses
   // (different state or sim<0.5) DO veto the match.
   if (definitive) {
+    const v = vetoes();
+    if (strict && !givenAligned && !dobExact) v.push('contact_match_name_unaligned');
     if (addressesConflict(a, b)) {
-      reasons.push('address_conflict_present');
       // the upstream identity engine allows this through (alternate address); we surface the
       // conflict to the operator by capping the confidence below auto-merge.
       // The caller's autoMerge threshold (default 0.85) is still met by
@@ -426,8 +560,11 @@ function scoreMatch(a, b) {
       // With the cap below auto-merge we'd never auto-merge cross-state —
       // which we want, because cross-state same-name/email is often two
       // generations sharing one inherited address-book email.
-      confidence = Math.min(confidence, 0.7);
-      return { confidence, reasons, definitive: false };
+      v.unshift('address_conflict_present');
+    }
+    if (v.length) {
+      reasons.push(...v);
+      return { confidence: Math.min(confidence, VETO_CAP), reasons, definitive: false };
     }
     return { confidence: Math.min(confidence, 1.0), reasons, definitive: true };
   }
@@ -447,33 +584,37 @@ function scoreMatch(a, b) {
   // ---- First name (compound + nickname + prefix). Graduated bands: exact
   // and nickname matches are strong; below 0.85 still contributes a softer
   // signal so phonetic variants like Pio/Pia surface for review.
-  if (a.given_name && b.given_name) {
-    const fs = firstNameMatchesCompound(a.given_name, b.given_name);
+  if (fs !== null) {
     if (fs === 1.0) { confidence += 0.20; reasons.push('exact_first_name'); }
     else if (fs >= 0.90) { confidence += 0.18; reasons.push('nickname_or_short_form'); }
     else if (fs > 0.85) { confidence += 0.10; reasons.push('similar_first_name'); }
     else if (fs > 0.60) { confidence += 0.05; reasons.push('phonetic_first_name'); }
+    else if (strict && transposedSimilarity(a.given_name, b.given_name) >= 0.75) {
+      // "Jonh" / "John": plain edit distance counts a swap as two edits.
+      confidence += 0.05;
+      reasons.push('first_name_typo');
+    }
   }
 
   // ---- DOB
-  let dobExact = false;
-  if (a.date_of_birth && b.date_of_birth) {
-    if (String(a.date_of_birth) === String(b.date_of_birth)) {
-      confidence += 0.20;
-      reasons.push('exact_date_of_birth');
-      dobExact = true;
-    }
+  if (dobExact) {
+    confidence += 0.20;
+    reasons.push('exact_date_of_birth');
   }
+
+  // A first name that proves identity for the definitive paths below: exact,
+  // or a nickname / short form - except, in strict mode, a nickname shared by
+  // two name families.
+  const firstProves =
+    reasons.includes('exact_first_name') ||
+    (reasons.includes('nickname_or_short_form') && !(strict && nickAmbiguous));
+  const blocked = dobConflict || suffixConflict || (strict && suffixOneSided);
 
   // Person-level definitive: exact first + exact last + exact DOB. Two people
   // sharing all three are vanishingly unlikely to be different humans, and
   // child rosters frequently lack email/phone, so this fills the gap left by
   // the email/phone-centric definitive path.
-  if (
-    dobExact &&
-    reasons.includes('exact_last_name') &&
-    (reasons.includes('exact_first_name') || reasons.includes('nickname_or_short_form'))
-  ) {
+  if (dobExact && reasons.includes('exact_last_name') && firstProves && !blocked) {
     confidence = Math.max(confidence, 0.95);
     definitive = true;
     reasons.push('exact_name_plus_dob');
@@ -486,6 +627,11 @@ function scoreMatch(a, b) {
   // separate persons under the same family, which the family resolver
   // handles. So address contributes a soft additive only, and only becomes
   // definitive when paired with a name match.
+  //
+  // Fixed 2026-09-28: "name match" used to mean ANY of last name or first
+  // name, so Mary Smith and John Smith at one address scored definitive and
+  // a re-import fused the spouses into one person - the exact case this
+  // comment says must not happen. Both names must now line up.
   let addressMatched = false;
   if (a.address_line1 && b.address_line1) {
     const sim = addressSimilarity(a.address_line1, b.address_line1);
@@ -495,12 +641,9 @@ function scoreMatch(a, b) {
       reasons.push('address_match_household');
       // Promote to definitive only if the names also align — without that,
       // address-alone is a household signal, not a person-identity signal.
-      const nameAligned =
-        reasons.includes('exact_last_name') ||
-        reasons.includes('similar_last_name') ||
-        reasons.includes('exact_first_name') ||
-        reasons.includes('nickname_or_short_form');
-      if (nameAligned) {
+      const lastAligned =
+        reasons.includes('exact_last_name') || reasons.includes('similar_last_name');
+      if (lastAligned && firstProves && !blocked) {
         confidence = Math.max(confidence, 0.90);
         definitive = true;
       }
@@ -526,6 +669,11 @@ function scoreMatch(a, b) {
     reasons.push('city_match');
   }
 
+  const v = vetoes();
+  if (v.length) {
+    reasons.push(...v);
+    return { confidence: Math.min(confidence, VETO_CAP), reasons, definitive: false };
+  }
   return { confidence: Math.min(confidence, 1.0), reasons, definitive };
 }
 
@@ -555,7 +703,8 @@ module.exports = {
   // names
   stripSuffix, nameSimilarityIgnoringSuffix,
   areNicknames, isPrefixMatch, firstNameMatchesCompound,
-  NICKNAME_GROUPS,
+  nicknameAmbiguous, generationalSuffix, normalizeDob, transposedSimilarity,
+  NICKNAME_GROUPS, VETO_CAP,
   // addresses
   normalizeAddress, addressSimilarity, addressesConflict,
   normalizeState, STATE_ABBR_TO_FULL, ADDRESS_ABBREVIATIONS,

@@ -20,6 +20,12 @@ const tagsLib = require('./tags');
 //   category       — operator file classification (church | school | other)
 //   tags           — JSON-encoded array of operator tags (or a real array)
 //   importRunCode  — link to the parent import_runs row (set by importBatch)
+//   resolvePerson  — optional (incoming, index, { personOutcomes, canonical })
+//                    -> resolver-shaped outcome. Replaces the default
+//                    resolver.resolveOrCreatePerson for this row. Roster
+//                    imports use it for strict matching and human decisions.
+//   resolveFamily  — optional (input, { personOutcomes, canonical }) ->
+//                    { code, action }. Replaces resolver.resolveOrCreateFamily.
 //
 // Returns per-row outcome plus a `stats` object with the counts of what
 // happened (used by importBatch to aggregate the import_runs row).
@@ -63,10 +69,12 @@ function importRow(db, secrets, thresholds, canonical, ctx = {}) {
   const personCodes = [];
   for (let pi = 0; pi < (canonical.persons || []).length; pi++) {
     const incoming = canonical.persons[pi];
-    const r = resolver.resolveOrCreatePerson(db, secrets, thresholds, incoming, {
-      actor: ctx.actor || 'import',
-      source: ctx.source || null,
-    });
+    const r = ctx.resolvePerson
+      ? ctx.resolvePerson(incoming, pi, { personOutcomes, canonical })
+      : resolver.resolveOrCreatePerson(db, secrets, thresholds, incoming, {
+          actor: ctx.actor || 'import',
+          source: ctx.source || null,
+        });
     personOutcomes.push({ ...r, incoming });
     personCodes.push(r.code);
 
@@ -110,18 +118,17 @@ function importRow(db, secrets, thresholds, canonical, ctx = {}) {
   // Resolve or create the family.
   let familyOutcome = null;
   if (personCodes.length > 0 || canonical.family?.display_name) {
-    familyOutcome = resolver.resolveOrCreateFamily(
-      db,
-      secrets,
-      thresholds,
-      {
-        display_name: canonical.family?.display_name,
-        notes: canonical.family?.notes,
-        personCodes,
-        address: canonical.address || null,
-      },
-      { actor: ctx.actor || 'import' }
-    );
+    const familyInput = {
+      display_name: canonical.family?.display_name,
+      notes: canonical.family?.notes,
+      personCodes,
+      address: canonical.address || null,
+    };
+    familyOutcome = ctx.resolveFamily
+      ? ctx.resolveFamily(familyInput, { personOutcomes, canonical })
+      : resolver.resolveOrCreateFamily(db, secrets, thresholds, familyInput, {
+          actor: ctx.actor || 'import',
+        });
     if (familyOutcome.action === 'created') stats.families_created += 1;
     else if (familyOutcome.action === 'attached') stats.families_attached += 1;
 
@@ -233,8 +240,11 @@ function importBatch(db, secrets, thresholds, canonicalRows, ctx = {}) {
         results.push({ skipped: true, reason: 'no_mapped_data', family: null, persons: [], stats: {} });
         continue;
       }
+      const hooks = Array.isArray(ctx.rowHooks) ? (ctx.rowHooks[i] || {}) : {};
       const r = importRow(db, secrets, thresholds, row, {
         ...ctx,
+        rowHooks: undefined,
+        ...hooks,
         sourceRef: `${ctx.sourceRef || ''}#${i + 1}`,
         importRunCode,
       });

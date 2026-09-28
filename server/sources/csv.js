@@ -159,6 +159,13 @@ const STANDARD_FIELDS = {
     'student', 'student name', 'student full name',
     'child', 'pupil', 'pupil name',
   ],
+  // One cell naming several children: "Tom, Ann & Joe". Parish directories
+  // and census sheets list a household's kids this way.
+  child_list: [
+    'children', 'children names', 'childrens names', "children's names",
+    'kids', 'kids names', 'students', 'student names', 'dependents',
+    'family members', 'other members', 'household members',
+  ],
   grade: [
     'grade', 'grade level', 'class', 'year', 'current grade',
     'gr', 'grd', 'grade_level', 'class year', 'student grade',
@@ -277,7 +284,7 @@ function flatToStructured(flat) {
   // unattached "member" — e.g. on a school roster the primary record is
   // Parent 1 / the head of household, not the kid being enrolled.
   const hasChildSlot =
-    !!(flat.child_given_name || flat.child_family_name || flat.child_full_name);
+    !!(flat.child_given_name || flat.child_family_name || flat.child_full_name || flat.child_list);
   const hasSecondaryAdult =
     !!(flat.secondary_given_name || flat.secondary_family_name || flat.secondary_full_name ||
        flat.secondary_email || flat.secondary_phone);
@@ -339,11 +346,16 @@ function flatToStructured(flat) {
       // remove the empty primary placeholder we may have skipped — already
       // handled by the conditional above.
     }
-  } else if (flat.grade && persons.length > 0) {
+  } else if (flat.grade && persons.length > 0 && !flat.child_list) {
     // No explicit child slot but a grade column exists — annotate the
     // primary person as a child.
     persons[0].grade = flat.grade;
     persons[0].role = 'child';
+  }
+
+  // Several children named in one cell.
+  if (flat.child_list) {
+    persons.push({ list: flat.child_list, role: 'child' });
   }
 
   return {
@@ -406,7 +418,8 @@ function buildMappingWarning(flat) {
   const hasIdentity =
     flat.primary_given_name || flat.primary_family_name || flat.primary_full_name ||
     flat.email || flat.phone ||
-    flat.child_given_name || flat.child_family_name || flat.child_full_name;
+    flat.child_given_name || flat.child_family_name || flat.child_full_name ||
+    flat.child_list;
   if (!hasIdentity) {
     return 'No identity columns (name, email, phone) were auto-detected. Review the column mapping before running the import — otherwise every row will be skipped.';
   }

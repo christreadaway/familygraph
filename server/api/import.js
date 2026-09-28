@@ -24,7 +24,7 @@ function _collectUsedHeaders(mapping) {
     visit(mapping.family);
     visit(mapping.address);
     for (const t of mapping.persons || []) {
-      for (const k of ['given_name', 'family_name', 'full_name', 'middle_name', 'prefix', 'suffix', 'email', 'phone', 'date_of_birth', 'gender', 'grade']) {
+      for (const k of ['given_name', 'family_name', 'full_name', 'list', 'middle_name', 'prefix', 'suffix', 'email', 'phone', 'date_of_birth', 'gender', 'grade']) {
         visit(t[k]);
       }
     }

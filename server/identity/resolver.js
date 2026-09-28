@@ -93,8 +93,11 @@ function _crossSourceMetadataForPair(db, leftCode, rightCode) {
 function _enrichCandidate(db, secrets, row) {
   const cand = {
     code: row.code,
+    status: row.status,
+    kind: row.kind || null,
     given_name: enc.decrypt(secrets, row.given_name_ct),
     family_name: enc.decrypt(secrets, row.family_name_ct),
+    suffix: enc.decrypt(secrets, row.suffix_ct),
     date_of_birth: enc.decrypt(secrets, row.date_of_birth_ct),
     emails: [],
     phones: [],
@@ -155,6 +158,7 @@ function _toMatcherRecord(incoming) {
   return {
     given_name: incoming.given_name || null,
     family_name: incoming.family_name || null,
+    suffix: incoming.suffix || null,
     date_of_birth: incoming.date_of_birth || null,
     emails: Array.isArray(incoming.emails) ? incoming.emails.map(String) : [],
     phones: Array.isArray(incoming.phones)
@@ -169,10 +173,21 @@ function _toMatcherRecord(incoming) {
 
 // Gather candidate persons by every deterministic signal we can hash against.
 // Vendored conceptually from the upstream resolver.
-function findCandidates(db, secrets, incoming) {
+//
+// opts.strict (roster imports): the surname block is not capped at 50 - in a
+// parish with 60 Garcias the right Garcia must never fall off the end of an
+// unordered LIMIT and come back as "new" - and exact first+last matches are
+// fetched first. opts.includeArchived: archived (soft-deleted) persons are
+// candidates too, so someone who returns gets their old identifier back
+// instead of a second one. Merged persons are never candidates; their alias
+// points at the survivor.
+function findCandidates(db, secrets, incoming, opts = {}) {
   const seen = new Map();   // code → row
   const fh = enc.hmac(secrets, enc.normalizeName(incoming.family_name));
   const gh = enc.hmac(secrets, enc.normalizeName(incoming.given_name));
+  const statusSql = opts.includeArchived ? `status IN ('active','archived')` : `status = 'active'`;
+  const pStatusSql = opts.includeArchived ? `p.status IN ('active','archived')` : `p.status = 'active'`;
+  const familyLimit = opts.strict ? 2000 : 50;
 
   // 1. Block on family-name hash. (Suffix-aware: also try the suffix-stripped
   //    base name so "Smith Jr." finds existing "Smith" rows.)
@@ -180,8 +195,15 @@ function findCandidates(db, secrets, incoming) {
     if (!name) return;
     const h = enc.hmac(secrets, enc.normalizeName(name));
     if (!h) return;
+    if (opts.strict && gh) {
+      for (const r of db.prepare(
+        `SELECT * FROM persons WHERE ${statusSql} AND family_name_hash = ? AND given_name_hash = ?`
+      ).all(h, gh)) {
+        seen.set(r.code, r);
+      }
+    }
     for (const r of db.prepare(
-      `SELECT * FROM persons WHERE status = 'active' AND family_name_hash = ? LIMIT 50`
+      `SELECT * FROM persons WHERE ${statusSql} AND family_name_hash = ? LIMIT ${familyLimit}`
     ).all(h)) {
       seen.set(r.code, r);
     }
@@ -201,7 +223,7 @@ function findCandidates(db, secrets, incoming) {
       `SELECT p.* FROM persons p
          JOIN person_emails pe ON pe.person_code = p.code
          JOIN emails e ON e.code = pe.email_code
-        WHERE p.status = 'active' AND e.norm_hash = ? LIMIT 25`
+        WHERE ${pStatusSql} AND e.norm_hash = ? LIMIT 25`
     ).all(h);
     for (const r of rows) seen.set(r.code, r);
   }
@@ -216,7 +238,7 @@ function findCandidates(db, secrets, incoming) {
         `SELECT p.* FROM persons p
            JOIN person_phones partner ON partner.person_code = p.code
            JOIN phones ph ON ph.code = partner.phone_code
-          WHERE p.status = 'active' AND ph.norm_hash = ? LIMIT 25`
+          WHERE ${pStatusSql} AND ph.norm_hash = ? LIMIT 25`
       ).all(h);
       for (const r of rows) seen.set(r.code, r);
     }
@@ -242,7 +264,7 @@ function findCandidates(db, secrets, incoming) {
            JOIN memberships m ON m.person_code = p.code AND m.ended_at IS NULL
            JOIN family_addresses fa ON fa.family_code = m.family_code
            JOIN addresses a ON a.code = fa.address_code
-          WHERE p.status = 'active' AND a.norm_hash = ? LIMIT 50`
+          WHERE ${pStatusSql} AND a.norm_hash = ? LIMIT 50`
       ).all(h);
       for (const r of rows) seen.set(r.code, r);
     }
@@ -251,13 +273,48 @@ function findCandidates(db, secrets, incoming) {
   // 5. Last-resort: first-name hash (only if nothing else hit).
   if (seen.size === 0 && gh) {
     for (const r of db.prepare(
-      `SELECT * FROM persons WHERE status = 'active' AND given_name_hash = ? LIMIT 25`
+      `SELECT * FROM persons WHERE ${statusSql} AND given_name_hash = ? LIMIT 25`
     ).all(gh)) {
       seen.set(r.code, r);
     }
   }
 
   return Array.from(seen.values()).map(r => _enrichCandidate(db, secrets, r));
+}
+
+// Score every candidate for `incoming`, apply the operator's resolution
+// rules, and return the list sorted best-first (stable, so ties keep
+// candidate order - which is what the old single-best loop picked).
+// opts.strict / opts.includeArchived pass through to findCandidates and
+// scoreMatch.
+function scoreCandidates(db, secrets, incoming, opts = {}) {
+  const candidates = findCandidates(db, secrets, incoming, opts);
+  const incomingRec = _toMatcherRecord(incoming);
+  const activeRules = rules.loadActive(db, 'person');
+  const scoredList = [];
+  for (const c of candidates) {
+    let scored = matching.scoreMatch(incomingRec, c, { strict: !!opts.strict });
+    if (activeRules.length > 0) {
+      const adjusted = rules.applyToScore(
+        activeRules,
+        { score: scored.confidence, reasons: scored.reasons },
+        incoming,
+        c,
+        {
+          incoming: { email: (incomingRec.emails || [])[0], postal: incomingRec.zip },
+          candidate: { email: (c.emails || [])[0], postal: c.zip },
+        }
+      );
+      scored = {
+        confidence: adjusted.score,
+        reasons: adjusted.reasons,
+        definitive: scored.definitive && !adjusted.override,
+      };
+    }
+    scoredList.push({ ...scored, candidate: c });
+  }
+  scoredList.sort((x, y) => y.confidence - x.confidence);
+  return scoredList;
 }
 
 // ---------- the gate ----------
@@ -276,32 +333,7 @@ function decideMatch(scored, thresholds) {
 // ---------- public API ----------
 
 function resolveOrCreatePerson(db, secrets, thresholds, incoming, opts = {}) {
-  const candidates = findCandidates(db, secrets, incoming);
-  const incomingRec = _toMatcherRecord(incoming);
-  const activeRules = rules.loadActive(db, 'person');
-
-  let best = null;
-  for (const c of candidates) {
-    let scored = matching.scoreMatch(incomingRec, c);
-    if (activeRules.length > 0) {
-      const adjusted = rules.applyToScore(
-        activeRules,
-        { score: scored.confidence, reasons: scored.reasons },
-        incoming,
-        c,
-        {
-          incoming: { email: (incomingRec.emails || [])[0], postal: incomingRec.zip },
-          candidate: { email: (c.emails || [])[0], postal: c.zip },
-        }
-      );
-      scored = {
-        confidence: adjusted.score,
-        reasons: adjusted.reasons,
-        definitive: scored.definitive && !adjusted.override,
-      };
-    }
-    if (!best || scored.confidence > best.confidence) best = { ...scored, candidate: c };
-  }
+  const best = scoreCandidates(db, secrets, incoming)[0] || null;
 
   const decision = decideMatch(best, thresholds);
 
@@ -508,6 +540,9 @@ module.exports = {
   scoreMatch,
   decideMatch,
   findCandidates,
+  scoreCandidates,
+  toMatcherRecord: _toMatcherRecord,
+  enrichCandidate: _enrichCandidate,
   resolveOrCreatePerson,
   resolveOrCreateFamily,
   rescorePerson,
