@@ -30,6 +30,7 @@ const families = require('../identity/families');
 const contacts = require('../identity/contacts');
 const history = require('../identity/history');
 const profiles = require('../identity/profiles');
+const crosswalk = require('../identity/crosswalk');
 const audit = require('../audit');
 const enc = require('../crypto/encryption');
 
@@ -112,6 +113,21 @@ function _resolveFamily(db, secrets, thresholds, personCode, incoming, { create 
     families.addMember(db, secrets, fam.code, personCode, { role: 'member' });
   }
   return { code: fam.code, action: fam.action };
+}
+
+// A record a deliberate import already linked (the MissionIQ import, a roster
+// commit with refs) is that person - returned by its own id, never
+// re-matched by name. `action` stays 'attached' so existing callers count it
+// as before; `via: 'crosswalk'` says how. Only deliberate imports write the
+// crosswalk; /resolve reads it and never writes it, so a loose match here can
+// never become a permanent link.
+function _linked(db, source, ref) {
+  if (typeof source !== 'string' || (typeof ref !== 'string' && typeof ref !== 'number')) return null;
+  const x = crosswalk.lookup(db, source, String(ref));
+  if (!x || x.kind !== 'person') return null;
+  const out = { code: x.code, action: 'attached', via: 'crosswalk', score: 1, reasons: ['linked_record'] };
+  if (x.status !== 'active') out.status = x.status;
+  return out;
 }
 
 // Translate the loose external-record shape into our internal canonical
@@ -200,7 +216,8 @@ function build({ db, secrets, thresholds }) {
     if (!incoming) return res.status(400).json({ error: 'record required' });
 
     const actor = req.auth?.actor || 'external_app';
-    const result = resolver.resolveOrCreatePerson(db, secrets, effective(), incoming, { actor });
+    const result = _linked(db, source, source_ref) ||
+      resolver.resolveOrCreatePerson(db, secrets, effective(), incoming, { actor });
     _attachContacts(db, secrets, result.code, incoming);
 
     // Enrich with the canonical family code so the caller can key family-scoped
@@ -224,6 +241,7 @@ function build({ db, secrets, thresholds }) {
         source,
         source_ref,
         action: result.action,
+        via: result.via || 'resolver',
         score: result.score,
         reasons: result.reasons,
         conflict: result.conflict || null,
@@ -251,13 +269,18 @@ function build({ db, secrets, thresholds }) {
     const actor = req.auth?.actor || 'external_app';
     const t = effective();
     const totals = { created: 0, attached: 0, enqueued: 0 };
+    let linkedCount = 0;
     const results = [];
 
     const run = db.transaction(() => {
       for (let i = 0; i < records.length; i++) {
         const incoming = _toIncoming(records[i]);
         if (!incoming) { results.push({ index: i, error: 'record required' }); continue; }
-        const result = resolver.resolveOrCreatePerson(db, secrets, t, incoming, { actor });
+        // Crosswalk by the per-record ref only: the batch-level source_ref
+        // names the batch, not a record.
+        const linked = _linked(db, source, records[i].source_ref);
+        if (linked) linkedCount += 1;
+        const result = linked || resolver.resolveOrCreatePerson(db, secrets, t, incoming, { actor });
         _attachContacts(db, secrets, result.code, incoming);
         const family = _resolveFamily(db, secrets, t, result.code, incoming, { create: !!with_family, actor });
         if (family) result.family = family;
@@ -279,7 +302,7 @@ function build({ db, secrets, thresholds }) {
     audit.record(db, {
       action: 'identity_resolve_batch',
       actor,
-      metadata: { source, source_ref, rows: records.length, totals },
+      metadata: { source, source_ref, rows: records.length, totals, linked: linkedCount },
     });
     res.status(201).json({ results, totals });
   });

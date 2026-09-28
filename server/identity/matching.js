@@ -178,6 +178,22 @@ function nameSimilarityIgnoringSuffix(a, b) {
   return similarity(stripSuffix(a).baseName, stripSuffix(b).baseName);
 }
 
+// The parts of an address that make it a different place however similar
+// the rest reads: the house number, the unit, the PO box.
+function _houseNumber(n) {
+  const m = n.match(/^(\d+(?:-\d+)?[a-z]?)\b/);
+  return m ? m[1] : null;
+}
+function _unitNumber(n) {
+  const m = n.match(/\s(?:apartment|unit|suite|apt|ste|lot|bldg|building|floor|fl|#)\s*#?\s*([a-z0-9-]+)\s*$/i) ||
+    n.match(/\s#\s*([a-z0-9-]+)\b/);
+  return m ? m[1].toLowerCase() : null;
+}
+function _poBox(n) {
+  const m = n.match(/\bbox\s+(\d+)\b/);
+  return m ? m[1] : null;
+}
+
 function addressSimilarity(a, b) {
   if (!a || !b) return 0;
   const na = normalizeAddress(a);
@@ -192,7 +208,17 @@ function addressSimilarity(a, b) {
   if (sa && sb) {
     strippedSim = sa === sb ? 1.0 : 1 - levenshtein(sa, sb) / Math.max(sa.length, sb.length);
   }
-  return Math.max(fullSim, strippedSim);
+  const sim = Math.max(fullSim, strippedSim);
+  // Fixed 2026-09-28: "134 Pine St" and "106 Pine St" read as 90% alike, so
+  // two namesakes on one street scored the same address and merged. Two
+  // different house numbers, units, or PO boxes are two different places.
+  // (A unit on one side only is left alone - forms often drop it.)
+  for (const part of [_houseNumber, _unitNumber, _poBox]) {
+    const pa = part(na);
+    const pb = part(nb);
+    if (pa && pb && pa !== pb) return Math.min(sim, 0.5);
+  }
+  return sim;
 }
 
 // Two records have *conflicting* addresses if both have line1 AND:
@@ -268,9 +294,9 @@ const NICKNAME_GROUPS = [
   // Mary across English / French / Spanish / Latin and common diminutives —
   // very common in church/school data so we treat them as nickname-equivalent.
   ['mary', 'marie', 'maria', 'mariah', 'molly', 'polly', 'mae', 'mamie'],
-  ['ann', 'anne', 'anna', 'annie', 'nan', 'nancy'],
+  ['ann', 'anne', 'anna', 'annie', 'nan', 'nancy', 'ana', 'anita'],
   ['john', 'juan', 'sean', 'shawn'],   // cross-language Johns
-  ['joseph', 'jose', 'pepe'],
+  ['joseph', 'jose', 'pepe', 'chepe'],
   ['catherine', 'katherine', 'kate', 'katie', 'kathy', 'cathy', 'kat'],
   ['elizabeth', 'liz', 'lizzy', 'beth', 'betty', 'betsy', 'eliza'],
   ['jennifer', 'jenny', 'jen'],
@@ -283,9 +309,9 @@ const NICKNAME_GROUPS = [
   ['deborah', 'debbie', 'deb', 'debra'],
   ['dorothy', 'dot', 'dotty', 'dottie'],
   ['victoria', 'vicky', 'vicki', 'tori'],
-  ['christine', 'chris', 'christy', 'christina', 'tina'],
+  ['christine', 'chris', 'christy', 'christina', 'cristina', 'tina'],
   ['josephine', 'jo', 'josie'],
-  ['teresa', 'theresa', 'terry'],
+  ['teresa', 'theresa', 'terry', 'tere'],
   ['veronica', 'ronnie'],
   ['virginia', 'ginny', 'ginger'],
   ['stephanie', 'steph'],
@@ -298,6 +324,69 @@ const NICKNAME_GROUPS = [
   ['kathleen', 'kathy', 'kate'],
   ['carolyn', 'carol'],
   ['jacqueline', 'jackie'],
+  // More English short forms common on school and parish lists.
+  ['albert', 'al', 'bert'],
+  ['alfred', 'al', 'alfie'],
+  ['gabriel', 'gabe'],
+  ['gabriela', 'gabriella', 'gabby'],
+  ['isabel', 'isabella', 'bella', 'izzy'],
+  ['joshua', 'josh'],
+  ['jacob', 'jake'],
+  ['maximilian', 'max'],
+  ['maxwell', 'max'],
+  ['nicholas', 'nico'],
+  ['dominic', 'dom'],
+  ['augustine', 'augustin', 'gus'],
+  ['bernard', 'bernie'],
+  ['eugene', 'gene'],
+  ['louis', 'lou'],
+  ['cynthia', 'cindy'],
+  ['sandra', 'sandy'],
+  ['pamela', 'pam'],
+  ['melissa', 'missy'],
+  ['amanda', 'mandy'],
+  ['judith', 'judy'],
+  ['angela', 'angie'],
+  ['frances', 'fran', 'frannie'],
+  ['emily', 'emmy'],
+  ['olivia', 'liv', 'livvy'],
+  ['sophia', 'sophie'],
+  ['evelyn', 'evie'],
+  ['cecilia', 'cece'],
+  ['caroline', 'carrie'],
+  ['elizabeth', 'libby'],
+  // Spanish given names and their everyday forms (a parish list and a
+  // school roster often disagree on exactly this). Diacritics are stripped
+  // before lookup, so Jesús / Toño match jesus / tono.
+  ['francisco', 'paco', 'pancho', 'kiko', 'cisco'],
+  ['jesus', 'chuy', 'chucho'],
+  ['guadalupe', 'lupe', 'lupita'],
+  ['ignacio', 'nacho'],
+  ['guillermo', 'memo'],
+  ['alberto', 'beto'],
+  ['roberto', 'beto'],
+  ['humberto', 'beto'],
+  ['antonio', 'tono', 'toni'],
+  ['eduardo', 'lalo'],
+  ['enrique', 'kike', 'quique'],
+  ['manuel', 'manny', 'manolo'],
+  ['salvador', 'chava', 'chavo'],
+  ['ernesto', 'neto'],
+  ['fernando', 'nando'],
+  ['santiago', 'santi'],
+  ['sebastian', 'sebas'],
+  ['alejandro', 'alex', 'ale'],
+  ['alejandra', 'alex', 'ale'],
+  ['ricardo', 'rick', 'ricky'],
+  ['gerardo', 'jerry'],
+  ['rosario', 'chayo'],
+  ['graciela', 'chela'],
+  ['consuelo', 'chelo'],
+  ['concepcion', 'conchita', 'concha', 'conchi'],
+  ['dolores', 'lola'],
+  ['mercedes', 'meche'],
+  ['refugio', 'cuca', 'cuquita'],
+  ['socorro', 'coco'],
 ];
 
 const NICKNAME_MAP = new Map();

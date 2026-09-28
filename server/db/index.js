@@ -42,7 +42,9 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //       for consumers that can't pull).
 //  19 — rename outbound partner-pairing settings keys from pp_* to partner_*
 //       (open-source naming generalization; data-preserving).
-const SCHEMA_VERSION = 19;
+//  20 — external_refs crosswalk: another app's record id -> FG code, so an
+//       imported person is looked up exactly, never re-matched by name.
+const SCHEMA_VERSION = 20;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

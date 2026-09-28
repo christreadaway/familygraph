@@ -351,11 +351,148 @@ switch (cmd) {
     }
     break;
   }
+  case 'import-missioniq': {
+    // Bring everyone MissionIQ already knows into Family Graph, each with one
+    // lifelong id, before any roster is anonymized.
+    //   family-graph import-missioniq <missioniq.db> [--dry-run] [--category church|school|other] [--include-deceased]
+    // Reads the MissionIQ file READ-ONLY. Every uncertain match is asked here;
+    // nothing is written until every question is answered and YES is typed.
+    // Safe to re-run: records imported before are recognized by their
+    // MissionIQ id, so only new or changed records are matched again.
+    const args = process.argv.slice(3);
+    const usage = 'usage: family-graph import-missioniq <path-to-missioniq.db> [--dry-run] [--category church|school|other] [--include-deceased]';
+    let dbArg = null;
+    let category = null;
+    let dryRun = false;
+    let includeDeceased = false;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === '--dry-run') dryRun = true;
+      else if (a === '--include-deceased') includeDeceased = true;
+      else if (a === '--category') category = args[++i];
+      else if (a.startsWith('--category=')) category = a.slice('--category='.length);
+      else if (!a.startsWith('--') && !dbArg) dbArg = a;
+      else { console.error(`unknown option: ${a}`); console.error(usage); process.exit(2); }
+    }
+    if (!dbArg) { console.error(usage); process.exit(2); }
+    if (category !== null && !['church', 'school', 'other'].includes(category)) {
+      console.error('--category must be church, school, or other'); process.exit(2);
+    }
+    const path = require('path');
+    const readline = require('readline');
+    const config = require('../server/config');
+    const dbm = require('../server/db');
+    const secret = require('../server/crypto/secret');
+    const profiles = require('../server/identity/profiles');
+    const missioniq = require('../server/identity/missioniq');
+    const mpath = path.resolve(dbArg);
+    if (mpath === path.resolve(config.dbPath)) {
+      console.error('that is the Family Graph database, not MissionIQ\'s'); process.exit(2);
+    }
+    const db = dbm.init(config.dbPath);
+    const secrets = secret.load(config.secretPath);
+    const thresholds = profiles.thresholdsFor(db, config.resolverThresholds);
+    // A line queue rather than rl.question: answers piped in ahead of time
+    // (or typed quickly) are never dropped. End of input counts as "stop".
+    const rl = readline.createInterface({ input: process.stdin, terminal: false });
+    const lines = [];
+    const waiters = [];
+    let inputClosed = false;
+    rl.on('line', l => (waiters.length ? waiters.shift()(l) : lines.push(l)));
+    rl.on('close', () => { inputClosed = true; while (waiters.length) waiters.shift()(null); });
+    const ask = prompt => {
+      process.stdout.write(prompt);
+      if (lines.length) return Promise.resolve(lines.shift());
+      if (inputClosed) return Promise.resolve(null);
+      return new Promise(res => waiters.push(res));
+    };
+    const out = s => console.log(s);
+    const fmtSummary = s => [
+      `  people:     ${s.persons.matched} already in Family Graph, ${s.persons.new} new, ${s.persons.review} need you${s.persons.skipped ? `, ${s.persons.skipped} left out` : ''}`,
+      `  households: ${s.families.matched} already in Family Graph, ${s.families.new} new, ${s.families.review} need you`,
+    ].join('\n');
+
+    (async () => {
+      try {
+        const r = await missioniq.runImport({
+          db, secrets, thresholds, dbPath: mpath, category, dryRun, includeDeceased,
+          actor: 'cli:import-missioniq',
+          say: ev => {
+            if (ev.type === 'read') {
+              const st = ev.stats;
+              out(`MissionIQ: ${st.families} households, ${st.contacts} adults, ${st.children} students` +
+                (st.children_not_enrolled ? ` (${st.children_not_enrolled} not currently enrolled)` : ''));
+              const skipped = [
+                st.skipped_deceased_families ? `${st.skipped_deceased_families} deceased households (add --include-deceased to import them)` : null,
+                st.skipped_pseudo_families ? `the "Unmatched Donations" holding family (${st.skipped_pseudo_family_contacts} contacts)` : null,
+                st.skipped_emergency_contacts ? `${st.skipped_emergency_contacts} emergency contacts` : null,
+                st.skipped_empty_families ? `${st.skipped_empty_families} empty households` : null,
+              ].filter(Boolean);
+              if (skipped.length) out(`  left out on purpose: ${skipped.join('; ')}`);
+              if (st.contacts_without_family || st.children_without_family) {
+                out(`  ${st.contacts_without_family + st.children_without_family} people have no household in MissionIQ; each is imported as their own household`);
+              }
+              if (st.prior_person_codes || st.prior_family_codes) {
+                out(`  MissionIQ already stored ${st.prior_person_codes} person ids and ${st.prior_family_codes} household ids from earlier syncs; each is checked before it is trusted`);
+              }
+            } else if (ev.type === 'plan') {
+              out('');
+              out('Plan (nothing written yet):');
+              out(fmtSummary(ev.summary));
+            }
+          },
+          decide: async (item, pos) => {
+            out('');
+            for (const line of missioniq.describeItem(item, pos)) out(line);
+            for (;;) {
+              const ans = await ask('  > ');
+              if (ans === null) return 'quit';
+              const d = missioniq.parseAnswer(item, ans);
+              if (d) return d;
+              out(`  type a number from the list, n${item.kind === 'person' ? ', s' : ''}, or q`);
+            }
+          },
+          confirm: async summary => {
+            out('');
+            out('Ready to write:');
+            out(fmtSummary(summary));
+            const ans = await ask('Type YES to write this to Family Graph (anything else stops): ');
+            return ans !== null && ans.trim() === 'YES';
+          },
+        });
+        out('');
+        if (r.status === 'empty') out('MissionIQ has no households to import.');
+        else if (r.status === 'dry_run') out(`Dry run: nothing written. ${r.plan.pending.length} items would need your decision.`);
+        else if (r.status === 'aborted') out('Stopped. Nothing was written.');
+        else if (r.status === 'unresolved') { out(`Stopped: ${r.pending} items still need a decision. Nothing was written.`); process.exitCode = 1; }
+        else if (r.status === 'committed') {
+          const s = r.result.summary;
+          out('Done. Written to Family Graph:');
+          out(fmtSummary(s).replace(/need you/g, 'decided by you'));
+          out(`  MissionIQ records linked: ${r.crosswalk.person} people, ${r.crosswalk.family} households (${s.crosswalk.created} new links, ${s.crosswalk.relinked} changed)`);
+          out(`  import run: ${(r.result.import_runs || []).join(', ') || '-'}`);
+          if (r.stale.length) {
+            out('');
+            out(`${r.stale.length} MissionIQ records still carry an old Family Graph id. Correct ids:`);
+            for (const x of r.stale) out(`  ${x.kind === 'family' ? 'household' : 'person   '}  ${x.name || '-'}  stored ${x.stored}  ->  ${x.correct}`);
+            out('MissionIQ\'s "Sync now" keeps a stored id, so fix these in MissionIQ (see README, "Importing MissionIQ").');
+          }
+        }
+      } catch (e) {
+        console.error(`error: ${e.message || e}`);
+        process.exitCode = 1;
+      } finally {
+        rl.close();
+        db.close();
+      }
+    })();
+    break;
+  }
   default: {
     // eslint-disable-next-line no-console
     console.error(`unknown command: ${cmd}`);
     // eslint-disable-next-line no-console
-    console.error('commands: start | status | rotate-secret | backup [passphrase] | restore <passphrase> <src> <dest> | show-token | issue-key <name> [scopes] | list-backups | prune-backups [keep=10] | connector <test|sync|status> [name] | partner-pairing <list|show|set|enable|disable|check-in|remove> [schoolId]');
+    console.error('commands: start | status | rotate-secret | backup [passphrase] | restore <passphrase> <src> <dest> | show-token | issue-key <name> [scopes] | list-backups | prune-backups [keep=10] | connector <test|sync|status> [name] | partner-pairing <list|show|set|enable|disable|check-in|remove> [schoolId] | import-missioniq <missioniq.db> [--dry-run] [--category church|school|other] [--include-deceased]');
     process.exit(2);
   }
 }

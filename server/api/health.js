@@ -12,9 +12,11 @@ const runs = require('../connectors/runs');
 // (or gate off) a feature based on what the running registry actually offers.
 // This is the contract that keeps future integrations forward/backward
 // compatible. Keep it in sync with the changelog in FAMILYGRAPH_INTEGRATION.md.
-const CAPABILITIES_VERSION = 2;
+const CAPABILITIES_VERSION = 3;
 const CAPABILITIES = {
   contract: 'v0.2',
+  community_ids: true,             // I…/F… ids; POST /api/identity/roster/plan|commit, GET /lookup/:id
+  identity_crosswalk: true,        // resolve returns the linked person for an imported (source, source_ref)
   identity_match: true,            // POST /api/identity/match
   identity_resolve: true,          // POST /api/identity/resolve
   identity_resolve_family: true,   // resolve returns a family code; with_family creates one

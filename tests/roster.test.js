@@ -256,8 +256,35 @@ test('trap > a shared email alone never matches a different first name', t => {
   contacts.attachEmailToPerson(ctx.db, jane, contacts.upsertEmail(ctx.db, ctx.secrets, 'smiths@example.org'));
   const r = plan(ctx, { sheets: [{ headers: ['First Name', 'Last Name', 'Email'], rows: [['Emma', 'Smith', 'smiths@example.org']] }] });
   const emma = byName(r, 'Emma')[0];
-  assert.equal(emma.action, 'review', 'a child under a parent\'s email goes to a human');
-  assert.ok(emma.candidates[0].reasons.includes('contact_match_name_unaligned'));
+  assert.equal(emma.action, 'new', 'a child under a parent\'s email is a different person, never Jane');
+  assert.equal(emma.candidates, undefined, 'and nobody is asked about it');
+});
+
+test('household > a new person sharing a family email joins that household when the surname fits', t => {
+  const ctx = setup(t);
+  const jane = people.create(ctx.db, ctx.secrets, { given_name: 'Jane', family_name: 'Smith' });
+  contacts.attachEmailToPerson(ctx.db, jane, contacts.upsertEmail(ctx.db, ctx.secrets, 'smiths@example.org'));
+  const fam = families.create(ctx.db, ctx.secrets, { display_name: 'Smith Family' });
+  families.addMember(ctx.db, ctx.secrets, fam, jane, { role: 'parent' });
+  const r = plan(ctx, { sheets: [{ headers: ['Parent First Name', 'Parent Last Name', 'Parent Email'], rows: [['John', 'Smith', 'smiths@example.org']] }] });
+  assert.equal(persons(r)[0].action, 'new', 'John is not Jane');
+  const f = r.sheets[0].rows[0].family;
+  assert.equal(f.action, 'matched');
+  assert.equal(f.via, 'shared_contact');
+  assert.equal(f.community_id, ids.toCommunityId(fam), 'he joins the household on that inbox');
+
+  // A different surname on the same inbox is not decided by the machine.
+  const r2 = plan(ctx, { sheets: [{ headers: ['Parent First Name', 'Parent Last Name', 'Parent Email'], rows: [['Tom', 'Brown', 'smiths@example.org']] }] });
+  assert.equal(r2.sheets[0].rows[0].family.action, 'review');
+  assert.ok(r2.sheets[0].rows[0].family.review_reasons.includes('shared_contact_other_surname'));
+
+  // A placeholder email is never evidence.
+  const other = people.create(ctx.db, ctx.secrets, { given_name: 'Ann', family_name: 'Smith' });
+  contacts.attachEmailToPerson(ctx.db, other, contacts.upsertEmail(ctx.db, ctx.secrets, 'none@none.com'));
+  const f2 = families.create(ctx.db, ctx.secrets, { display_name: 'Smith Family' });
+  families.addMember(ctx.db, ctx.secrets, f2, other, { role: 'parent' });
+  const r3 = plan(ctx, { sheets: [{ headers: ['Parent First Name', 'Parent Last Name', 'Parent Email'], rows: [['Bill', 'Smith', 'none@none.com']] }] });
+  assert.equal(r3.sheets[0].rows[0].family.action, 'new');
 });
 
 test('trap > different birthdates veto an email match', t => {
@@ -276,8 +303,9 @@ test('trap > Jr and Sr with one email are two people', t => {
   contacts.attachEmailToPerson(ctx.db, sr, contacts.upsertEmail(ctx.db, ctx.secrets, 'smiths@example.org'));
   const r = plan(ctx, { sheets: [{ headers: ['First Name', 'Last Name', 'Suffix', 'Email'], rows: [['John', 'Smith', 'Jr.', 'smiths@example.org']] }] });
   const jr = persons(r)[0];
-  assert.equal(jr.action, 'review');
-  assert.ok(jr.candidates[0].reasons.includes('suffix_conflict'));
+  assert.equal(jr.action, 'new', 'Jr is never Sr - no question needed');
+  assert.notEqual(jr.community_id, ids.toCommunityId(sr));
+  assert.equal(r.summary.told_apart, 1);
 });
 
 test('trap > a suffix on one side only is not proof in a roster import', t => {
@@ -383,18 +411,25 @@ test('household > members already in two different households go to review', t =
   assert.equal(fam.candidates.length, 2);
 });
 
-test('household > same address but no known members goes to review', t => {
+test('household > an address is the same household only with a surname in common (people move)', t => {
   const ctx = setup(t);
   const sheet1 = { headers: ['First Name', 'Last Name', 'Address', 'City', 'Zip'], rows: [['Ann', 'Park', '5 Pine Rd', 'Austin', '78701']] };
-  commit(ctx, { sheets: [sheet1] });
+  const first = commit(ctx, { sheets: [sheet1] });
+  const parkFamily = first.sheets[0].rows[0].family.community_id;
+  // A different family moved in: a new household, no question.
   const r = plan(ctx, { sheets: [{ ...sheet1, rows: [['Tomas', 'Ruiz', '5 Pine Rd', 'Austin', '78701']] }] });
   const fam = r.sheets[0].rows[0].family;
-  assert.equal(fam.action, 'review');
-  assert.ok(fam.review_reasons.includes('same_address_no_known_members'));
-  const c = commit(ctx, { sheets: [{ ...sheet1, rows: [['Tomas', 'Ruiz', '5 Pine Rd', 'Austin', '78701']] }],
-    decisions: { '0:0:family': { action: 'create' } } });
-  assert.equal(c.committed, true);
-  assert.equal(count(ctx.db, 'families'), 2);
+  assert.equal(fam.action, 'new');
+  assert.deepEqual(r.pending, []);
+  // Someone new with the Parks' surname at the Parks' address: their household.
+  const r2 = plan(ctx, { sheets: [{ ...sheet1, rows: [['Leo', 'Park', '5 Pine Rd', 'Austin', '78701']] }] });
+  assert.equal(r2.sheets[0].rows[0].family.action, 'matched');
+  assert.equal(r2.sheets[0].rows[0].family.via, 'address_and_surname');
+  assert.equal(r2.sheets[0].rows[0].family.community_id, parkFamily);
+  // And Ann herself, listed with only her name and address, is Ann.
+  const r3 = plan(ctx, { sheets: [sheet1] });
+  assert.equal(persons(r3)[0].action, 'matched');
+  assert.equal(persons(r3)[0].community_id, persons(first)[0].community_id);
 });
 
 // ---------------------------------------------------------------------------
@@ -660,4 +695,163 @@ test('api > scopes: plan needs pii.read, commit needs import; 409 on open review
   });
   assert.equal(big.status, 200);
   assert.equal(big.body.summary.rows, 2000);
+});
+
+// ---------------------------------------------------------------------------
+// Settling the obvious cases without a person (owner, 2026-09-28: "a great
+// job done automatically, no mistakes, and no massive verification problem")
+// ---------------------------------------------------------------------------
+
+const hh = (ctx, households, mode = 'plan', extra = {}) =>
+  roster.run(ctx.db, ctx.secrets, ctx.th, { households, ...extra }, { mode, actor: 'test' });
+
+test('rules > two different house numbers on one street are two addresses', t => {
+  assert.equal(matching.addressSimilarity('134 Pine St', '106 Pine St'), 0.5);
+  assert.equal(matching.addressSimilarity('12 Main St Apt 4', '12 Main St Apt 7'), 0.5);
+  assert.equal(matching.addressSimilarity('PO Box 12', 'PO Box 13'), 0.5);
+  assert.equal(matching.addressSimilarity('12 Main St', '12 Main Street'), 1);
+  assert.equal(matching.addressSimilarity('12 Main St Apt 4', '12 Main Street'), 1, 'a unit on one side only is left alone');
+  const ctx = setup(t);
+  const sheet = { headers: ['First Name', 'Last Name', 'Address', 'City', 'Zip'], rows: [['James', 'Jones', '134 Pine St', 'Austin', '78701']] };
+  const first = commit(ctx, { sheets: [sheet] });
+  const r = plan(ctx, { sheets: [{ ...sheet, rows: [['James', 'Jones', '106 Pine St', 'Austin', '78701']] }] });
+  assert.notEqual(persons(r)[0].action, 'matched', 'a namesake down the street is not the same James');
+  assert.notEqual(persons(r)[0].community_id, persons(first)[0].community_id);
+});
+
+test('rules > one upload: same-named parents in different households are told apart', t => {
+  const ctx = setup(t);
+  const sheet = {
+    headers: ['Parent First Name', 'Parent Last Name', 'Parent Email', 'Address', 'City', 'Zip', 'Student First Name', 'Grade'],
+    rows: [
+      ['Maria', 'Garcia', 'mg1@example.org', '10 Elm St', 'Austin', '78701', 'Ana', '2'],
+      ['Maria', 'Garcia', 'mgarcia@example.org', '77 Oak Ave', 'Austin', '78702', 'Luis', '5'],
+      ['Maria', 'Garcia', 'mg1@example.org', '10 Elm St', 'Austin', '78701', 'Sofia', '4'],
+    ],
+  };
+  const r = plan(ctx, { sheets: [sheet] });
+  assert.deepEqual(r.pending, []);
+  const marias = byName(r, 'Maria');
+  assert.equal(marias[1].action, 'new', 'different email AND different home: a different Maria');
+  assert.equal(marias[1].told_apart, 1);
+  assert.equal(marias[2].action, 'matched', 'same email: the first Maria again');
+  assert.equal(marias[2].same_as, '0:0:0');
+  assert.equal(r.summary.told_apart, 1);
+});
+
+test('rules > one upload: same-named children in different grades are told apart; same grade is asked', t => {
+  const ctx = setup(t);
+  const sheet = {
+    headers: ['Parent First Name', 'Parent Last Name', 'Parent Email', 'Student First Name', 'Student Last Name', 'Grade'],
+    rows: [
+      ['Ann', 'Lee', 'ann@example.org', 'Emma', 'Lee', '3'],
+      ['Tom', 'Lee', 'tom@example.org', 'Emma', 'Lee', '7th'],
+      ['Kim', 'Lee', 'kim@example.org', 'Emma', 'Lee', 'Grade 3'],
+    ],
+  };
+  const r = plan(ctx, { sheets: [sheet] });
+  const emmas = byName(r, 'Emma');
+  assert.equal(emmas[1].action, 'new', 'grade 7 is not the grade-3 Emma');
+  assert.equal(emmas[2].action, 'review', 'same name, same grade, another household: maybe one child of two homes');
+  assert.ok(emmas[2].review_reasons.includes('possible_match'));
+});
+
+test('rules > a child is never matched to an adult namesake at the same address, and nobody is asked', t => {
+  const ctx = setup(t);
+  const address = { line1: '12 Maple St', city: 'Austin', postal: '78701' };
+  const first = hh(ctx, [{ address, persons: [{ given_name: 'John', family_name: 'Smith', role: 'parent' }] }], 'commit');
+  const r = hh(ctx, [{ address, persons: [{ given_name: 'John', family_name: 'Smith', role: 'child' }] }]);
+  const jr = r.sheets[0].rows[0].persons[0];
+  assert.equal(jr.action, 'new');
+  assert.notEqual(jr.community_id, first.sheets[0].rows[0].persons[0].community_id);
+  assert.deepEqual(r.pending, []);
+  assert.equal(r.sheets[0].rows[0].family.action, 'matched', 'but he is in the Smith household');
+  assert.equal(r.sheets[0].rows[0].family.via, 'address_and_surname');
+  // With the family inbox on both, a person looks (father and son, or a
+  // child who grew up).
+  const ctx2 = setup(t);
+  hh(ctx2, [{ address, persons: [{ given_name: 'John', family_name: 'Smith', role: 'parent', email: 'smiths@example.org' }] }], 'commit');
+  const r2 = hh(ctx2, [{ address, persons: [{ given_name: 'John', family_name: 'Smith', role: 'child', email: 'smiths@example.org' }] }]);
+  assert.equal(r2.sheets[0].rows[0].persons[0].action, 'review');
+  assert.ok(r2.sheets[0].rows[0].persons[0].review_reasons.includes('role_mismatch'));
+});
+
+test('rules > different birthdates settle it, unless something else is shared (then it may be a typo)', t => {
+  const ctx = setup(t);
+  people.create(ctx.db, ctx.secrets, { given_name: 'Emma', family_name: 'Smith', date_of_birth: '2015-03-01' });
+  const r = plan(ctx, { sheets: [{ headers: ['First Name', 'Last Name', 'DOB'], rows: [['Emma', 'Smith', '2016-09-09']] }] });
+  assert.equal(persons(r)[0].action, 'new');
+  assert.deepEqual(r.pending, []);
+});
+
+test('rules > everyday Spanish and English short forms line up (Lupe / Guadalupe, Chuy / Jesús)', t => {
+  const ctx = setup(t);
+  const g = people.create(ctx.db, ctx.secrets, { given_name: 'Guadalupe', family_name: 'Ramirez' });
+  contacts.attachEmailToPerson(ctx.db, g, contacts.upsertEmail(ctx.db, ctx.secrets, 'lupe@example.org'));
+  const j = people.create(ctx.db, ctx.secrets, { given_name: 'Jesús', family_name: 'Ramirez' });
+  contacts.attachEmailToPerson(ctx.db, j, contacts.upsertEmail(ctx.db, ctx.secrets, 'chuy@example.org'));
+  const r = plan(ctx, { sheets: [{ headers: ['First Name', 'Last Name', 'Email'], rows: [['Lupe', 'Ramirez', 'lupe@example.org'], ['Chuy', 'Ramirez', 'chuy@example.org']] }] });
+  assert.equal(persons(r)[0].community_id, ids.toCommunityId(g));
+  assert.equal(persons(r)[1].community_id, ids.toCommunityId(j));
+});
+
+test('rules > a grown-up child listed as a parent starts their own household', t => {
+  const ctx = setup(t);
+  const first = hh(ctx, [{ display_name: 'Park Family', persons: [
+    { given_name: 'Ann', family_name: 'Park', role: 'parent', email: 'ann@example.org' },
+    { given_name: 'Kevin', family_name: 'Park', role: 'child', email: 'kevin@example.org' },
+  ] }], 'commit');
+  const parents = first.sheets[0].rows[0].family.community_id;
+  const body = [{ persons: [
+    { given_name: 'Kevin', family_name: 'Park', role: 'parent', email: 'kevin@example.org' },
+    { given_name: 'Max', family_name: 'Park', role: 'child' },
+  ] }];
+  const r = hh(ctx, body);
+  const kevin = r.sheets[0].rows[0].persons[0];
+  assert.equal(kevin.action, 'review', 'the child record who is now a parent: a person confirms it once');
+  assert.ok(kevin.review_reasons.includes('role_mismatch'));
+  const kevinId = kevin.candidates[0].community_id;
+  const c = hh(ctx, body, 'commit', { decisions: { '0:0:0': { action: 'attach', target: kevinId } } });
+  assert.equal(c.committed, true);
+  assert.equal(c.sheets[0].rows[0].persons[0].community_id, kevinId, 'Kevin keeps his id');
+  assert.equal(c.sheets[0].rows[0].family.action, 'new', 'his children do not join the household he grew up in');
+  assert.notEqual(c.sheets[0].rows[0].family.community_id, parents);
+});
+
+test('rules > a grandparent on a daughter\'s row does not pull her into the grandparent\'s household', t => {
+  const ctx = setup(t);
+  hh(ctx, [{ display_name: 'Rose Family', persons: [
+    { given_name: 'Rose', family_name: 'Diaz', role: 'parent', email: 'rose@example.org' },
+  ] }], 'commit');
+  const r = hh(ctx, [{ display_name: 'Lopez Family', persons: [
+    { given_name: 'Anna', family_name: 'Lopez', role: 'parent', email: 'anna@example.org' },
+    { given_name: 'Rose', family_name: 'Diaz', role: 'grandparent', email: 'rose@example.org' },
+  ] }]);
+  assert.equal(r.sheets[0].rows[0].persons[1].action, 'matched');
+  assert.equal(r.sheets[0].rows[0].family.action, 'new');
+});
+
+test('rules > a known child in two households is placed by the row\'s own address', t => {
+  const ctx = setup(t);
+  const addrA = { line1: '1 Elm St', city: 'Austin', postal: '78701' };
+  const addrB = { line1: '9 Oak Ave', city: 'Austin', postal: '78702' };
+  const a = hh(ctx, [{ address: addrA, persons: [
+    { given_name: 'Ann', family_name: 'Lee', role: 'parent', email: 'ann@example.org' },
+    { given_name: 'Emma', family_name: 'Lee', role: 'child', date_of_birth: '2015-01-02' },
+  ] }], 'commit');
+  const b = hh(ctx, [{ address: addrB, persons: [
+    { given_name: 'Tom', family_name: 'Lee', role: 'parent', email: 'tom@example.org' },
+    { given_name: 'Emma', family_name: 'Lee', role: 'child', date_of_birth: '2015-01-02' },
+  ] }], 'commit', { decisions: { '0:0:family': { action: 'create' } } });
+  assert.equal(b.committed, true);
+  const famA = a.sheets[0].rows[0].family.community_id;
+  const famB = b.sheets[0].rows[0].family.community_id;
+  assert.notEqual(famA, famB);
+  // A new stepparent listed with Emma at dad's address: dad's household.
+  const r = hh(ctx, [{ address: addrB, persons: [
+    { given_name: 'Kim', family_name: 'Lee', role: 'parent' },
+    { given_name: 'Emma', family_name: 'Lee', role: 'child', date_of_birth: '2015-01-02' },
+  ] }]);
+  assert.equal(r.sheets[0].rows[0].family.community_id, famB);
+  assert.equal(r.sheets[0].rows[0].family.via, 'members_and_address');
 });
