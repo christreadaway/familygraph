@@ -37,7 +37,8 @@ const PSEUDO_FAMILIES = new Set(['unmatched donations']);
 const ROLE_MAP = {
   parent: 'parent', stepparent: 'parent', noncustodial_parent: 'parent', mother: 'parent', father: 'parent',
   guardian: 'guardian', grandparent: 'grandparent',
-  in_law: 'other_adult', other: 'member', family_member: 'member', spouse: 'spouse',
+  in_law: 'other_adult', aunt_uncle: 'other_adult', aunt: 'other_adult', uncle: 'other_adult',
+  other: 'member', family_member: 'member', spouse: 'spouse',
 };
 const SKIP_ROLES = new Set(['emergency_contact']);
 
@@ -104,9 +105,12 @@ function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
     const households = [];
 
     const personFromContact = c => {
-      // `relationship` is what the operator sets on the family page; `role`
-      // is the value the contact was first imported with.
-      const role = String(c.relationship || c.role || 'parent').trim().toLowerCase();
+      // `relationship` is what the operator sets on the family page, but the
+      // column defaults to 'parent' for every contact, so only a value other
+      // than the default says anything. Otherwise `role` - the value the
+      // contact was imported with (grandparent, aunt_uncle, ...) - decides.
+      const rel = String(c.relationship || '').trim().toLowerCase();
+      const role = rel && rel !== 'parent' ? rel : String(c.role || rel || 'parent').trim().toLowerCase();
       if (SKIP_ROLES.has(role)) {
         stats.skipped_emergency_contacts += 1;
         return null;

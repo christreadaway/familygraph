@@ -31,6 +31,9 @@ let minLevel = _resolveLevel(process.env.FAMILY_GRAPH_LOG_LEVEL);
 // stream-buffer latency. At our log volume (~hundreds of lines/min) the
 // per-line syscall is well within budget.
 let _logFilePath = null;
+// Interactive CLI commands turn the stderr copy off so log lines do not land
+// in the middle of a prompt; they always keep the file.
+let _toStderr = true;
 // Size-based rotation cap. When the log file would grow past this, it is
 // renamed to `<file>.1` (clobbering any previous .1) and a fresh file starts.
 // One generation of history is enough for "paste the tail into a chat"
@@ -96,7 +99,7 @@ function _emit(level, levelNum, msg, fields) {
   } catch (e) {
     line = JSON.stringify({ t: entry.t, level, msg, _stringify_error: String(e.message || e) });
   }
-  process.stderr.write(line + '\n');
+  if (_toStderr || !_logFilePath) process.stderr.write(line + '\n');
   if (_logFilePath) {
     try {
       _rotateIfNeeded();
@@ -109,6 +112,7 @@ function _emit(level, levelNum, msg, fields) {
 function configure(opts = {}) {
   if (opts.level != null) minLevel = _resolveLevel(opts.level);
   if (opts.maxBytes != null) _maxBytes = _resolveMaxBytes(opts.maxBytes);
+  if (opts.stderr !== undefined) _toStderr = opts.stderr !== false;
   if (opts.file !== undefined) {
     if (opts.file) {
       const dir = path.dirname(opts.file);

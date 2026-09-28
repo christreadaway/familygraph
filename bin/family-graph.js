@@ -389,6 +389,13 @@ switch (cmd) {
     if (mpath === path.resolve(config.dbPath)) {
       console.error('that is the Family Graph database, not MissionIQ\'s'); process.exit(2);
     }
+    // Log lines (counts only - never names) go to <home>/logs/cli.log, not
+    // into the middle of the prompts. Paste its tail into a chat when
+    // something goes wrong.
+    const log = require('../server/log');
+    const logFile = process.env.FAMILY_GRAPH_LOG_FILE || path.join(config.home, 'logs', 'cli.log');
+    log.configure({ file: logFile, stderr: false });
+    log.info('cli.import_missioniq.start', { dry_run: dryRun, category, include_deceased: includeDeceased });
     const db = dbm.init(config.dbPath);
     const secrets = secret.load(config.secretPath);
     const thresholds = profiles.thresholdsFor(db, config.resolverThresholds);
@@ -478,8 +485,11 @@ switch (cmd) {
             out('MissionIQ\'s "Sync now" keeps a stored id, so fix these in MissionIQ (see README, "Importing MissionIQ").');
           }
         }
+        log.info('cli.import_missioniq.done', { status: r.status, stale: r.stale ? r.stale.length : 0 });
       } catch (e) {
+        log.error('cli.import_missioniq.failed', { error: String(e.message || e), stack: e.stack });
         console.error(`error: ${e.message || e}`);
+        console.error(`details: ${logFile}`);
         process.exitCode = 1;
       } finally {
         rl.close();

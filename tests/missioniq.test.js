@@ -150,6 +150,7 @@ test('missioniq > reads households read-only and leaves out what is not a househ
       { id: 'c-1', first_name: 'Jane', last_name: 'Smith', email: 'jane@example.org', secondary_email: 'js@example.org',
         family_id: 'fam-a', relationship: 'stepparent', fg_person_code: 'p_0123456789abcdef', do_not_contact: 1 },
       { id: 'c-2', first_name: 'Rose', last_name: 'Smith', family_id: 'fam-a', role: 'parent', relationship: 'grandparent' },
+      { id: 'c-8', first_name: 'Gus', last_name: 'Smith', family_id: 'fam-a', role: 'aunt_uncle', relationship: 'parent' },
       { id: 'c-3', first_name: 'Bob', last_name: 'Neighbor', family_id: 'fam-a', relationship: 'emergency_contact' },
       { id: 'c-4', first_name: 'Dee', last_name: 'Donor', family_id: 'fam-u' },
       { id: 'c-5', first_name: 'Old', last_name: 'Timer', family_id: 'fam-d' },
@@ -173,6 +174,7 @@ test('missioniq > reads households read-only and leaves out what is not a househ
   assert.equal(smith.address.line1, '12 Maple St');
   assert.deepEqual(smith.persons.map(x => [x.ref, x.role]), [
     ['contact:c-1', 'parent'], ['contact:c-2', 'grandparent'], ['contact:c-7', 'parent'],
+    ['contact:c-8', 'other_adult'],
     ['child:1', 'child'], ['child:2', 'child'],
   ]);
   const jane = smith.persons[0];
@@ -180,12 +182,12 @@ test('missioniq > reads households read-only and leaves out what is not a househ
   assert.equal(jane.code_hint, 'p_0123456789abcdef');
   assert.equal(jane.do_not_contact, true);
   assert.equal(smith.persons[2].code_hint, null, 'a family code stored on a contact is not a person hint');
-  assert.equal(smith.persons[3].date_of_birth, '2016-04-02');
+  assert.equal(smith.persons.find(x => x.ref === 'child:1').date_of_birth, '2016-04-02');
   assert.equal(households[1].ref, undefined);
   assert.equal(households[1].persons[0].ref, 'contact:c-6');
 
   assert.equal(stats.families, 1);
-  assert.equal(stats.contacts, 4);
+  assert.equal(stats.contacts, 5);
   assert.equal(stats.children, 2);
   assert.equal(stats.children_not_enrolled, 1);
   assert.equal(stats.do_not_contact, 1);

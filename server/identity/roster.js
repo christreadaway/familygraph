@@ -623,6 +623,12 @@ function _sameNameOnRow(incoming, personOutcomes) {
     if (!o.code || enc.normalizeName(p.given_name) !== g || enc.normalizeName(p.family_name) !== f) continue;
     const pcls = _roleClass(p.role);
     if (cls && pcls && cls !== pcls) continue;
+    // A grandparent and a parent (or child) with one name are two
+    // generations - Maria the grandmother and Maria the mother.
+    const gen = r => (r === 'grandparent' ? 2 : (r === 'parent' || r === 'spouse' || r === 'head') ? 1 : r === 'child' ? 0 : null);
+    const ga = gen(incoming.role);
+    const gb = gen(p.role);
+    if (ga !== null && gb !== null && ga !== gb) continue;
     const sa = matching.generationalSuffix(incoming);
     const sb = matching.generationalSuffix(p);
     if (sa && sb && sa !== sb) continue;
