@@ -85,6 +85,29 @@ function _crossSourceMetadataForPair(db, leftCode, rightCode) {
   };
 }
 
+// ---------- prepared statements ----------
+//
+// better-sqlite3 compiles SQL on every db.prepare(). The candidate path runs
+// the same few statements thousands of times per roster import (every
+// candidate is enriched with four queries), and recompiling them was about a
+// third of all CPU in a 500-row roster plan. One cache per database handle;
+// a WeakMap, so a closed database takes its statements with it. Only used
+// with .all() / .get(), which finish before returning, so sharing is safe.
+const _stmtCache = new WeakMap();
+function _stmt(db, sql) {
+  let byDb = _stmtCache.get(db);
+  if (!byDb) {
+    byDb = new Map();
+    _stmtCache.set(db, byDb);
+  }
+  let st = byDb.get(sql);
+  if (!st) {
+    st = db.prepare(sql);
+    byDb.set(sql, st);
+  }
+  return st;
+}
+
 // ---------- candidate enrichment ----------
 
 // Decrypt a person row into the loose record shape that matching.scoreMatch
@@ -107,7 +130,7 @@ function _enrichCandidate(db, secrets, row) {
     zip: null,
   };
 
-  const emailRows = db.prepare(
+  const emailRows = _stmt(db,
     `SELECT e.value_ct FROM person_emails pe JOIN emails e ON e.code = pe.email_code WHERE pe.person_code = ?`
   ).all(row.code);
   for (const er of emailRows) {
@@ -115,7 +138,7 @@ function _enrichCandidate(db, secrets, row) {
     if (v) cand.emails.push(String(v).toLowerCase().trim());
   }
 
-  const phoneRows = db.prepare(
+  const phoneRows = _stmt(db,
     `SELECT ph.value_ct FROM person_phones partner JOIN phones ph ON ph.code = partner.phone_code WHERE partner.person_code = ?`
   ).all(row.code);
   for (const pr of phoneRows) {
@@ -128,13 +151,13 @@ function _enrichCandidate(db, secrets, row) {
   }
 
   // Address: prefer person_addresses, fall back to family primary.
-  const addrRow = db.prepare(
+  const addrRow = _stmt(db,
     `SELECT a.* FROM person_addresses pa JOIN addresses a ON a.code = pa.address_code
        WHERE pa.person_code = ? ORDER BY pa.is_primary DESC LIMIT 1`
   ).get(row.code);
   let addr = addrRow;
   if (!addr) {
-    addr = db.prepare(
+    addr = _stmt(db,
       `SELECT a.* FROM memberships m
          JOIN family_addresses fa ON fa.family_code = m.family_code
          JOIN addresses a ON a.code = fa.address_code
@@ -181,8 +204,23 @@ function _toMatcherRecord(incoming) {
 // candidates too, so someone who returns gets their old identifier back
 // instead of a second one. Merged persons are never candidates; their alias
 // points at the survivor.
+//
+// Strict mode also pre-filters the surname block before enrichment (see
+// _strictBlockFilter): a Garcia whom only the surname query found, and who
+// cannot earn a first-name, birthdate, email or phone reason from
+// scoreMatch, is dropped. Anyone another query found is always kept.
+// Non-strict results are unchanged.
 function findCandidates(db, secrets, incoming, opts = {}) {
   const seen = new Map();   // code → row
+  // Codes returned by any query other than the plain surname block (exact
+  // name, email, phone, address, first-name fallback). Never pre-filtered.
+  const pinned = new Set();
+  const take = (r, pin) => {
+    seen.set(r.code, r);
+    if (pin) pinned.add(r.code);
+  };
+  // Email hashes whose block query hit its LIMIT (strict pre-filter only).
+  const emailHashesAtLimit = [];
   const fh = enc.hmac(secrets, enc.normalizeName(incoming.family_name));
   const gh = enc.hmac(secrets, enc.normalizeName(incoming.given_name));
   const statusSql = opts.includeArchived ? `status IN ('active','archived')` : `status = 'active'`;
@@ -196,16 +234,16 @@ function findCandidates(db, secrets, incoming, opts = {}) {
     const h = enc.hmac(secrets, enc.normalizeName(name));
     if (!h) return;
     if (opts.strict && gh) {
-      for (const r of db.prepare(
+      for (const r of _stmt(db,
         `SELECT * FROM persons WHERE ${statusSql} AND family_name_hash = ? AND given_name_hash = ?`
       ).all(h, gh)) {
-        seen.set(r.code, r);
+        take(r, true);
       }
     }
-    for (const r of db.prepare(
+    for (const r of _stmt(db,
       `SELECT * FROM persons WHERE ${statusSql} AND family_name_hash = ? LIMIT ${familyLimit}`
     ).all(h)) {
-      seen.set(r.code, r);
+      take(r, false);
     }
   }
   fetchByFamily(incoming.family_name);
@@ -214,33 +252,53 @@ function findCandidates(db, secrets, incoming, opts = {}) {
     if (baseName && baseName !== incoming.family_name) fetchByFamily(baseName);
   }
 
+  // Strict (roster) lookups for email, phone and address drive the join from
+  // the one matching email / phone / address row. The link tables have no
+  // index on email_code / phone_code / address_code, so the plain joins below
+  // make SQLite walk EVERY person and probe the link table for each - about
+  // 3 ms per address lookup at 4,000 people, most of a re-plan. The ORDER BY
+  // pins the order that plan produced (status, then rowid, then membership
+  // rowid), so the rows and the LIMIT cut are the same. Non-strict lookups
+  // keep the original SQL untouched.
+
   // 2. Block on email hashes.
+  const emailSql = opts.strict
+    ? `SELECT p.* FROM emails e
+         CROSS JOIN person_emails pe
+         CROSS JOIN persons p
+        WHERE e.norm_hash = ? AND pe.email_code = e.code AND p.code = pe.person_code AND ${pStatusSql}
+        ORDER BY p.status, p.rowid LIMIT 25`
+    : `SELECT p.* FROM persons p
+         JOIN person_emails pe ON pe.person_code = p.code
+         JOIN emails e ON e.code = pe.email_code
+        WHERE ${pStatusSql} AND e.norm_hash = ? LIMIT 25`;
   for (const email of incoming.emails || []) {
     const norm = enc.normalizeEmail(email);
     if (!norm) continue;
     const h = enc.hmac(secrets, norm);
-    const rows = db.prepare(
-      `SELECT p.* FROM persons p
-         JOIN person_emails pe ON pe.person_code = p.code
-         JOIN emails e ON e.code = pe.email_code
-        WHERE ${pStatusSql} AND e.norm_hash = ? LIMIT 25`
-    ).all(h);
-    for (const r of rows) seen.set(r.code, r);
+    const rows = _stmt(db, emailSql).all(h);
+    for (const r of rows) take(r, true);
+    if (rows.length >= 25) emailHashesAtLimit.push(h);
   }
 
   // 3. Block on phone hashes.
+  const phoneSql = opts.strict
+    ? `SELECT p.* FROM phones ph
+         CROSS JOIN person_phones partner
+         CROSS JOIN persons p
+        WHERE ph.norm_hash = ? AND partner.phone_code = ph.code AND p.code = partner.person_code AND ${pStatusSql}
+        ORDER BY p.status, p.rowid LIMIT 25`
+    : `SELECT p.* FROM persons p
+           JOIN person_phones partner ON partner.person_code = p.code
+           JOIN phones ph ON ph.code = partner.phone_code
+          WHERE ${pStatusSql} AND ph.norm_hash = ? LIMIT 25`;
   for (const phone of incoming.phones || []) {
     for (const p of matching.splitPhones(phone)) {
       const norm = enc.normalizePhone(p);
       if (!norm) continue;
       const h = enc.hmac(secrets, norm);
-      const rows = db.prepare(
-        `SELECT p.* FROM persons p
-           JOIN person_phones partner ON partner.person_code = p.code
-           JOIN phones ph ON ph.code = partner.phone_code
-          WHERE ${pStatusSql} AND ph.norm_hash = ? LIMIT 25`
-      ).all(h);
-      for (const r of rows) seen.set(r.code, r);
+      const rows = _stmt(db, phoneSql).all(h);
+      for (const r of rows) take(r, true);
     }
   }
 
@@ -259,27 +317,118 @@ function findCandidates(db, secrets, incoming, opts = {}) {
     });
     if (norm) {
       const h = enc.hmac(secrets, norm);
-      const rows = db.prepare(
-        `SELECT p.* FROM persons p
+      const addressSql = opts.strict
+        ? `SELECT p.* FROM addresses a
+             CROSS JOIN family_addresses fa
+             CROSS JOIN memberships m
+             CROSS JOIN persons p
+            WHERE a.norm_hash = ? AND fa.address_code = a.code
+              AND m.family_code = fa.family_code AND m.ended_at IS NULL
+              AND p.code = m.person_code AND ${pStatusSql}
+            ORDER BY p.status, p.rowid, m.rowid LIMIT 50`
+        : `SELECT p.* FROM persons p
            JOIN memberships m ON m.person_code = p.code AND m.ended_at IS NULL
            JOIN family_addresses fa ON fa.family_code = m.family_code
            JOIN addresses a ON a.code = fa.address_code
-          WHERE ${pStatusSql} AND a.norm_hash = ? LIMIT 50`
-      ).all(h);
-      for (const r of rows) seen.set(r.code, r);
+          WHERE ${pStatusSql} AND a.norm_hash = ? LIMIT 50`;
+      const rows = _stmt(db, addressSql).all(h);
+      for (const r of rows) take(r, true);
     }
   }
 
   // 5. Last-resort: first-name hash (only if nothing else hit).
   if (seen.size === 0 && gh) {
-    for (const r of db.prepare(
+    for (const r of _stmt(db,
       `SELECT * FROM persons WHERE ${statusSql} AND given_name_hash = ? LIMIT 25`
     ).all(gh)) {
-      seen.set(r.code, r);
+      take(r, true);
     }
   }
 
-  return Array.from(seen.values()).map(r => _enrichCandidate(db, secrets, r));
+  let rows = Array.from(seen.values());
+  if (opts.strict) rows = _strictBlockFilter(db, secrets, incoming, rows, pinned, emailHashesAtLimit);
+  return rows.map(r => _enrichCandidate(db, secrets, r));
+}
+
+// Strict-mode surname-block pre-filter. In a parish with 80 people sharing
+// one surname, enriching and scoring every one of them for every incoming
+// person was most of a roster plan's time. Using only what the persons row
+// already carries (first name, birthdate), plus one batched phone lookup,
+// drop a row the surname query alone found when scoreMatch(strict) could
+// not give it any of:
+//   - a first-name reason: fs > 0.60 is the weakest band
+//     (phonetic_first_name); below that, transposedSimilarity >= 0.75 is
+//     first_name_typo. Same helpers, same argument order as scoreMatch.
+//   - exact_date_of_birth: the same comparison scoreMatch makes.
+//   - exact_email_match / exact_phone_match (see below).
+// Without one of those a candidate can never be definitive in strict mode
+// (every definitive path needs an aligned first name, an exact birthdate,
+// or a shared contact) and carries nothing but surname / address / zip /
+// city signals. Rules cannot make a pair definitive either.
+//
+// Contacts: an exact email match implies equal email hashes, so the email
+// query already pinned that person - unless it hit its LIMIT, in which case
+// every holder of that hash is pinned here. Phones differ: the phone query
+// hashes the whole stored value while scoreMatch splits it ("512-555-0101
+// x23", two numbers in one field), so a shared phone can go unnoticed by the
+// query. When the incoming person has phones, the remaining rows' phones are
+// fetched in one query and compared the way scoreMatch compares them.
+//
+// Incoming without a first name: nothing is filtered. Order is preserved.
+function _strictBlockFilter(db, secrets, incoming, rows, pinned, emailHashesAtLimit) {
+  const givenIn = incoming.given_name || null;
+  if (!givenIn) return rows;
+  if (rows.every(r => pinned.has(r.code))) return rows;
+
+  for (const h of emailHashesAtLimit) {
+    for (const r of _stmt(db,
+      `SELECT pe.person_code AS code FROM person_emails pe
+         JOIN emails e ON e.code = pe.email_code
+        WHERE e.norm_hash = ?`
+    ).all(h)) {
+      pinned.add(r.code);
+    }
+  }
+
+  const dobIn = incoming.date_of_birth || null;
+  const dobInNorm = dobIn ? (matching.normalizeDob(dobIn) || null) : null;
+  const undecided = new Set();
+  for (const r of rows) {
+    if (pinned.has(r.code)) continue;
+    const given = enc.decrypt(secrets, r.given_name_ct);
+    if (given) {
+      if (matching.firstNameMatchesCompound(givenIn, given) > 0.60) continue;
+      if (matching.transposedSimilarity(givenIn, given) >= 0.75) continue;
+    }
+    if (dobIn) {
+      const dob = enc.decrypt(secrets, r.date_of_birth_ct);
+      if (dob) {
+        // scoreMatch: both readable -> equal ISO dates; otherwise equal raw
+        // text. The same raw text always normalizes the same, so this OR is
+        // the identical test.
+        const dobNorm = matching.normalizeDob(dob) || null;
+        if (dobInNorm && dobNorm && dobInNorm === dobNorm) continue;
+        if (String(dobIn).trim() === String(dob).trim()) continue;
+      }
+    }
+    undecided.add(r.code);
+  }
+  if (!undecided.size) return rows;
+
+  const phonesIn = new Set(_toMatcherRecord(incoming).phones);
+  if (phonesIn.size) {
+    for (const pr of _stmt(db,
+      `SELECT partner.person_code AS code, ph.value_ct FROM person_phones partner
+         JOIN phones ph ON ph.code = partner.phone_code
+        WHERE partner.person_code IN (SELECT value FROM json_each(?))`
+    ).all(JSON.stringify([...undecided]))) {
+      if (!undecided.has(pr.code)) continue;
+      const v = enc.decrypt(secrets, pr.value_ct);
+      if (v && matching.splitPhones(v).some(p => phonesIn.has(p))) undecided.delete(pr.code);
+    }
+  }
+  if (!undecided.size) return rows;
+  return rows.filter(r => !undecided.has(r.code));
 }
 
 // Score every candidate for `incoming`, apply the operator's resolution
