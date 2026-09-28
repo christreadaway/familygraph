@@ -1,0 +1,244 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: familygraph-image-build-push
+  namespace: parentpoint-tekton
+spec:
+  description: |
+    Build the familygraph repo-root Dockerfile with `docker buildx` on the
+    BuildKit kubernetes driver and push registry.parentpoint.ai/<name>:<tag>
+    to the parentpoint-docker hosted repo.
+
+    Dual-arch by the ops#30 policy: arm64 is PRIMARY (familygraph is the
+    campus identity ledger and ships to the arm64 edge DGX Spark boxes,
+    where beacon is its consumer), amd64 secondary. Emitted as one
+    manifest-list tag. The pre-build guard refuses to build if the worker
+    cannot offer every requested platform; the post-push guard refuses to
+    report success unless every requested arch actually resolves on the
+    public ref.
+
+    Same engine/wiring as beacon-image-build-push: the base
+    (docker.io/library/node:20-slim) is pulled through the Nexus
+    docker-hub-proxy (registries.parentpoint.ai, parentpoint-nexus-pull);
+    push + layer cache go to the in-cluster Nexus connector
+    (parentpoint-docker-registry.nexus.svc.cluster.local:5011, plain HTTP)
+    with the parentpoint-nexus push credential, bypassing the ingress upload
+    timeout. Same repo, so the image is pullable via the public ref.
+
+    The Dockerfile's installs run through Socket Firewall (sfw), the same
+    guard this repo's preinstall hook enforces for dev installs; the build
+    therefore needs egress to npm and Socket from the BuildKit worker, the
+    same egress the sibling beacon/teacheraide builds already use for npm.
+
+    The builder name is unique per TaskRun and the Pipeline's finally
+    reclaims the worker Deployment (the 2026-09-19 fixed-name lesson: an
+    adopted stale worker can advertise a stale platform list indefinitely).
+    The platform guard polls through the kubernetes driver's --bootstrap
+    cold-start race (ops#30 follow-up, 2026-09-18) before failing hard.
+  params:
+    - name: image
+      type: string
+      description: >
+        Public image reference (registry.parentpoint.ai/name:tag) reported as
+        the ref. The tag here is the immutable one (the git SHA that was built).
+    - name: also-latest
+      type: string
+      description: >
+        When "true", also push <repo>:latest pointing at this same build.
+        Set "false" for a pure immutable-tag build.
+      default: "true"
+    - name: platforms
+      type: string
+      description: >
+        Comma-separated build platforms, emitted as one manifest list.
+        ops#30 dual-arch default; arm64 primary for the DGX Spark. Narrow ONLY
+        with a recorded, measured exception, the guards below exist so a
+        silently-narrowed manifest cannot pass as success.
+      default: linux/amd64,linux/arm64
+    - name: internal-registry
+      type: string
+      description: In-cluster Nexus docker connector for parentpoint-docker (push + cache).
+      default: parentpoint-docker-registry.nexus.svc.cluster.local:5011
+    - name: hub-mirror
+      type: string
+      description: Nexus docker-hub-proxy pull group; mirrors docker.io for the base FROM.
+      default: registries.parentpoint.ai
+    - name: builder-name
+      type: string
+      description: buildx kubernetes-driver builder name prefix (its own BuildKit Deployment).
+      default: familygraph-builder
+    - name: context
+      type: string
+      default: src
+    - name: dockerfile
+      type: string
+      default: Dockerfile
+    - name: builder-image
+      type: string
+      default: docker:27-cli
+  results:
+    - name: image-digest
+      type: string
+      description: sha256 digest of the pushed image (manifest list).
+    - name: image-ref
+      type: string
+      description: Public image ref that was pushed.
+  workspaces:
+    - name: source
+      description: Shared workspace containing the cloned familygraph build context.
+  volumes:
+    - name: docker-cfg
+      emptyDir: {}
+    - name: push-secret
+      secret:
+        secretName: parentpoint-nexus
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: pull-secret
+      secret:
+        secretName: parentpoint-nexus-pull
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+  steps:
+    - name: buildx-build-push
+      image: $(params.builder-image)
+      workingDir: $(workspaces.source.path)
+      computeResources: {}
+      env:
+        - name: DOCKER_CONFIG
+          value: /docker-cfg
+      volumeMounts:
+        - name: docker-cfg
+          mountPath: /docker-cfg
+        - name: push-secret
+          readOnly: true
+          mountPath: /push-secret
+        - name: pull-secret
+          readOnly: true
+          mountPath: /pull-secret
+      script: |
+        #!/bin/sh
+        set -ex
+        IMAGE="$(params.image)"
+        INTERNAL_REGISTRY="$(params.internal-registry)"
+        HUB_MIRROR="$(params.hub-mirror)"
+        # Unique per TaskRun (see Task description); reclaim-buildkit-builder
+        # in the Pipeline's finally deletes exactly this run's worker.
+        BUILDER="$(params.builder-name)-$(context.taskRun.name)"
+        CONTEXT="$(workspaces.source.path)/$(params.context)"
+        DOCKERFILE="${CONTEXT}/$(params.dockerfile)"
+        ALSO_LATEST="$(params.also-latest)"
+
+        # Push/cache go to the internal Nexus connector. Strip the public host
+        # from IMAGE to get name:tag, re-prefix with the connector. Same repo,
+        # so the image is pullable via the public ref.
+        NAME_TAG="${IMAGE#*/}"
+        REPO_PATH="${NAME_TAG%%:*}"
+        INTERNAL_IMAGE="${INTERNAL_REGISTRY}/${NAME_TAG}"
+        INTERNAL_LATEST="${INTERNAL_REGISTRY}/${REPO_PATH}:latest"
+        REPO="${INTERNAL_REGISTRY}/${REPO_PATH}"
+        CACHE_REF="${REPO}:buildcache"
+
+        # Assemble the buildx client docker config from the two mounted secrets.
+        # Push auth (parentpoint-ci) keyed for BOTH the internal connector and
+        # the public push host; base-pull auth (parentpoint-onprem-pull) keyed
+        # for the docker.io mirror host. Disable tracing so no auth blob leaks.
+        set +x
+        PUSH_BLOB=$(sed -n 's/.*"auth"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /push-secret/config.json | head -1)
+        PULL_BLOB=$(sed -n 's/.*"auth"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /pull-secret/config.json | head -1)
+        cat > "${DOCKER_CONFIG}/config.json" <<EOF
+        {"auths":{"${INTERNAL_REGISTRY}":{"auth":"${PUSH_BLOB}"},"registry.parentpoint.ai":{"auth":"${PUSH_BLOB}"},"${HUB_MIRROR}":{"auth":"${PULL_BLOB}"}}}
+        EOF
+        set -x
+
+        # BuildKit worker config: the internal push connector is plain HTTP; the
+        # docker.io base image is mirrored through the Nexus docker-hub-proxy.
+        mkdir -p /tmp/buildkit
+        cat > /tmp/buildkit/buildkitd.toml <<EOF
+        [registry."${INTERNAL_REGISTRY}"]
+          http = true
+          insecure = true
+        [registry."docker.io"]
+          mirrors = ["${HUB_MIRROR}"]
+        EOF
+
+        # (Re)create a dedicated kubernetes-driver builder with that config.
+        docker buildx rm "${BUILDER}" 2>/dev/null || true
+        docker buildx create \
+          --name "${BUILDER}" \
+          --driver kubernetes \
+          --driver-opt namespace=parentpoint-tekton,replicas=1 \
+          --config /tmp/buildkit/buildkitd.toml \
+          --use
+
+        # Fail loudly if the worker cannot offer every requested platform
+        # rather than letting buildx quietly build a subset (ops#30). The
+        # kubernetes driver's --bootstrap can return before the fresh pod's
+        # exec channel is fully live (a cold-start race, not a binfmt loss,
+        # ops#30 follow-up 2026-09-18), so poll a few times before giving up.
+        PLATFORMS="$(params.platforms)"
+        AVAIL=""
+        for ATTEMPT in $(seq 1 10); do
+          AVAIL=$(docker buildx inspect --bootstrap | sed -n 's/^Platforms:[[:space:]]*//p')
+          [ -n "${AVAIL}" ] && break
+          echo "worker not ready yet (attempt ${ATTEMPT}/10), retrying..."
+          sleep 3
+        done
+        echo "worker platforms: ${AVAIL}"
+        MISSING=""
+        for P in $(echo "${PLATFORMS}" | tr ',' ' '); do
+          echo "${AVAIL}" | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -qx "${P}" || MISSING="${MISSING} ${P}"
+        done
+        if [ -n "${MISSING}" ]; then
+          echo "ERROR: BuildKit worker does not advertise:${MISSING}" >&2
+          echo "Refusing to push a partial manifest list. See ops#30." >&2
+          exit 1
+        fi
+
+        # Second -t for :latest (same build) when requested.
+        LATEST_ARGS=""
+        if [ "${ALSO_LATEST}" = "true" ]; then
+          LATEST_ARGS="-t ${INTERNAL_LATEST}"
+        fi
+
+        echo "Building ${INTERNAL_IMAGE} for ${PLATFORMS} (base via ${HUB_MIRROR} docker-hub-proxy)..."
+        docker buildx build \
+          --builder "${BUILDER}" \
+          --platform "${PLATFORMS}" \
+          --cache-from "type=registry,ref=${CACHE_REF}" \
+          --cache-to "type=registry,ref=${CACHE_REF},mode=max,image-manifest=true" \
+          -f "${DOCKERFILE}" \
+          -t "${INTERNAL_IMAGE}" ${LATEST_ARGS} \
+          --provenance=false \
+          --push \
+          --metadata-file /tmp/meta.json \
+          "${CONTEXT}"
+
+        docker buildx rm "${BUILDER}" 2>/dev/null || true
+
+        DIGEST=$(sed -n 's/.*"containerimage.digest"[[:space:]]*:[[:space:]]*"\(sha256:[^"]*\)".*/\1/p' /tmp/meta.json | head -1)
+
+        # Confirm the pushed artifact really is a multi-platform manifest list.
+        # Inspect the PUBLIC ref (HTTPS, what runtime pulls resolve); the
+        # in-cluster connector is plain HTTP and only the BuildKit worker was
+        # told it is insecure. For a manifest list, --raw carries a
+        # platform.architecture per entry.
+        GOT=$(docker buildx imagetools inspect "${IMAGE}" --raw \
+              | sed -n 's/.*"architecture"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+              | sort -u | paste -sd, -)
+        for P in $(echo "${PLATFORMS}" | tr ',' ' '); do
+          echo "${GOT}" | tr ',' '\n' | grep -qx "${P#*/}" || {
+            echo "ERROR: ${P} missing from the pushed manifest list (got: ${GOT})." >&2
+            exit 1; }
+        done
+
+        printf '%s' "${DIGEST:-unknown}" > "$(results.image-digest.path)"
+        printf '%s' "${IMAGE}" > "$(results.image-ref.path)"
+        echo "=== Build complete ==="
+        echo "  Pushed (internal): ${INTERNAL_IMAGE}"
+        [ "${ALSO_LATEST}" = "true" ] && echo "  Also pushed:       ${REPO_PATH}:latest"
+        echo "  Pull as (public):  ${IMAGE}"
+        echo "  Digest:            ${DIGEST:-unknown}"
+        echo "  Platforms:         ${GOT}"
