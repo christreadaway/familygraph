@@ -1,0 +1,103 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: familygraph-image-build
+  namespace: parentpoint-tekton
+spec:
+  description: |
+    Clone christreadaway/familygraph at a revision, buildx build the
+    repo-root Dockerfile dual-arch (amd64+arm64, arm64 primary; familygraph
+    is the campus identity ledger and ships to the arm64 edge DGX Spark
+    boxes, where beacon is its consumer) and push
+    registry.parentpoint.ai/familygraph:<tag>.
+    reclaim-workspace-pvc finally returns the scratch PVC immediately, and
+    reclaim-builder deletes the per-run buildx worker Deployment.
+
+    Run manually with a PipelineRun at a pinned revision and tag the image
+    with that git SHA; the deploy pin in ClaritasEDU/edge-ops
+    sites/familygraph/<site>.values.yaml references exactly that immutable
+    tag. No push-webhook trigger: this repo lives outside the ClaritasEDU
+    org webhook, and the image rebuilds rarely, at deliberate pins.
+  params:
+    - name: repo-url
+      type: string
+      default: https://github.com/christreadaway/familygraph.git
+    - name: revision
+      type: string
+      description: Branch, tag, or commit SHA to build. Pin a SHA for releases.
+      default: main
+    - name: registry
+      type: string
+      default: registry.parentpoint.ai
+    - name: image-name
+      type: string
+      default: familygraph
+    - name: tag
+      type: string
+      description: Immutable tag to publish (the git SHA that was built).
+      default: latest
+    - name: also-latest
+      type: string
+      default: "true"
+  workspaces:
+    - name: shared-workspace
+      description: Holds the familygraph checkout; ./src is the build context.
+  results:
+    - name: image-digest
+      description: SHA256 digest of the image that was pushed.
+      value: $(tasks.build.results.image-digest)
+    - name: image-ref
+      description: Public image ref that was pushed.
+      value: $(tasks.build.results.image-ref)
+  tasks:
+    - name: clone
+      taskRef:
+        name: git-clone
+        kind: Task
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+        - name: subdirectory
+          value: src
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    - name: build
+      taskRef:
+        name: familygraph-image-build-push
+        kind: Task
+      runAfter:
+        - clone
+      params:
+        - name: image
+          value: $(params.registry)/$(params.image-name):$(params.tag)
+        - name: also-latest
+          value: $(params.also-latest)
+        - name: context
+          value: src
+        - name: dockerfile
+          value: Dockerfile
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+  finally:
+    - name: reclaim-workspace
+      taskRef:
+        name: reclaim-workspace-pvc
+        kind: Task
+      params:
+        - name: pipeline-run
+          value: $(context.pipelineRun.name)
+    - name: reclaim-builder
+      taskRef:
+        name: reclaim-buildkit-builder
+        kind: Task
+      params:
+        - name: pipeline-run
+          value: $(context.pipelineRun.name)
+        - name: build-task-name
+          value: build
+        - name: builder-name
+          value: familygraph-builder

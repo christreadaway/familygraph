@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Tekton CI for the familygraph container image, reconciled into the
+# ClaritasEDU HQ cluster (ns parentpoint-tekton) by the familygraph-tekton
+# ArgoCD Application in ClaritasEDU/ops (apps/argocd/). Same layout as the
+# beacon/teacherAIde/audioscribe repos: the app repo owns its image CI, the
+# ops repo points an Application at this path. If you add a file here, add
+# it to this list or it ships as inert text.
+#
+# These manifests are deploy-infrastructure for one downstream consumer
+# (ClaritasEDU edge fleet); they do not affect the app itself or the
+# bare-metal install paths documented in the README.
+resources:
+  - familygraph-image-build-push.task.yaml
+  - familygraph-image-build.pipeline.yaml

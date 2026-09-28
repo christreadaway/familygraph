@@ -1,0 +1,8 @@
+.git
+node_modules
+client/node_modules
+client/dist
+e2e
+design-handoff
+*.log
+session_notes.md
