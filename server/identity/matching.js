@@ -179,20 +179,73 @@ function nameSimilarityIgnoringSuffix(a, b) {
 }
 
 // The parts of an address that make it a different place however similar
-// the rest reads: the house number, the unit, the PO box.
-function _houseNumber(n) {
-  const m = n.match(/^(\d+(?:-\d+)?[a-z]?)\b/);
-  return m ? m[1] : null;
+// the rest reads: the house number (and a letter on it), the unit, the
+// building, the floor, the PO box, and any other number in the line - a
+// rural route, a highway contract, a county road, a numbered street.
+//
+// Fixed 2026-09-28 (second pass): the first version compared only the house
+// number, the last unit token and the PO box, so 'RR 2 Box 15' / 'RR 3 Box
+// 15', 'County Road 12' / 'County Road 21' and 'Bldg 3 Apt 12' / 'Bldg 4
+// Apt 12' still read as one place. It also compared units as raw text, so
+// 'Apt 4-B' and 'Apt 4B' read as two places.
+const _DESIGNATOR = /(^|\s)(apartment|unit|suite|apt|ste|lot|space|spc|room|rm|trailer|trlr|#|bldg|building|floor|fl)\s*#?\s*([a-z0-9]+(?:-[a-z0-9]+)*)(?:\s([a-z])(?=\s|$))?/g;
+const _DESIGNATOR_KIND = { bldg: 'bldg', building: 'bldg', floor: 'floor', fl: 'floor' };
+
+function _addressParts(n) {
+  const parts = { house: null, houseLetter: null, unit: null, bldg: null, floor: null, box: null, other: '' };
+  let rest = ` ${n} `;
+  const house = n.match(/^(\d+(?:-\d+)?)(?:-?([a-z]))?(?=\s|$)/);
+  if (house) {
+    parts.house = house[1];
+    parts.houseLetter = house[2] || null;
+    rest = ' ' + n.slice(house[0].length) + ' ';
+  }
+  rest = rest.replace(_DESIGNATOR, (all, lead, word, value, letter) => {
+    const kind = _DESIGNATOR_KIND[word] || 'unit';
+    // '4-B', '4 B' and '4B' are one unit.
+    const v = (value + (letter || '')).replace(/-/g, '');
+    parts[kind] = parts[kind] ? `${parts[kind]},${v}` : v;
+    return ' ';
+  });
+  rest = rest.replace(/\bbox\s+(\d+)\b/g, (all, box) => { parts.box = box; return ' '; });
+  // Every other number, in order, ordinals folded ('5th' -> 5).
+  parts.other = (rest.match(/\d+/g) || []).map(Number).join(' ');
+  return parts;
 }
-function _unitNumber(n) {
-  const m = n.match(/\s(?:apartment|unit|suite|apt|ste|lot|bldg|building|floor|fl|#)\s*#?\s*([a-z0-9-]+)\s*$/i) ||
-    n.match(/\s#\s*([a-z0-9-]+)\b/);
-  return m ? m[1].toLowerCase() : null;
+
+// 'different' (two places), 'unsure' (maybe one place written two ways),
+// or 'same' (nothing that tells them apart). A part present on one side
+// only is left alone - forms often drop the unit.
+function _addressPartsVerdict(na, nb) {
+  const a = _addressParts(na);
+  const b = _addressParts(nb);
+  let verdict = 'same';
+  if (a.house && b.house && a.house !== b.house) return 'different';
+  let unitA = a.unit;
+  let unitB = b.unit;
+  if (a.house && b.house && a.houseLetter !== b.houseLetter) {
+    // '123A Main St' against '123 Main St Apt A' is probably one place,
+    // but 123 and 123A are also two houses on one lot: not different, not
+    // proof. Any other letter mismatch ('123A' / '123', '123A' / '123B')
+    // is two house numbers, as before.
+    const letter = a.houseLetter || b.houseLetter;
+    const otherUnit = a.houseLetter ? b.unit : a.unit;
+    const ownUnit = a.houseLetter ? a.unit : b.unit;
+    if (a.houseLetter && b.houseLetter) return 'different';
+    if (ownUnit || !otherUnit) return 'different';
+    if (otherUnit !== letter) return 'different';
+    verdict = 'unsure';
+    unitA = unitB = null;
+  }
+  for (const [pa, pb] of [[unitA, unitB], [a.bldg, b.bldg], [a.floor, b.floor], [a.box, b.box], [a.other, b.other]]) {
+    if (pa && pb && pa !== pb) return 'different';
+  }
+  return verdict;
 }
-function _poBox(n) {
-  const m = n.match(/\bbox\s+(\d+)\b/);
-  return m ? m[1] : null;
-}
+
+// Ceiling for 'unsure': counts as a similar address (review, never proof)
+// and is never read as a different one.
+const _ADDRESS_UNSURE_CAP = 0.8;
 
 function addressSimilarity(a, b) {
   if (!a || !b) return 0;
@@ -201,6 +254,24 @@ function addressSimilarity(a, b) {
   if (!na || !nb) return 0;
   if (na === nb) return 1.0;
 
+  const verdict = _addressPartsVerdict(na, nb);
+  // Fixed 2026-09-28: "134 Pine St" and "106 Pine St" read as 90% alike, so
+  // two namesakes on one street scored the same address and merged. Two
+  // different numbers anywhere that matters are two different places.
+  if (verdict === 'different') return Math.min(_rawAddressSimilarity(na, nb), 0.5);
+  const sim = _rawAddressSimilarity(_canonAddress(na), _canonAddress(nb));
+  return verdict === 'unsure' ? Math.min(sim, _ADDRESS_UNSURE_CAP) : sim;
+}
+
+// One spelling for every unit designator and value, so '#4B', 'Unit 4-B'
+// and 'Apt 4 B' compare as the same text.
+function _canonAddress(n) {
+  return n.replace(_DESIGNATOR, (all, lead, word, value, letter) =>
+    `${lead}${_DESIGNATOR_KIND[word] || 'unit'} ${(value + (letter || '')).replace(/-/g, '')}`);
+}
+
+function _rawAddressSimilarity(na, nb) {
+  if (na === nb) return 1.0;
   const fullSim = 1 - levenshtein(na, nb) / Math.max(na.length, nb.length);
   const sa = stripUnit(na);
   const sb = stripUnit(nb);
@@ -208,17 +279,7 @@ function addressSimilarity(a, b) {
   if (sa && sb) {
     strippedSim = sa === sb ? 1.0 : 1 - levenshtein(sa, sb) / Math.max(sa.length, sb.length);
   }
-  const sim = Math.max(fullSim, strippedSim);
-  // Fixed 2026-09-28: "134 Pine St" and "106 Pine St" read as 90% alike, so
-  // two namesakes on one street scored the same address and merged. Two
-  // different house numbers, units, or PO boxes are two different places.
-  // (A unit on one side only is left alone - forms often drop it.)
-  for (const part of [_houseNumber, _unitNumber, _poBox]) {
-    const pa = part(na);
-    const pb = part(nb);
-    if (pa && pb && pa !== pb) return Math.min(sim, 0.5);
-  }
-  return sim;
+  return Math.max(fullSim, strippedSim);
 }
 
 // Two records have *conflicting* addresses if both have line1 AND:
@@ -250,7 +311,7 @@ const NICKNAME_GROUPS = [
   ['william', 'bill', 'billy', 'will', 'willy', 'liam'],
   ['richard', 'rich', 'rick', 'ricky', 'dick'],
   ['james', 'jim', 'jimmy', 'jamie'],
-  ['john', 'jack', 'johnny', 'jon'],
+  ['john', 'johnny', 'jon'],
   ['thomas', 'tom', 'tommy'],
   ['michael', 'mike', 'mikey'],
   ['christopher', 'chris'],
@@ -279,7 +340,7 @@ const NICKNAME_GROUPS = [
   ['kenneth', 'ken', 'kenny'],
   ['lawrence', 'larry'],
   ['leonard', 'leo', 'lenny'],
-  ['nicholas', 'nick', 'nicky'],
+  ['nicholas', 'nick', 'nicky', 'nico'],
   ['peter', 'pete'],
   ['philip', 'phil'],
   ['raymond', 'ray'],
@@ -295,10 +356,9 @@ const NICKNAME_GROUPS = [
   // very common in church/school data so we treat them as nickname-equivalent.
   ['mary', 'marie', 'maria', 'mariah', 'molly', 'polly', 'mae', 'mamie'],
   ['ann', 'anne', 'anna', 'annie', 'nan', 'nancy', 'ana', 'anita'],
-  ['john', 'juan', 'sean', 'shawn'],   // cross-language Johns
-  ['joseph', 'jose', 'pepe', 'chepe'],
+  ['jose', 'pepe', 'chepe'],
   ['catherine', 'katherine', 'kate', 'katie', 'kathy', 'cathy', 'kat'],
-  ['elizabeth', 'liz', 'lizzy', 'beth', 'betty', 'betsy', 'eliza'],
+  ['elizabeth', 'liz', 'lizzy', 'beth', 'betty', 'betsy', 'eliza', 'libby'],
   ['jennifer', 'jenny', 'jen'],
   ['jessica', 'jess', 'jessie'],
   ['margaret', 'maggie', 'meg', 'peggy', 'marge', 'margie'],
@@ -334,7 +394,6 @@ const NICKNAME_GROUPS = [
   ['jacob', 'jake'],
   ['maximilian', 'max'],
   ['maxwell', 'max'],
-  ['nicholas', 'nico'],
   ['dominic', 'dom'],
   ['augustine', 'augustin', 'gus'],
   ['bernard', 'bernie'],
@@ -354,7 +413,6 @@ const NICKNAME_GROUPS = [
   ['evelyn', 'evie'],
   ['cecilia', 'cece'],
   ['caroline', 'carrie'],
-  ['elizabeth', 'libby'],
   // Spanish given names and their everyday forms (a parish list and a
   // school roster often disagree on exactly this). Diacritics are stripped
   // before lookup, so Jesús / Toño match jesus / tono.
@@ -389,8 +447,20 @@ const NICKNAME_GROUPS = [
   ['socorro', 'coco'],
 ];
 
+// Names that are the same name in origin but are also given to two people
+// in one family: John and Jack are brothers as often as one man, and Joseph
+// and Jose are father and son. These rows still score as a nickname (the
+// pair reaches review) but never prove identity, in any mode that asks for
+// proof. Fixed 2026-09-28 (third pass): they used to sit in the proof table,
+// so John/Jack and Joseph/Jose at one address auto-fused.
+const REVIEW_ONLY_NICKNAME_GROUPS = [
+  ['john', 'jack', 'johnny', 'jon'],
+  ['john', 'juan', 'sean', 'shawn'],   // cross-language Johns
+  ['joseph', 'jose', 'pepe', 'chepe'],
+];
+
 const NICKNAME_MAP = new Map();
-for (const group of NICKNAME_GROUPS) {
+for (const group of NICKNAME_GROUPS.concat(REVIEW_ONLY_NICKNAME_GROUPS)) {
   for (const name of group) {
     if (!NICKNAME_MAP.has(name)) NICKNAME_MAP.set(name, new Set());
     for (const equiv of group) {
@@ -407,19 +477,38 @@ function areNicknames(a, b) {
   return !!(eq && eq.has(nb));
 }
 
-// How many nickname groups a name belongs to. "Chris" is Christopher OR
-// Christine; "Pat" is Patrick OR Patricia; "John" sits in three groups. A
-// nickname match through an ambiguous name is not proof of identity - twins
-// named Christopher and Christine share a surname, a birthday, and "Chris".
-const NICKNAME_GROUP_COUNT = new Map();
+// How many different full names a name can stand for. "Chris" is
+// Christopher OR Christine; "Pat" is Patrick OR Patricia; "Jon" is John OR
+// Jonathan. A nickname match through an ambiguous name is not proof of
+// identity - twins named Christopher and Christine share a surname, a
+// birthday, and "Chris".
+//
+// Fixed 2026-09-28: this used to count table rows, so Joseph (listed with
+// Joe and again with Jose) and John (Jack, and again Juan) read as ambiguous
+// and Joseph/Joe never auto-matched. A row is keyed by its full name (the
+// first entry); ambiguity is the number of distinct full names a name maps
+// to, so a full name that heads two rows is still one name.
+const NICKNAME_HEADS = new Map();
 for (const group of NICKNAME_GROUPS) {
-  for (const name of new Set(group)) {
-    NICKNAME_GROUP_COUNT.set(name, (NICKNAME_GROUP_COUNT.get(name) || 0) + 1);
+  for (const name of group) {
+    if (!NICKNAME_HEADS.has(name)) NICKNAME_HEADS.set(name, new Set());
+    NICKNAME_HEADS.get(name).add(group[0]);
   }
 }
 
 function nicknameAmbiguous(name) {
-  return (NICKNAME_GROUP_COUNT.get(normalize(name)) || 0) > 1;
+  const heads = NICKNAME_HEADS.get(normalize(name));
+  return !!heads && heads.size > 1;
+}
+
+// A nickname pair proves identity only when both names sit in one row of
+// the proof table (not only in a review-only row) and neither stands for
+// more than one full name.
+function nicknameProves(a, b) {
+  const na = normalize(a);
+  const nb = normalize(b);
+  if (nicknameAmbiguous(na) || nicknameAmbiguous(nb)) return false;
+  return NICKNAME_GROUPS.some(g => g.includes(na) && g.includes(nb));
 }
 
 // Generational suffixes only. Professional ones (MD, PhD, Esq) say nothing
@@ -458,6 +547,17 @@ function normalizeDob(v) {
   return normalizeDate(v);
 }
 
+// Two readable birthdates that differ only the way a misread date differs:
+// month and day swapped, or the same day a whole number of centuries apart
+// (a two-digit year). Neither is proof of two people.
+function _dobMisreading(isoA, isoB) {
+  const [ya, ma, da] = isoA.split('-');
+  const [yb, mb, db] = isoB.split('-');
+  if (ya === yb && ma === db && da === mb) return true;
+  if (ma === mb && da === db && (Number(ya) - Number(yb)) % 100 === 0) return true;
+  return false;
+}
+
 function isPrefixMatch(a, b) {
   const na = normalize(a);
   const nb = normalize(b);
@@ -468,31 +568,41 @@ function isPrefixMatch(a, b) {
 }
 
 // "Timothy & Mary" matches "Timothy" or "Mary" individually. Returns a
-// similarity score in [0, 1].
-function firstNameMatchesCompound(a, b) {
-  if (!a || !b) return 0;
+// similarity score in [0, 1]: 1.0 exact, 0.95 nickname table, 0.90 prefix,
+// else plain similarity.
+//
+// Fixed 2026-09-28: the per-part loop ran on every name, so a name with no
+// separator was compared with itself and any similarity above 0.85 scored
+// 1.0 - Antonio/Antonia and Francisco/Francisca read as the same first name
+// and a brother and sister got one id. Parts are split only when a name
+// really is a compound, and only an exact part scores 1.0.
+const COMPOUND_SPLIT = /\s*(?:&|\band\b|\/)\s*/i;
+
+// { score, kind }: kind is 'exact', 'nickname' (a table entry), 'prefix'
+// (Dan/Daniel, but also Luis/Luisa) or 'similar' (plain edit distance).
+function _firstNameMatch(a, b) {
+  if (!a || !b) return { score: 0, kind: 'similar' };
   const na = normalize(a);
   const nb = normalize(b);
-  if (na === nb) return 1.0;
-  if (areNicknames(na, nb)) return 0.95;
-  if (isPrefixMatch(na, nb)) return 0.90;
+  if (na === nb) return { score: 1.0, kind: 'exact' };
+  if (areNicknames(na, nb)) return { score: 0.95, kind: 'nickname', proves: nicknameProves(na, nb) };
 
-  const splitPattern = /\s*(?:&|\band\b|\/)\s*/i;
-  for (const part of nb.split(splitPattern)) {
-    const t = part.trim();
-    if (!t) continue;
-    if (similarity(na, t) > 0.85) return 1.0;
-    if (areNicknames(na, t)) return 0.95;
-    if (isPrefixMatch(na, t)) return 0.90;
+  let best = isPrefixMatch(na, nb) ? { score: 0.90, kind: 'prefix' } : { score: similarity(na, nb), kind: 'similar' };
+  const pairs = [];
+  if (COMPOUND_SPLIT.test(nb)) for (const t of nb.split(COMPOUND_SPLIT)) pairs.push([na, t.trim()]);
+  if (COMPOUND_SPLIT.test(na)) for (const t of na.split(COMPOUND_SPLIT)) pairs.push([t.trim(), nb]);
+  for (const [x, y] of pairs) {
+    if (!x || !y) continue;
+    if (x === y) return { score: 1.0, kind: 'exact' };
+    if (areNicknames(x, y)) return { score: 0.95, kind: 'nickname', proves: nicknameProves(x, y) };
+    const part = isPrefixMatch(x, y) ? { score: 0.90, kind: 'prefix' } : { score: similarity(x, y), kind: 'similar' };
+    if (part.score > best.score) best = part;
   }
-  for (const part of na.split(splitPattern)) {
-    const t = part.trim();
-    if (!t) continue;
-    if (similarity(t, nb) > 0.85) return 1.0;
-    if (areNicknames(t, nb)) return 0.95;
-    if (isPrefixMatch(t, nb)) return 0.90;
-  }
-  return similarity(na, nb);
+  return best;
+}
+
+function firstNameMatchesCompound(a, b) {
+  return _firstNameMatch(a, b).score;
 }
 
 // ---------- multi-value email/phone ----------
@@ -558,14 +668,19 @@ const VETO_CAP = 0.7;
 //
 // opts.strict (roster imports that mint community identifiers, where a wrong
 // merge gives two humans one id and nobody finds out):
-//   - an email/phone match needs the first name to line up (exact, nickname,
-//     or short form) or the birthdate to match; spouses share a family inbox
-//     and a child is often listed under a parent's email
+//   - a first name "lines up" only when it is exact or a nickname-table
+//     entry; a bare prefix or a near spelling (Luis/Luisa, Antonio/Antonia)
+//     is a sibling as often as a typo, so it can reach review but never
+//     decides
+//   - an email/phone match needs the first name to line up, or (when one
+//     side has no first name) the birthdate to match; spouses share a family
+//     inbox, a child is often listed under a parent's email, and twins share
+//     both the inbox and the birthday
 //   - a suffix present on only one side ("John Smith" vs "John Smith Jr")
 //     blocks a definitive match
-//   - a nickname that belongs to more than one name family (Chris, Pat,
+//   - a nickname that stands for more than one full name (Chris, Pat,
 //     Alex, Sam, Kate) does not count as a first-name match for definitive
-//     name+birthdate or name+address matches
+//     contact, name+birthdate or name+address matches
 function scoreMatch(a, b, opts = {}) {
   const strict = !!(opts && opts.strict);
   const reasons = [];
@@ -573,18 +688,35 @@ function scoreMatch(a, b, opts = {}) {
   let definitive = false;
 
   // Signals every path needs, computed once.
-  const fs = (a.given_name && b.given_name) ? firstNameMatchesCompound(a.given_name, b.given_name) : null;
-  const givenAligned = fs !== null && fs >= 0.90;
-  const nickAmbiguous = fs !== null && fs < 1.0 && fs >= 0.90 &&
+  const fm = (a.given_name && b.given_name) ? _firstNameMatch(a.given_name, b.given_name) : null;
+  const fs = fm ? fm.score : null;
+  const nickAmbiguous = !!fm && fm.kind !== 'exact' && fs >= 0.90 &&
     (nicknameAmbiguous(a.given_name) || nicknameAmbiguous(b.given_name));
+  // Fixed 2026-09-28: in strict mode a bare prefix (Luis/Luisa, Daniel/
+  // Daniela, Paul/Paula) or a one-letter difference (Antonio/Antonia) no
+  // longer lines a first name up. Those are the brother-and-sister pairs of
+  // every Spanish-speaking parish; only the exact name or a nickname-table
+  // entry that stands for one full name proves it is the same person. The
+  // pair still reaches review through 'similar_first_name'.
+  const strictProves = !!fm && (fm.kind === 'exact' || (fm.kind === 'nickname' && fm.proves && !nickAmbiguous));
+  const givenAligned = strict ? strictProves : (fs !== null && fs >= 0.90);
   const dobA = a.date_of_birth ? (normalizeDob(a.date_of_birth) || null) : null;
   const dobB = b.date_of_birth ? (normalizeDob(b.date_of_birth) || null) : null;
   let dobExact = false;
   let dobConflict = false;
+  let dobMisread = false;
   if (a.date_of_birth && b.date_of_birth) {
     if (dobA && dobB) {
       dobExact = dobA === dobB;
-      dobConflict = dobA !== dobB;
+      // Fixed 2026-09-28: a differing birthdate vetoes, and in roster
+      // imports tells two records apart with nobody asked, so it must be a
+      // real difference - not a day/month swap (05/01 read US-style against
+      // a day-first sheet) or a two-digit year read in the wrong century.
+      // Third pass: a possible misreading is not proof of one person either,
+      // so it still vetoes every definitive path (review), it just no longer
+      // tells the pair apart on its own.
+      dobMisread = dobA !== dobB && _dobMisreading(dobA, dobB);
+      dobConflict = dobA !== dobB && !dobMisread;
     } else {
       // Unreadable on one side: equal raw text still counts, but a mismatch
       // proves nothing.
@@ -599,6 +731,7 @@ function scoreMatch(a, b, opts = {}) {
   function vetoes() {
     const v = [];
     if (dobConflict) v.push('dob_conflict');
+    if (dobMisread) v.push('dob_possible_misreading');
     if (suffixConflict) v.push('suffix_conflict');
     if (strict && suffixOneSided) v.push('suffix_one_sided');
     return v;
@@ -640,7 +773,9 @@ function scoreMatch(a, b, opts = {}) {
   // (different state or sim<0.5) DO veto the match.
   if (definitive) {
     const v = vetoes();
-    if (strict && !givenAligned && !dobExact) v.push('contact_match_name_unaligned');
+    // A birthdate stands in for the first name only when a first name is
+    // missing: twins share a birthday AND the family inbox.
+    if (strict && !givenAligned && !(dobExact && fm === null)) v.push('contact_match_name_unaligned');
     if (addressesConflict(a, b)) {
       // the upstream identity engine allows this through (alternate address); we surface the
       // conflict to the operator by capping the confidence below auto-merge.
@@ -674,8 +809,8 @@ function scoreMatch(a, b, opts = {}) {
   // and nickname matches are strong; below 0.85 still contributes a softer
   // signal so phonetic variants like Pio/Pia surface for review.
   if (fs !== null) {
-    if (fs === 1.0) { confidence += 0.20; reasons.push('exact_first_name'); }
-    else if (fs >= 0.90) { confidence += 0.18; reasons.push('nickname_or_short_form'); }
+    if (fs === 1.0 && fm.kind === 'exact') { confidence += 0.20; reasons.push('exact_first_name'); }
+    else if (fs >= 0.90 && (fm.kind === 'nickname' || !strict)) { confidence += 0.18; reasons.push('nickname_or_short_form'); }
     else if (fs > 0.85) { confidence += 0.10; reasons.push('similar_first_name'); }
     else if (fs > 0.60) { confidence += 0.05; reasons.push('phonetic_first_name'); }
     else if (strict && transposedSimilarity(a.given_name, b.given_name) >= 0.75) {
@@ -694,10 +829,9 @@ function scoreMatch(a, b, opts = {}) {
   // A first name that proves identity for the definitive paths below: exact,
   // or a nickname / short form - except, in strict mode, a nickname shared by
   // two name families.
-  const firstProves =
-    reasons.includes('exact_first_name') ||
-    (reasons.includes('nickname_or_short_form') && !(strict && nickAmbiguous));
-  const blocked = dobConflict || suffixConflict || (strict && suffixOneSided);
+  const firstProves = strict ? strictProves :
+    (reasons.includes('exact_first_name') || reasons.includes('nickname_or_short_form'));
+  const blocked = dobConflict || dobMisread || suffixConflict || (strict && suffixOneSided);
 
   // Person-level definitive: exact first + exact last + exact DOB. Two people
   // sharing all three are vanishingly unlikely to be different humans, and
@@ -792,8 +926,8 @@ module.exports = {
   // names
   stripSuffix, nameSimilarityIgnoringSuffix,
   areNicknames, isPrefixMatch, firstNameMatchesCompound,
-  nicknameAmbiguous, generationalSuffix, normalizeDob, transposedSimilarity,
-  NICKNAME_GROUPS, VETO_CAP,
+  nicknameAmbiguous, nicknameProves, generationalSuffix, normalizeDob, transposedSimilarity,
+  NICKNAME_GROUPS, REVIEW_ONLY_NICKNAME_GROUPS, VETO_CAP,
   // addresses
   normalizeAddress, addressSimilarity, addressesConflict,
   normalizeState, STATE_ABBR_TO_FULL, ADDRESS_ABBREVIATIONS,

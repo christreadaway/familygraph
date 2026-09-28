@@ -64,29 +64,35 @@ function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
     throw new Error(`cannot open MissionIQ database at ${dbPath}: ${e.message}`);
   }
   try {
-    const tables = new Set(mdb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(r => r.name));
-    if (!tables.has('families') || !tables.has('contacts')) {
-      throw new Error('this is not a MissionIQ database (no families / contacts tables)');
-    }
-    const fc = _cols(mdb, 'families');
-    const cc = _cols(mdb, 'contacts');
-    const kc = tables.has('children') ? _cols(mdb, 'children') : null;
+    // One deferred read transaction = one WAL snapshot. MissionIQ is usually
+    // running while this reads; separate SELECTs could see a family's contact
+    // but not the family, and import that contact as an orphan household.
+    const { families, contacts, children } = mdb.transaction(() => {
+      const tables = new Set(mdb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(r => r.name));
+      if (!tables.has('families') || !tables.has('contacts')) {
+        throw new Error('this is not a MissionIQ database (no families / contacts tables)');
+      }
+      const fc = _cols(mdb, 'families');
+      const cc = _cols(mdb, 'contacts');
+      const kc = tables.has('children') ? _cols(mdb, 'children') : null;
 
-    const families = mdb.prepare(
-      `SELECT id, ${['family_name', 'address_line1', 'address_line2', 'city', 'state', 'zip', 'fg_family_code', 'deceased'].map(c => _sel(fc, c)).join(', ')}
-         FROM families ORDER BY ${fc.has('created_at') ? 'created_at, ' : ''}id`
-    ).all();
-    const contacts = mdb.prepare(
-      `SELECT id, ${['family_id', 'first_name', 'last_name', 'email', 'secondary_email', 'phone', 'secondary_phone',
-        'birthday', 'gender', 'role', 'relationship', 'fg_person_code', 'do_not_contact',
-        'address_line1', 'address_line2', 'city', 'state', 'zip']
-        .map(c => _sel(cc, c)).join(', ')}
-         FROM contacts ORDER BY ${cc.has('created_at') ? 'created_at, ' : ''}id`
-    ).all();
-    const children = kc ? mdb.prepare(
-      `SELECT id, ${['family_id', 'first_name', 'last_name', 'grade', 'birthday', 'enrolled'].map(c => _sel(kc, c)).join(', ')}
-         FROM children ORDER BY id`
-    ).all() : [];
+      const families = mdb.prepare(
+        `SELECT id, ${['family_name', 'address_line1', 'address_line2', 'city', 'state', 'zip', 'fg_family_code', 'deceased'].map(c => _sel(fc, c)).join(', ')}
+           FROM families ORDER BY ${fc.has('created_at') ? 'created_at, ' : ''}id`
+      ).all();
+      const contacts = mdb.prepare(
+        `SELECT id, ${['family_id', 'first_name', 'last_name', 'email', 'secondary_email', 'phone', 'secondary_phone',
+          'birthday', 'gender', 'role', 'relationship', 'fg_person_code', 'do_not_contact',
+          'address_line1', 'address_line2', 'city', 'state', 'zip']
+          .map(c => _sel(cc, c)).join(', ')}
+           FROM contacts ORDER BY ${cc.has('created_at') ? 'created_at, ' : ''}id`
+      ).all();
+      const children = kc ? mdb.prepare(
+        `SELECT id, ${['family_id', 'first_name', 'last_name', 'grade', 'birthday', 'enrolled'].map(c => _sel(kc, c)).join(', ')}
+           FROM children ORDER BY id`
+      ).all() : [];
+      return { families, contacts, children };
+    })();
 
     const byFamily = new Map();
     const bucket = fid => {
@@ -335,6 +341,21 @@ function parseAnswer(item, answer) {
   return null;
 }
 
+// Which operator answers a RosterError from a re-plan is about. Only 409s
+// that name a decision or a decision target qualify; anything else (a bad
+// shape, a caller bug) returns [] and stops the import as before.
+function _contradictedKeys(err, decisions) {
+  if (err.status !== 409) return [];
+  const msg = String(err.message || '');
+  let m = /^decision (\d+:\d+:(?:\d+|family)):/.exec(msg);
+  if (m && decisions[m[1]]) return [m[1]];
+  m = /^decision target (\S+) /.exec(msg);
+  if (m) {
+    return Object.keys(decisions).filter(k => decisions[k] && decisions[k].action === 'attach' && decisions[k].target === m[1]);
+  }
+  return [];
+}
+
 // The whole import. `decide(item)` returns a decision object or 'quit';
 // `confirm(summary)` returns true to write. Both may be async (CLI prompts).
 async function runImport({ db, secrets, thresholds, dbPath, category = null, actor = 'cli:import-missioniq',
@@ -343,19 +364,60 @@ async function runImport({ db, secrets, thresholds, dbPath, category = null, act
   say({ type: 'read', stats, households: households.length });
   if (!households.length) return { status: 'empty', stats };
 
-  const body = { households, source: SOURCE, source_ref: 'missioniq-import', category, decisions: {} };
+  // One source_ref per import run. Family Graph reads (source, source_ref) as
+  // "this same upload" and refuses a 'create' whose review offers someone it
+  // already wrote, so a fixed ref made every later sync's new namesake
+  // impossible to create (fixed 2026-09-28, third pass).
+  const sourceRef = `missioniq-import:${new Date().toISOString()}:${require('node:crypto').randomBytes(4).toString('hex')}`;
+  const body = { households, source: SOURCE, source_ref: sourceRef, category, decisions: {} };
   let result = roster.run(db, secrets, thresholds, body, { mode: 'plan', actor });
   say({ type: 'plan', summary: result.summary, pending: result.pending.length });
   if (dryRun) return { status: 'dry_run', stats, plan: result };
 
+  const askedItems = new Map(); // decision key -> the item as shown
+  // A decision the data overtook (someone imported the same person
+  // meanwhile) is dropped: the item is then either matched outright or asked
+  // again. Kept, it would be refused at commit on every round.
+  const dropStale = r => {
+    const stale = (r.stale_decisions || []).filter(k => body.decisions[k]);
+    for (const k of stale) delete body.decisions[k];
+    if (stale.length) say({ type: 'stale', count: stale.length });
+    return stale.length;
+  };
   for (let round = 0; round < maxRounds && result.pending.length; round++) {
     const items = pendingItems(result, households);
     for (let i = 0; i < items.length; i++) {
       const d = await decide(items[i], { index: i, total: items.length });
       if (d === 'quit') return { status: 'aborted', stats };
       body.decisions[items[i].key] = d;
+      askedItems.set(items[i].key, items[i]);
     }
-    result = roster.run(db, secrets, thresholds, body, { mode: 'plan', actor });
+    // Answers can contradict each other (attach to someone already left
+    // out). The engine refuses those; drop only the offending answer, tell
+    // the operator, and ask that item again next round. The rest are kept.
+    for (;;) {
+      try {
+        result = roster.run(db, secrets, thresholds, body, { mode: 'plan', actor });
+        break;
+      } catch (e) {
+        const bad = e instanceof roster.RosterError ? _contradictedKeys(e, body.decisions) : [];
+        if (!bad.length) throw e;
+        for (const key of bad) {
+          const target = body.decisions[key].target;
+          delete body.decisions[key];
+          const leftOut = target && body.decisions[target] && body.decisions[target].action === 'skip';
+          say({
+            type: 'contradiction',
+            key,
+            item: askedItems.get(key) || { key },
+            message: leftOut
+              ? 'you chose someone you had already left out'
+              : 'the engine refused it: ' + e.message,
+          });
+        }
+      }
+    }
+    if (dropStale(result)) result = roster.run(db, secrets, thresholds, body, { mode: 'plan', actor });
     say({ type: 'plan', summary: result.summary, pending: result.pending.length });
   }
   if (result.pending.length) return { status: 'unresolved', stats, pending: result.pending.length };

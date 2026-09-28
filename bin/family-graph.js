@@ -326,6 +326,7 @@ switch (cmd) {
       console.error('  default scopes: pii.read,pii.write,sanitize,audit.write');
       console.error('  valid scopes:   pii.read, pii.write, sanitize, audit.read, audit.write, import, roster, rules.write, integration, *');
       console.error('  Doc Anonymizer: family-graph issue-key docanonymizer roster');
+      console.error('  MissionIQ:      family-graph issue-key missioniq   (the name must equal the sync source to read its crosswalk)');
       process.exit(2);
     }
     const config = require('../server/config');
@@ -443,6 +444,20 @@ switch (cmd) {
               if (st.prior_person_codes || st.prior_family_codes) {
                 out(`  MissionIQ already stored ${st.prior_person_codes} person ids and ${st.prior_family_codes} household ids from earlier syncs; each is checked before it is trusted`);
               }
+            } else if (ev.type === 'stale') {
+              out('');
+              out(`  ${ev.count} of your answers no longer apply (someone else imported those people meanwhile); they were dropped and anything still unsure will be asked again.`);
+              log.warn('cli.import_missioniq.stale_decisions', { count: ev.count });
+            } else if (ev.type === 'contradiction') {
+              // Names go to the terminal only, never the log (key only).
+              const it = ev.item || {};
+              const who = it.kind === 'family'
+                ? (it.display_name || it.household || 'a household')
+                : ([it.given_name, it.family_name].filter(Boolean).join(' ') || 'a person');
+              out('');
+              out(`  Your answer for ${who}${it.household && it.kind !== 'family' ? ` in ${it.household}` : ''} conflicts with another answer: ${ev.message}.`);
+              out('  That one item will be asked again; your other answers are kept.');
+              log.warn('cli.import_missioniq.contradiction', { key: ev.key });
             } else if (ev.type === 'plan') {
               out('');
               out('Plan (nothing written yet):');

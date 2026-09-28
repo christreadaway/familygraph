@@ -237,7 +237,7 @@ Alternatively, register a Scheduled Task that runs at logon with
 | `node bin/family-graph.js start` | Default. Runs the API server + folder-watch agent. |
 | `node bin/family-graph.js status` | Prints schema version, profile, audit count, backup count, key + watch dir paths. |
 | `node bin/family-graph.js show-token` | Prints the master Bearer token. |
-| `node bin/family-graph.js issue-key <name> [scopes]` | Provisions a scoped API key for a consuming app and prints the `sk_…` token once. Default scopes: `pii.read,pii.write,sanitize,audit.write`. |
+| `node bin/family-graph.js issue-key <name> [scopes]` | Provisions a scoped API key for a consuming app and prints the `sk_…` token once. Default scopes: `pii.read,pii.write,sanitize,audit.write`. Name the key after the app's sync source (`issue-key missioniq`): `/api/identity/resolve` honors a source's crosswalk links only for that key or the master token. |
 | `node bin/family-graph.js rotate-secret` | Regenerates the master Bearer token. The data + HMAC keys are preserved so existing ciphertext keeps decrypting. |
 | `node bin/family-graph.js backup [passphrase]` | Hot snapshot. Encrypted with PBKDF2 + AES-256-GCM if a passphrase is given. |
 | `node bin/family-graph.js list-backups` | Lists files in the backups directory. |

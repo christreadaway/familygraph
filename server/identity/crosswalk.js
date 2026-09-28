@@ -64,4 +64,32 @@ function countBySource(db, source) {
     .reduce((acc, r) => ({ ...acc, [r.kind]: r.n }), { person: 0, family: 0 });
 }
 
-module.exports = { lookup, link, refsFor, countBySource, SOURCE_RE };
+// Does this incoming record still describe the person a ref is linked to?
+// The same rule roster.js applies to a crosswalk hit (linked_record_changed):
+// the same first name or a real (unambiguous) nickname of it, or the same
+// birthdate with a first name that at least resembles it (a typo fixed) -
+// and never a birthdate or Jr/Sr contradiction. Names, birthdate and suffix
+// only: a shared email or phone says "same household", not "same person".
+// A merely similar name with nothing else (Mark / Mary) is a record reused
+// for someone else as often as a typo, so it fails.
+const FIRST_NAME_REASONS = new Set([
+  'exact_first_name', 'nickname_or_short_form', 'similar_first_name', 'phonetic_first_name', 'first_name_typo',
+]);
+const LINK_VETOES = new Set(['dob_conflict', 'dob_possible_misreading', 'suffix_conflict']);
+
+function stillSame(db, secrets, incoming, code) {
+  // Lazy: keeps this module loadable without the matcher's dependency chain.
+  const resolver = require('./resolver');
+  const matching = require('./matching');
+  const row = db.prepare('SELECT * FROM persons WHERE code = ?').get(code);
+  if (!row) return false;
+  const cand = resolver.enrichCandidate(db, secrets, row);
+  const strip = r => ({ ...r, emails: [], phones: [], email: null, phone: null });
+  const sc = matching.scoreMatch(strip(resolver.toMatcherRecord(incoming)), strip(cand), { strict: true });
+  const firstSame = sc.reasons.includes('exact_first_name') ||
+    (sc.reasons.includes('nickname_or_short_form') && !matching.nicknameAmbiguous(incoming.given_name));
+  const dobSame = sc.reasons.includes('exact_date_of_birth') && sc.reasons.some(r => FIRST_NAME_REASONS.has(r));
+  return !sc.reasons.some(r => LINK_VETOES.has(r)) && (firstSame || dobSame);
+}
+
+module.exports = { lookup, link, refsFor, countBySource, stillSame, SOURCE_RE };

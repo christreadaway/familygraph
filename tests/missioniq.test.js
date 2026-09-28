@@ -433,11 +433,17 @@ test('missioniq > an imported record that turns into someone else is not silentl
   await importAll(ctx, p);
   const janeCode = crosswalk.lookup(ctx.db, 'missioniq', 'contact:c-1').code;
 
-  // A harmless edit (new email, a nickname) keeps the link.
-  editMissionIQ(p, "UPDATE contacts SET email = 'jane.new@example.org', first_name = 'Janie' WHERE id = 'c-1'");
+  // A harmless edit (new email, a nickname-table entry) keeps the link.
+  // (Changed 2026-09-28: this edit was Jane -> Janie, which the matcher
+  // scores only as a phonetic match - the same band as Mark -> Mary - so a
+  // renamed linked record like that now goes to a person.)
+  const johnCode = crosswalk.lookup(ctx.db, 'missioniq', 'contact:c-2').code;
+  editMissionIQ(p, "UPDATE contacts SET email = 'jane.new@example.org' WHERE id = 'c-1'");
+  editMissionIQ(p, "UPDATE contacts SET first_name = 'Johnny' WHERE id = 'c-2'");
   const ok = await planOnly(ctx, p);
   assert.equal(ok.plan.pending.length, 0);
   assert.equal(ok.plan.sheets[0].rows[0].persons[0].community_id, ids.toCommunityId(janeCode));
+  assert.equal(ok.plan.sheets[0].rows[0].persons[1].community_id, ids.toCommunityId(johnCode));
 
   // The record was reused for a different human.
   editMissionIQ(p, "UPDATE contacts SET first_name = 'Robert', birthday = '1970-05-05' WHERE id = 'c-1'");

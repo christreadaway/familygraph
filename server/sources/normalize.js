@@ -121,11 +121,43 @@ function splitPhones(field) {
 }
 
 // Normalize a date value to ISO YYYY-MM-DD. Handles Excel serial numbers,
-// US-format MM/DD/YYYY (also short year), ISO, and "Jan 15, 2025".
-// Vendored from the upstream identity engine.
+// US-format MM/DD/YYYY (also short year), ISO, YYYY/MM/DD, and "Jan 15, 2025"
+// / "15 Jan 2025". Vendored from the upstream identity engine.
+//
+// Fixed 2026-09-28: every branch built Date.UTC(y, m-1, d) and trusted it,
+// so impossible dates rolled over ('15/01/2010' -> 2011-03-01, '02/30/2010'
+// -> 2010-03-02) and a `new Date(str)` fallback filled in partial dates
+// ('2010' -> 2010-01-01, '01/15' -> 2001-01-15). These are birthdates, and a
+// made-up birthdate is permanent evidence that two records are two people.
+// Now a date is read only when year, month and day are all present and
+// valid; anything else is null (unreadable), never a guess.
+const MONTHS = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
+};
+
+function _isoIfValid(y, m, d) {
+  y = +y; m = +m; d = +d;
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null;
+  if (y <= 1900 || y >= 2200 || m < 1 || m > 12 || d < 1) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+  return dt.toISOString().slice(0, 10);
+}
+
+function _monthNumber(word) {
+  const w = String(word).toLowerCase().replace(/\.$/, '');
+  if (w.length < 3) return null;
+  const k = w.slice(0, w.startsWith('sept') ? 4 : 3);
+  const n = MONTHS[k];
+  // "Janxyz" is not January: the word must be the month or its abbreviation.
+  if (!n) return null;
+  const full = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'][n - 1];
+  return full.startsWith(w) ? n : null;
+}
+
 function normalizeDate(raw) {
   if (raw == null || raw === '') return null;
-  if (raw instanceof Date && !isNaN(raw.getTime())) return raw.toISOString().slice(0, 10);
+  if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw.toISOString().slice(0, 10);
 
   const str = String(raw).trim();
   if (!str) return null;
@@ -141,31 +173,38 @@ function normalizeDate(raw) {
     }
   }
 
-  const isoMatch = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (isoMatch) {
-    const [, y, m, d] = isoMatch;
-    const dt = new Date(Date.UTC(+y, +m - 1, +d));
-    if (!isNaN(dt.getTime()) && dt.getUTCFullYear() > 1900) return dt.toISOString().slice(0, 10);
+  // ISO, optionally with a time ("2010-01-15T08:00:00Z"), or 2010/01/15.
+  const isoMatch = str.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:$|[T\s])/);
+  if (isoMatch) return _isoIfValid(isoMatch[1], isoMatch[2], isoMatch[3]);
+
+  // US month/day/year. A first number above 12 cannot be a month, so the
+  // only reading is day-first (15/01/2010); both above 12 is unreadable.
+  const numeric = str.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/);
+  if (numeric) {
+    let [, m, d, y] = numeric;
+    if (+m > 12 && +d <= 12) [m, d] = [d, m];
+    if (y.length === 2) {
+      // Two-digit year: the latest century that does not put the date in
+      // the future ('5/6/45' is 1945, not 2045 - these are birthdates).
+      const guess = _isoIfValid(2000 + +y, m, d);
+      const today = new Date().toISOString().slice(0, 10);
+      return guess && guess <= today ? guess : _isoIfValid(1900 + +y, m, d);
+    }
+    return _isoIfValid(y, m, d);
   }
 
-  const usMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (usMatch) {
-    const [, m, d, y] = usMatch;
-    const dt = new Date(Date.UTC(+y, +m - 1, +d));
-    if (!isNaN(dt.getTime()) && dt.getUTCFullYear() > 1900) return dt.toISOString().slice(0, 10);
+  // Month names: "Jan 15, 2010", "January 15 2010", "Wed Jan 15 2010 ...",
+  // "15 Jan 2010", "15-Jan-2010". A month and year without a day ("Mar
+  // 2015") is not a date.
+  const mdy = str.match(/^(?:[a-z]+,?\s+)?([a-z]+\.?)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/i);
+  if (mdy) {
+    const m = _monthNumber(mdy[1]);
+    if (m) return _isoIfValid(mdy[3], m, mdy[2]);
   }
-
-  const shortYearMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
-  if (shortYearMatch) {
-    const [, m, d, y] = shortYearMatch;
-    const fullYear = +y < 50 ? 2000 + +y : 1900 + +y;
-    const dt = new Date(Date.UTC(fullYear, +m - 1, +d));
-    if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-  }
-
-  const dt = new Date(str);
-  if (!isNaN(dt.getTime()) && dt.getFullYear() > 1900 && dt.getFullYear() < 2200) {
-    return dt.toISOString().slice(0, 10);
+  const dmy = str.match(/^(\d{1,2})(?:st|nd|rd|th)?[\s-]+([a-z]+\.?),?[\s-]+(\d{4})$/i);
+  if (dmy) {
+    const m = _monthNumber(dmy[2]);
+    if (m) return _isoIfValid(dmy[3], m, dmy[1]);
   }
 
   return null;

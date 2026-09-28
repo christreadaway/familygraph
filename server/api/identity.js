@@ -33,6 +33,7 @@ const profiles = require('../identity/profiles');
 const crosswalk = require('../identity/crosswalk');
 const audit = require('../audit');
 const enc = require('../crypto/encryption');
+const log = require('../log');
 
 // Attach the incoming record's emails and phones to the resolved person, the
 // same way the bulk import pipeline does. Without this the identity API creates
@@ -69,16 +70,17 @@ function _tagConflictSource(db, conflictCode, source, sourceRef) {
   } catch (_) { /* best effort — provenance is advisory */ }
 }
 
-// The person's current (active) family, or null. Cheap membership lookup used
-// to enrich resolve responses so a consuming app can key its family-scoped
-// domain data (e.g. giving totals) to the canonical family code.
-function _familyForPerson(db, personCode) {
-  const row = db.prepare(
+// The person's current (active) families, newest first. More than one is
+// normal (divorced parents, a duplicate contact confirmed as the same
+// person), so callers must not just take the first.
+function _activeFamilies(db, personCode) {
+  const seen = new Set();
+  for (const r of db.prepare(
     `SELECT family_code FROM memberships
        WHERE person_code = ? AND ended_at IS NULL
-       ORDER BY started_at DESC LIMIT 1`
-  ).get(personCode);
-  return row ? row.family_code : null;
+       ORDER BY started_at DESC`
+  ).all(personCode)) seen.add(r.family_code);
+  return [...seen];
 }
 
 // Derive a family display name from an incoming record (e.g. "Smith Family").
@@ -89,15 +91,26 @@ function _familyDisplayName(incoming) {
 }
 
 // Resolve the family for a just-resolved person.
-//   - Always returns the person's existing active family if they have one
-//     ({ code, action: 'existing' }).
-//   - When `create` is true and the person has no family, resolve-or-create a
-//     family from the incoming record (reusing the resolver's person-overlap
-//     and address-overlap attach heuristics) and attach the person.
+//   - One active family: returned ({ code, action: 'existing' }).
+//   - More than one: the caller's household is not ours to guess, because a
+//     consuming app stamps the code on its own household once and never
+//     corrects it. When the caller may read `source`'s crosswalk and exactly
+//     one of those families is linked from that source, that is the one.
+//     Otherwise { families: [codes] } and no family, so nothing gets stamped.
+//   - None, and `create` is true: resolve-or-create a family from the
+//     incoming record (reusing the resolver's person-overlap and
+//     address-overlap attach heuristics) and attach the person.
 //   - Returns null when there's no family and creation wasn't requested.
-function _resolveFamily(db, secrets, thresholds, personCode, incoming, { create = false, actor = 'external_app' } = {}) {
-  const existing = _familyForPerson(db, personCode);
-  if (existing) return { code: existing, action: 'existing' };
+function _resolveFamily(db, secrets, thresholds, personCode, incoming, { create = false, actor = 'external_app', source = null, crosswalkOk = false } = {}) {
+  const active = _activeFamilies(db, personCode);
+  if (active.length === 1) return { code: active[0], action: 'existing' };
+  if (active.length > 1) {
+    const linked = crosswalkOk
+      ? active.filter(f => crosswalk.refsFor(db, source, 'family', f).length > 0)
+      : [];
+    if (linked.length === 1) return { code: linked[0], action: 'existing' };
+    return { families: active };
+  }
   if (!create) return null;
 
   const fam = resolver.resolveOrCreateFamily(db, secrets, thresholds, {
@@ -115,19 +128,74 @@ function _resolveFamily(db, secrets, thresholds, personCode, incoming, { create 
   return { code: fam.code, action: fam.action };
 }
 
+// Put a _resolveFamily outcome on a response row: `family` as before, or
+// `families` (codes only) when the person is in several households and none
+// could be picked.
+function _applyFamily(result, family) {
+  if (!family) return;
+  if (family.families) result.families = family.families;
+  else result.family = family;
+}
+
+// Who may read a source's crosswalk: the master token, or the API key named
+// after that source (MissionIQ's key is issued as
+// `family-graph issue-key missioniq ...`). Anyone else asking with
+// source:'missioniq' is ignored and goes through the normal resolver, so one
+// app's key cannot map another app's record ids to people.
+function _mayReadCrosswalk(auth, source) {
+  if (!auth || typeof source !== 'string') return false;
+  if (auth.kind === 'master') return true;
+  return auth.kind === 'scoped' && auth.actor === source;
+}
+
+// A caller that sends a source's record refs but may not read that source's
+// crosswalk (a MissionIQ key issued as 'MissionIQ' or 'missioniq-prod') is
+// refused, not quietly resolved by name: the resolver could pick or mint a
+// different person than the one the record is linked to, and the caller
+// would stamp that id - one human, two ids. Fixed 2026-09-28 (third pass):
+// this used to fall through with no log line. Only sources that have
+// crosswalk entries are guarded, so an app's own fresh source is unaffected.
+function _crosswalkRefusal(db, auth, source, hasRef) {
+  if (!hasRef || typeof source !== 'string' || _mayReadCrosswalk(auth, source)) return null;
+  const n = crosswalk.countBySource(db, source);
+  if (!n.person && !n.family) return null;
+  log.warn('identity.resolve.crosswalk_forbidden', { source, key: (auth && (auth.key_code || auth.kind)) || null });
+  return {
+    error: 'crosswalk_forbidden',
+    detail: `this key may not use source "${source}": its record links belong to the key named "${source}". ` +
+      `Issue one with: family-graph issue-key ${source}`,
+  };
+}
+const _hasRef = v => typeof v === 'string' ? v !== '' : typeof v === 'number';
+
 // A record a deliberate import already linked (the MissionIQ import, a roster
 // commit with refs) is that person - returned by its own id, never
-// re-matched by name. `action` stays 'attached' so existing callers count it
-// as before; `via: 'crosswalk'` says how. Only deliberate imports write the
-// crosswalk; /resolve reads it and never writes it, so a loose match here can
-// never become a permanent link.
-function _linked(db, source, ref) {
+// re-matched by name - as long as the record still describes them (the same
+// check roster.js applies: crosswalk.stillSame). A record edited into
+// someone else returns { mismatch: true }: the caller falls back to the
+// resolver and reports via 'crosswalk_mismatch', and the record's email and
+// phone never touch the linked person. `action` stays 'attached' so existing
+// callers count a hit as before; `via: 'crosswalk'` says how. Only deliberate
+// imports write the crosswalk; /resolve reads it and never writes it, so a
+// loose match here can never become a permanent link.
+function _linked(db, secrets, auth, source, ref, incoming, suffix) {
   if (typeof source !== 'string' || (typeof ref !== 'string' && typeof ref !== 'number')) return null;
+  if (!_mayReadCrosswalk(auth, source)) return null;
   const x = crosswalk.lookup(db, source, String(ref));
   if (!x || x.kind !== 'person') return null;
+  if (!crosswalk.stillSame(db, secrets, { ...incoming, suffix: suffix || null }, x.code)) return { mismatch: true };
   const out = { code: x.code, action: 'attached', via: 'crosswalk', score: 1, reasons: ['linked_record'] };
   if (x.status !== 'active') out.status = x.status;
   return out;
+}
+
+// Crosswalk hit, or the normal resolver (tagged when a link was refused).
+function _resolveOne(db, secrets, thresholds, auth, source, ref, record, incoming, actor) {
+  const link = _linked(db, secrets, auth, source, ref, incoming, record && record.suffix);
+  if (link && !link.mismatch) return link;
+  const result = resolver.resolveOrCreatePerson(db, secrets, thresholds, incoming, { actor });
+  if (link) result.via = 'crosswalk_mismatch';
+  return result;
 }
 
 // Translate the loose external-record shape into our internal canonical
@@ -206,8 +274,12 @@ function build({ db, secrets, thresholds }) {
   });
 
   // POST /api/identity/resolve
-  // Body: { record: <loose>, source?, source_ref?, actor? }
-  // Commits the verdict: returns { code, action, score, reasons, conflict? }
+  // Body: { record: <loose>, source?, source_ref?, with_family? }
+  // Commits the verdict: returns { code, action, score, reasons, conflict?,
+  // via?, family?, families? }. via is 'crosswalk' for a linked record and
+  // 'crosswalk_mismatch' when the linked record no longer describes that
+  // person and the resolver decided instead. families (codes) replaces
+  // family when the person is in several households and none could be picked.
   // Same shape as the internal /api/import/run per-row outcome so external
   // apps can persist their domain data keyed by `code` immediately.
   r.post('/resolve', (req, res) => {
@@ -215,18 +287,22 @@ function build({ db, secrets, thresholds }) {
     const incoming = _toIncoming(record);
     if (!incoming) return res.status(400).json({ error: 'record required' });
 
+    const refused = _crosswalkRefusal(db, req.auth, source, _hasRef(source_ref));
+    if (refused) return res.status(403).json(refused);
+
     const actor = req.auth?.actor || 'external_app';
-    const result = _linked(db, source, source_ref) ||
-      resolver.resolveOrCreatePerson(db, secrets, effective(), incoming, { actor });
+    const crosswalkOk = _mayReadCrosswalk(req.auth, source);
+    const result = _resolveOne(db, secrets, effective(), req.auth, source, source_ref, record, incoming, actor);
     _attachContacts(db, secrets, result.code, incoming);
+    if (result.via === 'crosswalk_mismatch') log.warn('identity.resolve.crosswalk_mismatch', { source, action: result.action });
 
     // Enrich with the canonical family code so the caller can key family-scoped
-    // domain data to it. Always returns an existing family; only creates one
-    // when the caller opts in via with_family.
+    // domain data to it. Returns an existing family (never a guess between
+    // several); only creates one when the caller opts in via with_family.
     const family = _resolveFamily(db, secrets, effective(), result.code, incoming, {
-      create: !!with_family, actor,
+      create: !!with_family, actor, source, crosswalkOk,
     });
-    if (family) result.family = family;
+    _applyFamily(result, family);
 
     // If this opened a conflict, stamp it with the caller's provenance so the
     // operator can trace it back in the dashboard.
@@ -245,7 +321,8 @@ function build({ db, secrets, thresholds }) {
         score: result.score,
         reasons: result.reasons,
         conflict: result.conflict || null,
-        family: family ? { code: family.code, action: family.action } : null,
+        family: family && family.code ? { code: family.code, action: family.action } : null,
+        families: family && family.families ? family.families.length : undefined,
       },
     });
     res.status(201).json(result);
@@ -254,7 +331,7 @@ function build({ db, secrets, thresholds }) {
   // POST /api/identity/resolve-batch
   // Body: { records: [<loose>, ...], source?, source_ref?, with_family? }
   // Commit many records in one round-trip inside a single transaction. Returns
-  // { results: [{ index, code, action, score, reasons, conflict?, family? }],
+  // { results: [{ index, code, action, score, reasons, conflict?, via?, family?, families? }],
   //   totals: { created, attached, enqueued } }. Same per-row outcome shape as
   // /resolve so a consuming app can persist domain data keyed by each code.
   // Bounded at 1000 records per call to keep a single request predictable.
@@ -266,10 +343,14 @@ function build({ db, secrets, thresholds }) {
     if (records.length > MAX_BATCH) {
       return res.status(400).json({ error: `too many records (max ${MAX_BATCH})` });
     }
+    const refused = _crosswalkRefusal(db, req.auth, source, records.some(r => r && _hasRef(r.source_ref)));
+    if (refused) return res.status(403).json(refused);
     const actor = req.auth?.actor || 'external_app';
     const t = effective();
     const totals = { created: 0, attached: 0, enqueued: 0 };
     let linkedCount = 0;
+    let mismatchCount = 0;
+    const crosswalkOk = _mayReadCrosswalk(req.auth, source);
     const results = [];
 
     const run = db.transaction(() => {
@@ -278,12 +359,12 @@ function build({ db, secrets, thresholds }) {
         if (!incoming) { results.push({ index: i, error: 'record required' }); continue; }
         // Crosswalk by the per-record ref only: the batch-level source_ref
         // names the batch, not a record.
-        const linked = _linked(db, source, records[i].source_ref);
-        if (linked) linkedCount += 1;
-        const result = linked || resolver.resolveOrCreatePerson(db, secrets, t, incoming, { actor });
+        const result = _resolveOne(db, secrets, t, req.auth, source, records[i].source_ref, records[i], incoming, actor);
+        if (result.via === 'crosswalk') linkedCount += 1;
+        else if (result.via === 'crosswalk_mismatch') mismatchCount += 1;
         _attachContacts(db, secrets, result.code, incoming);
-        const family = _resolveFamily(db, secrets, t, result.code, incoming, { create: !!with_family, actor });
-        if (family) result.family = family;
+        const family = _resolveFamily(db, secrets, t, result.code, incoming, { create: !!with_family, actor, source, crosswalkOk });
+        _applyFamily(result, family);
         // Per-record source_ref (falls back to the batch-level ref) so each
         // conflict traces back to the exact upstream record.
         if (result.conflict) {
@@ -302,8 +383,9 @@ function build({ db, secrets, thresholds }) {
     audit.record(db, {
       action: 'identity_resolve_batch',
       actor,
-      metadata: { source, source_ref, rows: records.length, totals, linked: linkedCount },
+      metadata: { source, source_ref, rows: records.length, totals, linked: linkedCount, crosswalk_mismatch: mismatchCount },
     });
+    if (mismatchCount) log.warn('identity.resolve_batch.crosswalk_mismatch', { source, rows: records.length, mismatched: mismatchCount });
     res.status(201).json({ results, totals });
   });
 

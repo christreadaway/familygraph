@@ -133,8 +133,12 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/sanitize', express.json({ limit: '20mb' }));
   app.use('/api/desanitize', express.json({ limit: '20mb' }));
   app.use('/api/scan', express.json({ limit: '20mb' }));
-  // Roster plan/commit carry a whole spreadsheet (thousands of rows).
-  app.use('/api/identity/roster', express.json({ limit: '20mb' }));
+  // Roster plan/commit carry a whole spreadsheet (thousands of rows). Their
+  // 20 MB parser runs inside the roster router, after the bearer check, so
+  // an unauthenticated caller never gets a 20 MB body parsed. Marking the
+  // body as handled here keeps the 256 KB parser below from reading (and
+  // refusing) it first.
+  app.use('/api/identity/roster', (req, _res, next) => { req._body = true; next(); });
   // Document vault store accepts a base64 file body; the 10 MB raw cap is ~13.4
   // MB base64, so a 16 MB JSON limit gives headroom (the byte cap is enforced
   // in documents.store, not here).
@@ -154,6 +158,9 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   const v1RateLimit = rateLimit.build({ capacity: 300, refillPerSec: 20, name: 'v1' });
   const sanitizeRateLimit = rateLimit.build({ capacity: 30, refillPerSec: 1, name: 'sanitize' });
   const importRateLimit = rateLimit.build({ capacity: 20, refillPerSec: 0.5, name: 'import' });
+  // Roster plan and commit each run a whole import synchronously (a plan
+  // rolls it back), so both get an import-sized bucket of their own.
+  const rosterRateLimit = rateLimit.build({ capacity: 20, refillPerSec: 0.5, name: 'roster' });
 
   // Inject auth context onto every request: PII routes require Bearer; safe
   // routes require loopback. Scoped Bearer middlewares enforce per-app scopes
@@ -205,7 +212,7 @@ function buildApp({ db, secrets, thresholds, watchState = null }) {
   app.use('/api/identity/roster', buildRoster({
     db, secrets, thresholds,
     auth: { read: bearerRoster, import: bearerRoster },
-    rate: { pii: piiRateLimit, import: importRateLimit },
+    rate: { pii: piiRateLimit, import: importRateLimit, roster: rosterRateLimit },
   }));
   // External-app identity API. Consuming apps call these endpoints to
   // delegate match/resolve to Family Graph.

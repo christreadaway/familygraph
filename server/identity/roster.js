@@ -53,10 +53,14 @@ const LIMITS = {
   columns: 300,
   cellChars: 4000,
   headerChars: 200,
+  // People, not rows: one household (or one row's list cells) with thousands
+  // of names would otherwise slip past the row limit and pin the server.
+  personsPerHousehold: 50,
+  persons: 80000,     // across the whole request
 };
 
 const ADULT_ROLES = new Set(['parent', 'guardian', 'grandparent', 'spouse', 'head', 'other_adult']);
-const VETO_REASONS = new Set(['dob_conflict', 'suffix_conflict', 'suffix_one_sided']);
+const VETO_REASONS = new Set(['dob_conflict', 'dob_possible_misreading', 'suffix_conflict', 'suffix_one_sided']);
 // A candidate is worth a person's time only when the first AND last name line
 // up, or the birthdate matches along with one of them.
 //   - Sharing a surname and an address is what siblings and spouses do.
@@ -79,7 +83,7 @@ const _plausible = s => {
 // A crosswalk link was already settled by a match or a human; only a hard
 // contradiction reopens it. (A suffix known on one side only is normal: the
 // other app may not have a suffix field at all.)
-const LINK_VETOES = new Set(['dob_conflict', 'suffix_conflict']);
+const LINK_VETOES = new Set(['dob_conflict', 'dob_possible_misreading', 'suffix_conflict']);
 
 // Not names: a roster's stand-ins for "we don't know yet". Minting an
 // identifier for "TBD Smith" creates a person who does not exist.
@@ -108,12 +112,30 @@ class RosterError extends Error {
 
 const ROLLBACK = Symbol('roster-plan-rollback');
 
+// Prepared statements, once per connection. A roster runs the same handful
+// of lookups for every person on it; preparing them each time was a large
+// share of a 2,000-row plan.
+const _stmts = new WeakMap();
+function _stmt(db, sql) {
+  let byDb = _stmts.get(db);
+  if (!byDb) { byDb = new Map(); _stmts.set(db, byDb); }
+  let st = byDb.get(sql);
+  if (!st) { st = db.prepare(sql); byDb.set(sql, st); }
+  return st;
+}
+
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
 
 function _cell(v) {
   if (v === null || v === undefined) return '';
+  // A cell is text (a number or true/false reads as text too). An object or
+  // array from a buggy client would become "[object Object]" or "A,B" and be
+  // minted as a person - refuse it instead.
+  if (typeof v === 'object' || typeof v === 'function' || typeof v === 'symbol') {
+    throw new RosterError('cells must be text or numbers');
+  }
   const s = String(v);
   if (s.length > LIMITS.cellChars) {
     throw new RosterError(`a cell is longer than ${LIMITS.cellChars} characters`);
@@ -174,13 +196,23 @@ function _refOrNull(v, what) {
   return s;
 }
 
+function _countPersons(counter, n, where) {
+  if (n > LIMITS.personsPerHousehold) {
+    throw new RosterError(`${where}: too many people in one household (max ${LIMITS.personsPerHousehold})`);
+  }
+  counter.n += n;
+  if (counter.n > LIMITS.persons) throw new RosterError(`too many people (max ${LIMITS.persons})`);
+}
+
 function _prepareHouseholds(list) {
   if (list.length > LIMITS.rows) throw new RosterError(`too many households (max ${LIMITS.rows})`);
   const val = v => (v === null || v === undefined ? null : (_cell(v) || null));
+  const counter = { n: 0 };
   const rows = list.map((h, i) => {
     if (!h || typeof h !== 'object' || !Array.isArray(h.persons)) {
       throw new RosterError(`household ${i}: persons array required`);
     }
+    _countPersons(counter, h.persons.length, `household ${i}`);
     const persons = [];
     h.persons.forEach((p, k) => {
       if (!p || typeof p !== 'object') throw new RosterError(`household ${i} person ${k}: object required`);
@@ -233,6 +265,28 @@ function _prepareHouseholds(list) {
   return { index: 0, name: 'households', headers: [], colOf: new Map(), mapping: { persons: [] }, skipped: null, rows };
 }
 
+// A caller-supplied mapping names header columns: every field is a header
+// name or a list of them. Anything else is a caller bug - say so (400)
+// instead of crashing halfway through the run (500).
+const _isHeaderRef = v => v === null || v === undefined || typeof v === 'string' ||
+  (Array.isArray(v) && v.every(x => typeof x === 'string'));
+function _checkFields(obj, what) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new RosterError(`${what} must be an object`);
+  for (const [k, v] of Object.entries(obj)) {
+    if (!_isHeaderRef(v)) throw new RosterError(`${what}.${k} must be a header name or a list of header names`);
+  }
+}
+function _checkMapping(m, si) {
+  const where = `sheet ${si}: mapping`;
+  if (typeof m !== 'object' || Array.isArray(m)) throw new RosterError(`${where} must be an object`);
+  if (m.persons !== undefined && m.persons !== null) {
+    if (!Array.isArray(m.persons)) throw new RosterError(`${where}.persons must be an array`);
+    m.persons.forEach((t, i) => _checkFields(t, `${where}.persons[${i}]`));
+  }
+  if (m.family !== undefined && m.family !== null) _checkFields(m.family, `${where}.family`);
+  if (m.address !== undefined && m.address !== null) _checkFields(m.address, `${where}.address`);
+}
+
 function prepare(body) {
   if (!body || typeof body !== 'object') throw new RosterError('body required');
   if (body.households !== undefined) {
@@ -244,6 +298,7 @@ function prepare(body) {
   if (!Array.isArray(sheets) || sheets.length === 0) throw new RosterError('sheets array required');
   if (sheets.length > LIMITS.sheets) throw new RosterError(`too many sheets (max ${LIMITS.sheets})`);
   let totalRows = 0;
+  const counter = { n: 0 };
 
   return sheets.map((sheet, si) => {
     if (!sheet || !Array.isArray(sheet.headers) || !Array.isArray(sheet.rows)) {
@@ -257,6 +312,7 @@ function prepare(body) {
 
     const headers = _uniqueHeaders(sheet.headers);
     const colOf = new Map(headers.map((h, i) => [h, i]));
+    if (sheet.mapping !== undefined && sheet.mapping !== null) _checkMapping(sheet.mapping, si);
     const mapping = sheet.mapping && typeof sheet.mapping === 'object'
       ? sheet.mapping
       : csv.inferMapping(headers);
@@ -284,6 +340,7 @@ function prepare(body) {
       if (!any) { out.rows.push({ index: ri, skipped: 'blank' }); return; }
       if (csv.isSummaryRow(obj, headers)) { out.rows.push({ index: ri, skipped: 'summary' }); return; }
       const canonical = applyMapping(obj, mapping);
+      _countPersons(counter, (canonical.persons || []).length, `sheet ${si} row ${ri}`);
       if (!(canonical.persons || []).length) {
         out.rows.push({ index: ri, skipped: 'no_person' });
         return;
@@ -306,7 +363,7 @@ function prepare(body) {
 
 function _activeFamiliesOf(db, personCode, { includeArchived = false } = {}) {
   const statusSql = includeArchived ? `f.status IN ('active','archived')` : `f.status = 'active'`;
-  return db.prepare(
+  return _stmt(db, 
     `SELECT m.family_code AS code, f.status AS status
        FROM memberships m JOIN families f ON f.code = m.family_code
       WHERE m.person_code = ? AND m.ended_at IS NULL AND ${statusSql}`
@@ -315,7 +372,7 @@ function _activeFamiliesOf(db, personCode, { includeArchived = false } = {}) {
 
 function _candidateClass(db, cand) {
   if (cand.kind === 'child' || cand.kind === 'adult') return cand.kind;
-  const roles = db.prepare(
+  const roles = _stmt(db, 
     `SELECT role FROM memberships WHERE person_code = ? AND ended_at IS NULL`
   ).all(cand.code).map(r => r.role);
   if (roles.includes('child')) return 'child';
@@ -325,13 +382,13 @@ function _candidateClass(db, cand) {
 
 function _familySummary(db, secrets, code) {
   if (!code) return null;
-  const row = db.prepare('SELECT code, status, display_name_ct FROM families WHERE code = ?').get(code);
+  const row = _stmt(db, 'SELECT code, status, display_name_ct FROM families WHERE code = ?').get(code);
   if (!row) return null;
   return { code: row.code, status: row.status, display_name: enc.decrypt(secrets, row.display_name_ct) };
 }
 
 function _personSummary(db, secrets, code) {
-  const row = db.prepare('SELECT * FROM persons WHERE code = ?').get(code);
+  const row = _stmt(db, 'SELECT * FROM persons WHERE code = ?').get(code);
   if (!row) return null;
   return {
     code: row.code,
@@ -359,15 +416,17 @@ function _householdMatches(db, secrets, incoming, personOutcomes, canonical) {
   // Start from the exact namesakes (indexed hashes): a handful at most. The
   // households to check them against can be thousands when many rows share
   // one address (a parish office address used as a placeholder).
-  const namesakes = db.prepare(
+  // (+p.status: on a fresh database without statistics SQLite otherwise
+  // walks every active person through the status index - per row.)
+  const namesakes = _stmt(db, 
     `SELECT p.*, m.role AS m_role, m.family_code AS m_family FROM persons p
        JOIN memberships m ON m.person_code = p.code AND m.ended_at IS NULL
-      WHERE p.given_name_hash = ? AND p.family_name_hash = ? AND p.status = 'active'`
+      WHERE p.given_name_hash = ? AND p.family_name_hash = ? AND +p.status = 'active'`
   ).all(enc.hmac(secrets, given), enc.hmac(secrets, family));
   if (!namesakes.length) return [];
 
   const famCodes = new Set();
-  const memberOf = db.prepare(
+  const memberOf = _stmt(db, 
     `SELECT m.family_code AS code, m.role AS role FROM memberships m JOIN families f ON f.code = m.family_code
       WHERE m.person_code = ? AND m.ended_at IS NULL AND f.status = 'active'`
   );
@@ -383,7 +442,7 @@ function _householdMatches(db, secrets, incoming, personOutcomes, canonical) {
     const norm = enc.normalizeAddress(addr);
     const h = norm ? enc.hmac(secrets, norm) : null;
     if (h) {
-      const atAddress = db.prepare(
+      const atAddress = _stmt(db, 
         `SELECT 1 FROM addresses a
            JOIN family_addresses fa ON fa.address_code = a.code
            JOIN families f ON f.code = fa.family_code
@@ -393,7 +452,7 @@ function _householdMatches(db, secrets, incoming, personOutcomes, canonical) {
     }
   }
   if (!famCodes.size) return [];
-  const activeFamily = db.prepare(`SELECT 1 FROM families WHERE code = ? AND status = 'active'`);
+  const activeFamily = _stmt(db, `SELECT 1 FROM families WHERE code = ? AND status = 'active'`);
   const incomingClass = _roleClass(incoming.role);
   const rec = resolver.toMatcherRecord(incoming);
   const found = new Map();
@@ -415,7 +474,7 @@ function _householdMatches(db, secrets, incoming, personOutcomes, canonical) {
 // parents' household and is now a parent in their own holds both.
 function _candidateClasses(db, cand) {
   const out = new Set();
-  for (const r of db.prepare('SELECT role FROM memberships WHERE person_code = ? AND ended_at IS NULL').all(cand.code)) {
+  for (const r of _stmt(db, 'SELECT role FROM memberships WHERE person_code = ? AND ended_at IS NULL').all(cand.code)) {
     const c = _roleClass(r.role);
     if (c) out.add(c);
   }
@@ -433,6 +492,16 @@ function _normGrade(g) {
   return null;
 }
 
+// In one upload, a child listed again in a different grade is another child
+// (cousins at one address, two Marias in grades 2 and 7) - or a typo. Either
+// way it is never the same child automatically.
+function _gradeContradicts(incoming, seen) {
+  if (!seen || _roleClass(incoming.role) !== 'child') return false;
+  const a = _normGrade(incoming.grade);
+  const b = _normGrade(seen.grade);
+  return !!(a && b && a !== b);
+}
+
 // Evidence about the person rather than the household.
 const _personEvidence = s => s.reasons.includes('exact_date_of_birth') ||
   s.reasons.includes('exact_email_match') || s.reasons.includes('exact_phone_match');
@@ -440,6 +509,20 @@ const _personEvidence = s => s.reasons.includes('exact_date_of_birth') ||
 const _normEmail = e => String(e || '').trim().toLowerCase();
 const _normPhone = p => { const d = String(p || '').replace(/\D/g, ''); return d.length > 10 ? d.slice(-10) : d; };
 const PARENT_ROLES = new Set(['parent', 'spouse', 'head']);
+
+// The same two address lines come up again for every namesake on every row
+// of a household; remember each comparison for the length of one run (the
+// memo lives on runSeen, so it is dropped with it).
+function _addressSimilarity(runSeen, a, b) {
+  if (!runSeen.addressMemo) runSeen.addressMemo = new Map();
+  const k = `${a}\u0000${b}`;
+  let v = runSeen.addressMemo.get(k);
+  if (v === undefined) {
+    v = matching.addressSimilarity(a, b);
+    runSeen.addressMemo.set(k, v);
+  }
+  return v;
+}
 
 // "Easily determined" different people - the candidates a person should
 // never be asked about. Each rule needs positive contradicting evidence;
@@ -470,24 +553,23 @@ function _clearlyDifferent(db, s, incoming, address, runSeen) {
   if (inc && classes.size && !classes.has(inc) && !_personEvidence(s)) return 'adult_and_child';
   if (shared) return null;
   const seen = runSeen.get(c.code);
-  if (seen && inc === 'child') {
-    const a = _normGrade(incoming.grade);
-    const b = _normGrade(seen.grade);
-    if (a && b && a !== b) return 'different_grade_same_upload';
-  }
+  if (_gradeContradicts(incoming, seen)) return 'different_grade_same_upload';
   const incEmails = (incoming.emails || []).map(_normEmail).filter(Boolean);
   const incPhones = (incoming.phones || []).flatMap(p => matching.splitPhones(p)).map(_normPhone).filter(Boolean);
   const candEmails = new Set([...(c.emails || []), ...(seen ? seen.emails : [])].map(_normEmail).filter(Boolean));
   const candPhones = new Set([...(c.phones || []), ...(seen ? seen.phones : [])].map(_normPhone).filter(Boolean));
   const emailsDiffer = incEmails.length > 0 && candEmails.size > 0 && !incEmails.some(e => candEmails.has(e));
   const phonesDiffer = incPhones.length > 0 && candPhones.size > 0 && !incPhones.some(p => candPhones.has(p));
+  const parents = !!seen && PARENT_ROLES.has(incoming.role) && PARENT_ROLES.has(seen.role);
+  // Both address rules below need differing contacts first; the address
+  // comparison is the costly part, so skip it when it cannot decide.
+  if (!(emailsDiffer && phonesDiffer) && !(parents && (emailsDiffer || phonesDiffer))) return null;
   const candLines = [c.address_line1, seen && seen.address && seen.address.line1].filter(Boolean);
   const incLine = address && address.line1;
   const addressDiffers = !!incLine && candLines.length > 0 &&
-    candLines.every(l => matching.addressSimilarity(incLine, l) <= 0.65);
+    candLines.every(l => _addressSimilarity(runSeen, incLine, l) <= 0.65);
   if (emailsDiffer && phonesDiffer && addressDiffers) return 'contacts_and_address_differ';
-  if (seen && PARENT_ROLES.has(incoming.role) && PARENT_ROLES.has(seen.role) &&
-      (emailsDiffer || phonesDiffer) && addressDiffers) return 'different_household_same_upload';
+  if (parents && (emailsDiffer || phonesDiffer) && addressDiffers) return 'different_household_same_upload';
   return null;
 }
 
@@ -521,7 +603,7 @@ function _familySurnameFits(db, secrets, code, rowTokens) {
   if (!rowTokens.size) return false;
   const f = _familySummary(db, secrets, code);
   const names = [f && f.display_name];
-  for (const r of db.prepare(
+  for (const r of _stmt(db, 
     `SELECT p.family_name_ct FROM memberships m JOIN persons p ON p.code = m.person_code
       WHERE m.family_code = ? AND m.ended_at IS NULL`
   ).all(code)) names.push(enc.decrypt(secrets, r.family_name_ct));
@@ -534,11 +616,14 @@ function _familiesAtAddress(db, secrets, address) {
   const norm = enc.normalizeAddress(address);
   const h = norm ? enc.hmac(secrets, norm) : null;
   if (!h) return [];
-  return db.prepare(
+  // Driven from the one address row (CROSS JOIN keeps that order), not from
+  // every active family.
+  return _stmt(db, 
     `SELECT DISTINCT fa.family_code AS code FROM addresses a
-       JOIN family_addresses fa ON fa.address_code = a.code
-       JOIN families f ON f.code = fa.family_code
-      WHERE a.norm_hash = ? AND f.status IN ('active','archived')`
+       CROSS JOIN family_addresses fa
+       CROSS JOIN families f
+      WHERE a.norm_hash = ? AND fa.address_code = a.code
+        AND f.code = fa.family_code AND f.status IN ('active','archived')`
   ).all(h).map(r => r.code);
 }
 
@@ -560,21 +645,32 @@ function _realPhone(p) {
 // households (an office line, a shared placeholder) proves nothing.
 function _familiesSharingContact(db, secrets, personOutcomes, rowCodes) {
   const counts = new Map();
-  const emailQ = db.prepare(
+  // Driven from the one email / phone row (CROSS JOIN keeps that order).
+  // Left to itself the planner started from every active person - a scan
+  // of the whole persons table per contact, per row.
+  const emailQ = _stmt(db, 
     `SELECT DISTINCT m.family_code AS code FROM emails e
-       JOIN person_emails pe ON pe.email_code = e.code
-       JOIN persons p ON p.code = pe.person_code AND p.status = 'active'
-       JOIN memberships m ON m.person_code = p.code AND m.ended_at IS NULL
-       JOIN families f ON f.code = m.family_code AND f.status = 'active'
-      WHERE e.norm_hash = ? AND p.code NOT IN (SELECT value FROM json_each(?))`
+       CROSS JOIN person_emails pe
+       CROSS JOIN persons p
+       CROSS JOIN memberships m
+       CROSS JOIN families f
+      WHERE e.norm_hash = ? AND pe.email_code = e.code
+        AND p.code = pe.person_code AND p.status = 'active'
+        AND m.person_code = p.code AND m.ended_at IS NULL
+        AND f.code = m.family_code AND f.status = 'active'
+        AND p.code NOT IN (SELECT value FROM json_each(?))`
   );
-  const phoneQ = db.prepare(
+  const phoneQ = _stmt(db, 
     `SELECT DISTINCT m.family_code AS code FROM phones ph
-       JOIN person_phones pp ON pp.phone_code = ph.code
-       JOIN persons p ON p.code = pp.person_code AND p.status = 'active'
-       JOIN memberships m ON m.person_code = p.code AND m.ended_at IS NULL
-       JOIN families f ON f.code = m.family_code AND f.status = 'active'
-      WHERE ph.norm_hash = ? AND p.code NOT IN (SELECT value FROM json_each(?))`
+       CROSS JOIN person_phones pp
+       CROSS JOIN persons p
+       CROSS JOIN memberships m
+       CROSS JOIN families f
+      WHERE ph.norm_hash = ? AND pp.phone_code = ph.code
+        AND p.code = pp.person_code AND p.status = 'active'
+        AND m.person_code = p.code AND m.ended_at IS NULL
+        AND f.code = m.family_code AND f.status = 'active'
+        AND p.code NOT IN (SELECT value FROM json_each(?))`
   );
   const exclude = JSON.stringify(rowCodes);
   const seen = new Set();
@@ -641,17 +737,155 @@ function _sameNameOnRow(incoming, personOutcomes) {
 }
 
 // ---------------------------------------------------------------------------
+// Who may do what, idempotency, earlier commits of the same upload
+// ---------------------------------------------------------------------------
+
+// A crosswalk source belongs to one app. Over HTTP only the master token may
+// read or relink another app's records (refs, stored codes, or a source that
+// already has crosswalk links and is not the key's own name): a roster key
+// walking MissionIQ's child:1..N refs would read every linked child's name
+// and birthdate, and a commit would relink MissionIQ's record to someone
+// else.
+//
+// Fixed 2026-09-28 (third pass): any source other than the key's exact name
+// used to be refused, so a Doc Anonymizer key issued as 'DocAnonymizer' (or
+// a staff session) could not plan at all. A source with no crosswalk links
+// holds nothing to read or relink - refs are refused below either way - so
+// it is only a label on the import run.
+function _checkCallerRights(db, body, caller) {
+  const own = caller && caller.name;
+  if (body.source !== undefined && body.source !== 'roster' && body.source !== own) {
+    const n = crosswalk.countBySource(db, body.source);
+    if (n.person || n.family) {
+      log.warn('roster.caller.source_forbidden', { source: body.source, caller: caller && caller.id });
+      throw new RosterError(`this key may not use source "${body.source}": that source's record links belong to ` +
+        `the key named "${body.source}"`, 403, { code: 'roster_forbidden' });
+    }
+  }
+  if (Array.isArray(body.households)) {
+    for (const h of body.households) {
+      if (!h || typeof h !== 'object') continue;
+      const has = o => o && typeof o === 'object' && (
+        (o.ref !== undefined && o.ref !== null && o.ref !== '') ||
+        (o.code_hint !== undefined && o.code_hint !== null && o.code_hint !== ''));
+      if (has(h) || (Array.isArray(h.persons) && h.persons.some(has))) {
+        throw new RosterError('refs and code hints need the master token', 403, { code: 'roster_forbidden' });
+      }
+    }
+  }
+}
+
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,200}$/;
+const IDEMPOTENCY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const IDEMPOTENCY_PATH = '/api/identity/roster/commit';
+
+function _stableJson(v) {
+  if (Array.isArray(v)) return `[${v.map(_stableJson).join(',')}]`;
+  if (v && typeof v === 'object') {
+    return `{${Object.keys(v).sort().filter(k => v[k] !== undefined).map(k => `${JSON.stringify(k)}:${_stableJson(v[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
+// Keyed hash of the request, so the stored hash of a one-row body cannot be
+// reversed by guessing names.
+function _requestHash(secrets, body) {
+  const canonical = _stableJson({
+    sheets: body.sheets, households: body.households, decisions: body.decisions || {},
+    source: body.source || 'roster', source_ref: body.source_ref, category: body.category, tags: body.tags,
+  });
+  return enc.hmac(secrets, `roster-commit:${canonical}`);
+}
+
+// Stored in the integration contract's idempotency_keys table, scoped by
+// path. The response holds decrypted names, so it is kept encrypted.
+function _idempotencyLookup(db, secrets, requestId) {
+  const row = _stmt(db,
+    `SELECT response_body, expires_at FROM idempotency_keys WHERE request_id = ? AND method = 'POST' AND path = ?`
+  ).get(requestId, IDEMPOTENCY_PATH);
+  if (!row) return null;
+  if (row.expires_at <= new Date().toISOString()) {
+    _stmt(db, `DELETE FROM idempotency_keys WHERE request_id = ? AND method = 'POST' AND path = ?`).run(requestId, IDEMPOTENCY_PATH);
+    return null;
+  }
+  const stored = JSON.parse(row.response_body);
+  const response = JSON.parse(enc.decrypt(secrets, Buffer.from(stored.response_ct, 'base64')));
+  return { hash: stored.request_hash, response };
+}
+
+function _idempotencyStore(db, secrets, idem, response) {
+  const body = JSON.stringify({
+    v: 1,
+    request_hash: idem.hash,
+    response_ct: enc.encrypt(secrets, JSON.stringify(response)).toString('base64'),
+  });
+  _stmt(db,
+    `INSERT OR REPLACE INTO idempotency_keys (request_id, method, path, response_code, response_body, expires_at, created_at)
+     VALUES (?, 'POST', ?, 201, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+  ).run(idem.requestId, IDEMPOTENCY_PATH, body, new Date(Date.now() + IDEMPOTENCY_TTL_MS).toISOString());
+}
+
+// People and households an earlier commit of this same upload (same source
+// and source_ref) already wrote. A 'create' decision whose review now
+// offers one of them is the same commit sent twice: applying it again would
+// give those people second ids.
+function _priorRunCodes(db, source, sourceRef, sheetCount) {
+  const out = { person: new Set(), family: new Set() };
+  if (!sourceRef) return out;
+  const refs = Array.from({ length: sheetCount }, (_, i) => `${sourceRef}#sheet${i}`);
+  for (const r of _stmt(db,
+    `SELECT DISTINCT pv.entity_code AS code, pv.field AS field FROM import_runs ir
+       JOIN source_records sr ON sr.import_run_code = ir.code
+       JOIN provenance pv ON pv.source_code = sr.code AND pv.field IN ('person','family')
+      WHERE ir.source = ? AND ir.source_ref IN (SELECT value FROM json_each(?))`
+  ).all(source, JSON.stringify(refs))) {
+    out[r.field].add(aliases.resolveAlias(db, r.code));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // The run
 // ---------------------------------------------------------------------------
 
-function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
+// `caller` is who sent the request over HTTP: { id, name, master }. The id
+// scopes idempotency keys (an api key's code, 'master', or a staff account);
+// the name is the api key's name. In-process callers (the MissionIQ CLI
+// import) pass none and keep full use of the crosswalk.
+function run(db, secrets, thresholds, body, { mode, actor = 'roster', caller = null } = {}) {
   if (mode !== 'plan' && mode !== 'commit') throw new Error('mode must be plan or commit');
   const started = Date.now();
-  const sheets = prepare(body);
-  const decisions = (body.decisions && typeof body.decisions === 'object') ? body.decisions : {};
+  if (!body || typeof body !== 'object') throw new RosterError('body required');
   if (body.source !== undefined && !(typeof body.source === 'string' && crosswalk.SOURCE_RE.test(body.source))) {
     throw new RosterError('source must be a short lowercase name like "missioniq"');
   }
+  if (caller && !caller.master) _checkCallerRights(db, body, caller);
+
+  // Idempotent commit: the same key and the same request replays the stored
+  // result and writes nothing; the same key with a different request is
+  // refused. Checked before any work, stored inside the commit transaction.
+  let idem = null;
+  if (body.idempotency_key !== undefined && body.idempotency_key !== null) {
+    if (typeof body.idempotency_key !== 'string' || !IDEMPOTENCY_KEY_RE.test(body.idempotency_key)) {
+      throw new RosterError('idempotency_key must be 8-200 characters: letters, digits, and . _ : -');
+    }
+    if (mode === 'commit') {
+      const scope = caller ? (caller.master ? 'master' : String(caller.id || caller.name || 'caller')) : 'local';
+      idem = { requestId: `roster:${scope}:${body.idempotency_key}`, hash: _requestHash(secrets, body) };
+      const prior = _idempotencyLookup(db, secrets, idem.requestId);
+      if (prior) {
+        if (prior.hash !== idem.hash) {
+          log.warn('roster.commit.idempotency_conflict', { actor });
+          throw new RosterError('idempotency_key was already used for a different commit', 409, { code: 'idempotency_conflict' });
+        }
+        log.info('roster.commit.replayed', { actor, ms: Date.now() - started });
+        return { ...prior.response, replayed: true };
+      }
+    }
+  }
+
+  const sheets = prepare(body);
+  const decisions = (body.decisions && typeof body.decisions === 'object') ? body.decisions : {};
   const source = body.source || 'roster';
   const sourceRef = typeof body.source_ref === 'string' ? body.source_ref.slice(0, 200) : null;
   const category = ['church', 'school', 'other'].includes(body.category) ? body.category : null;
@@ -675,6 +909,14 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
   const personCodeByKey = new Map();
   const familyCodeByKey = new Map();
   const pending = [];
+  // Decisions the data has overtaken since the operator made them (a
+  // 'create' for someone who now has a definitive match, or the same commit
+  // sent twice). COMMIT refuses while any exist; the plan shows why.
+  const stale = [];
+  // Existing people whose details this run showed the caller (codes only,
+  // for the audit trail).
+  const disclosed = new Set();
+  const priorRun = _priorRunCodes(db, body.source || 'roster', sourceRef, sheets.length);
   const output = sheets.map(s => ({
     index: s.index,
     name: s.name,
@@ -695,6 +937,7 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
 
   function describePerson(scored) {
     const c = scored.candidate;
+    if (!createdPersons.has(c.code)) disclosed.add(c.code);
     const fam = _activeFamiliesOf(db, c.code, { includeArchived: true })[0];
     const famSummary = fam ? _familySummary(db, secrets, fam.code) : null;
     const d = {
@@ -714,9 +957,18 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
       confidence: Math.round(scored.confidence * 100) / 100,
       reasons: scored.reasons,
     };
-    const grade = db.prepare('SELECT grade FROM persons WHERE code = ?').get(c.code);
+    const grade = _stmt(db, 'SELECT grade FROM persons WHERE code = ?').get(c.code);
     d.grade = grade ? grade.grade || null : null;
     return d;
+  }
+
+  // Record a decision the data has overtaken. It is not applied; the item
+  // follows what the data says now (a review stays a review) and COMMIT
+  // refuses until the caller re-plans.
+  function markStale(key, outItem, why) {
+    stale.push(key);
+    outItem.stale_decision = why;
+    outItem.review_reasons = [...new Set([...(outItem.review_reasons || []), why])];
   }
 
   function resolveTargetPerson(target) {
@@ -728,7 +980,7 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
     const code = ids.fromCommunityId(target);
     if (!code || ids.kindOf(code) !== 'person') throw new RosterError(`decision target ${target} is not an individual id`, 409);
     const resolved = aliases.resolveAlias(db, code);
-    const row = db.prepare('SELECT code, status FROM persons WHERE code = ?').get(resolved);
+    const row = _stmt(db, 'SELECT code, status FROM persons WHERE code = ?').get(resolved);
     if (!row) throw new RosterError(`decision target ${target} does not exist`, 409);
     return row.code;
   }
@@ -742,13 +994,13 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
     const code = ids.fromCommunityId(target);
     if (!code || ids.kindOf(code) !== 'family') throw new RosterError(`decision target ${target} is not a family id`, 409);
     const resolved = aliases.resolveAlias(db, code);
-    const row = db.prepare('SELECT code, status FROM families WHERE code = ?').get(resolved);
+    const row = _stmt(db, 'SELECT code, status FROM families WHERE code = ?').get(resolved);
     if (!row) throw new RosterError(`decision target ${target} does not exist`, 409);
     return row.code;
   }
 
   function attachPerson(code, incoming, { via, reasons, confidence }) {
-    const row = db.prepare('SELECT status FROM persons WHERE code = ?').get(code);
+    const row = _stmt(db, 'SELECT status FROM persons WHERE code = ?').get(code);
     if (row && row.status === 'archived') {
       people.reinstate(db, code, { actor, reason: 'returned on a roster import' });
     }
@@ -776,7 +1028,7 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
     createdPersons.set(code, key);
     for (const r of rejected) {
       if (!r || !r.code || createdPersons.has(r.code)) continue;
-      db.prepare(
+      _stmt(db, 
         `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons, status, resolved_by, resolved_at, resolution_notes)
          VALUES (?, 'person', ?, ?, ?, ?, 'rejected', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?)`
       ).run(ids.newCode('conflict'), code, r.code, r.confidence || 0, JSON.stringify(r.reasons || []),
@@ -864,6 +1116,10 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
         const t = thresholds;
         const incomingClass = _roleClass(incoming.role);
         const strong = [];
+        // Definitive candidates something else clearly contradicts: a child
+        // seen earlier in this upload in another grade, contacts and home all
+        // different. Never matched on their own; a person looks.
+        const contradicted = [];
         const reviewReasons = new Set();
         let toldApart = 0;
         const different = new Map();
@@ -893,12 +1149,21 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
             }
             continue;
           }
+          const why = _gradeContradicts(incoming, runSeen.get(s.candidate.code)) ? 'different_grade_same_upload' : isDifferent(s);
+          if (why) {
+            contradicted.push({ s, why });
+            continue;
+          }
           strong.push(s);
         }
         // Candidates worth a person's time: something about the person lines
         // up, and nothing clearly says "someone else".
         const reviewable = sc => sc.confidence >= t.review && _plausible(sc) && !isDifferent(sc);
-        const household = _householdMatches(db, secrets, incoming, personOutcomes, canonical);
+        const household = _householdMatches(db, secrets, incoming, personOutcomes, canonical).filter(h => {
+          if (!_gradeContradicts(incoming, runSeen.get(h.candidate.code))) return true;
+          if (!contradicted.some(c => c.s.candidate.code === h.candidate.code)) contradicted.push({ s: h, why: 'different_grade_same_upload' });
+          return false;
+        });
 
         // Exact links come before any matching. (1) The crosswalk: this very
         // source record was imported before - it IS that person, unless the
@@ -914,13 +1179,21 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
         if (incoming._ref) {
           const x = crosswalk.lookup(db, source, incoming._ref);
           if (x && x.kind === 'person') {
-            const row0 = db.prepare('SELECT * FROM persons WHERE code = ?').get(x.code);
+            const row0 = _stmt(db, 'SELECT * FROM persons WHERE code = ?').get(x.code);
             const cand = resolver.enrichCandidate(db, secrets, row0);
             const sc = _namesScore(incoming, cand);
             const s = { candidate: cand, confidence: 1, reasons: ['linked_record', ...sc.reasons], definitive: true };
             const rest = others.filter(o => o.candidate.code !== x.code);
-            const stillSame = !sc.reasons.some(r => LINK_VETOES.has(r)) &&
-              (sc.reasons.some(r => FIRST_NAME_REASONS.has(r)) || sc.reasons.includes('exact_date_of_birth'));
+            // Still the same person: the same first name or a true nickname
+            // of it, or the same birthdate with a first name that at least
+            // resembles it (a typo fixed). A merely similar name (Mark /
+            // Mary, John / Joan) is a record reused for someone else as
+            // often as a typo, and a new name with the same birthdate can be
+            // a twin: a person looks.
+            const firstSame = sc.reasons.includes('exact_first_name') ||
+              (sc.reasons.includes('nickname_or_short_form') && !matching.nicknameAmbiguous(incoming.given_name));
+            const dobSame = sc.reasons.includes('exact_date_of_birth') && sc.reasons.some(r => FIRST_NAME_REASONS.has(r));
+            const stillSame = !sc.reasons.some(r => LINK_VETOES.has(r)) && (firstSame || dobSame);
             if (rowCodes.includes(x.code)) pre = { kind: 'review', cands: [s, ...rest].slice(0, 4), reason: 'linked_record_used_twice' };
             else if (x.status === 'archived') pre = { kind: 'review', cands: [s, ...rest].slice(0, 4), reason: 'linked_record_archived' };
             else if (!stillSame) pre = { kind: 'review', cands: [s, ...rest].slice(0, 4), reason: 'linked_record_changed' };
@@ -929,7 +1202,7 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
         }
         if (!pre && incoming._code_hint && !_nameProblem(incoming)) {
           const hinted = aliases.resolveAlias(db, incoming._code_hint);
-          const row0 = db.prepare('SELECT * FROM persons WHERE code = ?').get(hinted);
+          const row0 = _stmt(db, 'SELECT * FROM persons WHERE code = ?').get(hinted);
           if (row0 && row0.status !== 'merged') {
             const cand = resolver.enrichCandidate(db, secrets, row0);
             const sc = _namesScore(incoming, cand);
@@ -959,10 +1232,13 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
           verdict = { kind: 'review', cands: others.slice(0, 3) };
           reviewReasons.add(nameProblem);
         } else if (twin) {
-          const row0 = db.prepare('SELECT * FROM persons WHERE code = ?').get(twin.code);
+          const row0 = _stmt(db, 'SELECT * FROM persons WHERE code = ?').get(twin.code);
           const s = { candidate: resolver.enrichCandidate(db, secrets, row0), confidence: 0.9, reasons: ['same_name_on_row'], definitive: false };
           verdict = { kind: 'review', cands: [s, ...strong.filter(o => o.candidate.code !== twin.code)].slice(0, 4) };
           reviewReasons.add('same_name_twice_in_household');
+        } else if (contradicted.length) {
+          verdict = { kind: 'review', cands: [...contradicted.map(c => c.s), ...strong].slice(0, 5) };
+          for (const c of contradicted) reviewReasons.add(c.why);
         } else if (strong.length === 1 && activeStrong.length === 1 &&
                    !(household.length && !household.some(h => h.candidate.code === strong[0].candidate.code))) {
           verdict = { kind: 'match', best: strong[0], via: 'score' };
@@ -1005,8 +1281,23 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
           out.review_reasons = [...reviewReasons];
         }
 
+        // A decision answers the question the operator was shown. If the
+        // data now gives a definitive answer that differs (someone else
+        // imported the real person meanwhile), or the review offers people
+        // this same upload already committed (a retried commit), applying it
+        // would mint a second id for one human.
+        let dApply = d;
+        if (d && verdict.kind === 'match') {
+          const same = d.action === 'attach' && resolveTargetPerson(d.target) === verdict.best.candidate.code;
+          if (!same) { markStale(key, out, 'decision_no_longer_applies'); dApply = null; }
+        } else if (d && verdict.kind === 'review' && d.action === 'create' &&
+                   verdict.cands.some(s => priorRun.person.has(s.candidate.code))) {
+          markStale(key, out, 'decision_repeats_earlier_commit');
+          dApply = null;
+        }
+
         let result;
-        if (d) {
+        if (dApply) {
           out.decided = true;
           if (d.action === 'attach') {
             const code = resolveTargetPerson(d.target);
@@ -1094,7 +1385,7 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
           if (!o.code) continue;
           const role = (o.incoming || {}).role;
           const grp = _vouchGroup(role);
-          const fams = db.prepare(
+          const fams = _stmt(db, 
             `SELECT m.family_code AS code, m.role AS role FROM memberships m
                JOIN families f ON f.code = m.family_code
               WHERE m.person_code = ? AND m.ended_at IS NULL AND f.status IN ('active','archived')`
@@ -1227,7 +1518,7 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
 
         const describeFamily = (code) => {
           const f = _familySummary(db, secrets, code);
-          const members = db.prepare(
+          const members = _stmt(db, 
             `SELECT p.code, p.given_name_ct, p.family_name_ct, m.role FROM memberships m
                JOIN persons p ON p.code = m.person_code
               WHERE m.family_code = ? AND m.ended_at IS NULL LIMIT 12`
@@ -1255,7 +1546,7 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
           createdFamilies.set(code, familyKey);
           for (const other of rejected) {
             if (createdFamilies.has(other)) continue;
-            db.prepare(
+            _stmt(db, 
               `INSERT INTO conflicts (code, kind, left_code, right_code, score, reasons, status, resolved_by, resolved_at, resolution_notes)
                VALUES (?, 'family', ?, ?, 0, ?, 'rejected', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?)`
             ).run(ids.newCode('conflict'), code, other, JSON.stringify(reasons), actor,
@@ -1274,8 +1565,18 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
           return { code, action: 'attached' };
         };
 
+        let dApply = d;
+        if (d && verdict.kind === 'match') {
+          const same = d.action === 'attach' && resolveTargetFamily(d.target) === verdict.code;
+          if (!same) { markStale(familyKey, outFam, 'decision_no_longer_applies'); dApply = null; }
+        } else if (d && verdict.kind === 'review' && d.action === 'create' &&
+                   verdict.cands.some(c => priorRun.family.has(c))) {
+          markStale(familyKey, outFam, 'decision_repeats_earlier_commit');
+          dApply = null;
+        }
+
         let result;
-        if (d) {
+        if (dApply) {
           outFam.decided = true;
           if (d.action === 'attach') {
             result = attachFamily(resolveTargetFamily(d.target), 'decision');
@@ -1349,14 +1650,24 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
   }
 
   let committed = false;
+  let result = null;
+  const buildResult = () => {
+    const r = { mode, committed, summary, pending, stale_decisions: stale, sheets: output };
+    if (committed) r.import_runs = output.map(s => s.import_run).filter(Boolean);
+    return r;
+  };
   try {
     db.transaction(() => {
       exec();
-      if (mode === 'plan' || pending.length) throw ROLLBACK;
+      if (mode === 'plan' || pending.length || stale.length) throw ROLLBACK;
+      committed = true;
+      result = buildResult();
+      // Same transaction as the writes: the key exists exactly when the
+      // commit does.
+      if (idem) _idempotencyStore(db, secrets, idem, result);
     })();
-    committed = true;
   } catch (e) {
-    if (e !== ROLLBACK) throw e;
+    if (e !== ROLLBACK) { committed = false; throw e; }
   }
 
   // A rolled-back run's import_runs rows and minted ids no longer exist.
@@ -1367,15 +1678,8 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
       ...[...createdFamilies.keys()].map(ids.toCommunityId),
     ]);
     _blankIds(output, minted);
+    result = buildResult();
   }
-  const result = {
-    mode,
-    committed,
-    summary,
-    pending,
-    sheets: output,
-  };
-  if (committed) result.import_runs = output.map(s => s.import_run).filter(Boolean);
   const ms = Date.now() - started;
 
   // Outside the transaction: a plan's audit row must survive its rollback.
@@ -1390,8 +1694,14 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
       persons: summary.persons,
       families: summary.families,
       pending: pending.length,
+      stale_decisions: stale.length,
       decisions: Object.keys(decisions).length,
       import_runs: result.import_runs || null,
+      idempotency_key: !!idem,
+      // Which existing people the response showed (codes, never values),
+      // so repeated name probing leaves a trail.
+      disclosed_persons: [...disclosed].slice(0, 500),
+      disclosed_count: disclosed.size,
       ms,
     },
   });
@@ -1411,6 +1721,8 @@ function run(db, secrets, thresholds, body, { mode, actor = 'roster' } = {}) {
     crosswalk_relinked: summary.crosswalk.relinked,
     told_apart: summary.told_apart,
     pending: pending.length,
+    stale_decisions: stale.length,
+    disclosed: disclosed.size,
     ms,
   });
   return result;
@@ -1493,7 +1805,7 @@ function lookup(db, id) {
   if (kind !== 'person' && kind !== 'family') return null;
   const target = aliases.resolveAlias(db, code);
   const table = kind === 'person' ? 'persons' : 'families';
-  const row = db.prepare(`SELECT code, status, merged_into FROM ${table} WHERE code = ?`).get(target);
+  const row = _stmt(db, `SELECT code, status, merged_into FROM ${table} WHERE code = ?`).get(target);
   if (!row) return null;
   return {
     kind,

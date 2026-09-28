@@ -241,7 +241,7 @@ function findCandidates(db, secrets, incoming, opts = {}) {
       }
     }
     for (const r of _stmt(db,
-      `SELECT * FROM persons WHERE ${statusSql} AND family_name_hash = ? LIMIT ${familyLimit}`
+      `SELECT code, status, kind, given_name_ct, family_name_ct, suffix_ct, date_of_birth_ct FROM persons WHERE ${statusSql} AND family_name_hash = ? LIMIT ${familyLimit}`
     ).all(h)) {
       take(r, false);
     }
