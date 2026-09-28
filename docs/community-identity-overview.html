@@ -76,13 +76,13 @@
   <div class="kicker">Community Identity &middot; [Parish Name] and School</div>
   <h1>One Person, One ID, Everywhere</h1>
   <div class="subtitle">How MissionIQ, Family Graph, and Doc Anonymizer share a lifelong identifier for every family and every person.</div>
-  <div class="sowhat">Every parishioner, parent, and student now carries one permanent ID (I&hellip; for a person, F&hellip; for a family) that no product ever issues twice, and a roster can be sent through AI without a single real name leaving the Spark server.</div>
+  <div class="sowhat">Every parishioner, parent, and student now carries one permanent ID (I&hellip; for a person, F&hellip; for a family) that no product ever issues twice, and a roster can be sent through AI without a single real name leaving the school's network.</div>
 
   <div class="glance">
-    <div class="metric"><div class="num">@@PEOPLE@@</div><div class="lbl">people imported from MissionIQ demo data in @@IMPORT_SECONDS@@ seconds</div></div>
-    <div class="metric"><div class="num">@@QUESTIONS@@</div><div class="lbl">questions a person had to answer; the rest settled automatically</div></div>
+    <div class="metric"><div class="num">1,289</div><div class="lbl">people imported from MissionIQ demo data in 4 seconds</div></div>
+    <div class="metric"><div class="num">10</div><div class="lbl">questions a person had to answer; the rest settled automatically</div></div>
     <div class="metric"><div class="num">0</div><div class="lbl">wrong matches on a 500-family test roster</div></div>
-    <div class="metric"><div class="num">@@TESTS@@</div><div class="lbl">automated tests passing across both products</div></div>
+    <div class="metric"><div class="num">1,055</div><div class="lbl">automated tests passing across both products</div></div>
   </div>
 
   <div class="section">
@@ -97,7 +97,7 @@
       <li>Built a one-time, read-only MissionIQ import that links every MissionIQ record to its Family Graph person, so later lookups are exact, not guesses.</li>
       <li>Connected Doc Anonymizer to Family Graph for spreadsheets: names become IDs, questions appear in the preview, and nothing is written until you confirm.</li>
       <li>Rewrote matching so obvious cases settle on their own in both directions, and only real ambiguity reaches a person.</li>
-      <li>Locked it down: both apps listen on the Spark server only, keys are scoped, and logs hold counts, never names.</li>
+      <li>Locked it down: everything stays inside the firewall, every data call needs a scoped key, and logs hold counts, never names.</li>
       <li>Ran an independent bug hunt: 40 defects fixed, plus 10 caught reviewing the fixes.</li>
     </ul>
   </div>
@@ -106,7 +106,7 @@
     <div>
       <h3>Results</h3>
       <ul>
-        <li><strong>@@QUESTIONS@@ of @@PEOPLE@@</strong> people needed a decision on the MissionIQ import; a re-run needed <strong>0</strong>.</li>
+        <li><strong>10 of 1,289</strong> people needed a decision on the MissionIQ import; a re-run needed <strong>0</strong>.</li>
         <li><strong>0 wrong matches</strong> and <strong>30 questions</strong> (1 in 33 people) on a 500-family roster; before the rework it was 884 questions.</li>
         <li>Fixed old matcher bugs that could merge spouses or neighbors.</li>
       </ul>
@@ -114,20 +114,20 @@
     <div>
       <h3>What's next</h3>
       <ul>
-        <li>Pull main on the Spark server and run <span class="mono">import-missioniq</span> once, answering its few questions.</li>
-        <li>If MissionIQ uses a scoped key, reissue it named <span class="mono">missioniq</span> first.</li>
+        <li>Upgrade Family Graph on the Spark server, then run <span class="mono">import-missioniq</span> once, answering its few questions.</li>
+        <li>Connect MissionIQ with a key named <span class="mono">missioniq</span> and press Sync now once.</li>
         <li>Anonymize the first real roster and keep the key file in the backup routine.</li>
       </ul>
     </div>
   </div>
 
-  <div class="footer"><span>Prepared @@DATE@@ &middot; Operations, [Parish Name]</span><span>Page 1 of 6</span></div>
+  <div class="footer"><span>Prepared September 28, 2026 &middot; Operations, [Parish Name]</span><span>Page 1 of 6</span></div>
 </section>
 
 <!-- =========================================================== PAGE 2 -->
 <section class="page">
   <div class="kicker">The system map</div>
-  <h2>Three products, one identity registry, one server</h2>
+  <h2>Three products, one identity registry, one firewall</h2>
   <p>Family Graph is the registry: it alone decides whether someone already exists and issues IDs. MissionIQ and Doc Anonymizer ask it; they never mint an identity of their own.</p>
 
   <div class="figure">
@@ -139,67 +139,65 @@
       <!-- firewall -->
       <rect x="8" y="8" width="684" height="414" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 5"/>
       <text x="24" y="30" font-size="11" font-weight="700" fill="#475569" letter-spacing="1">INSIDE THE FIREWALL</text>
-      <!-- spark box -->
-      <rect x="150" y="48" width="528" height="346" rx="12" fill="#ffffff" stroke="#1f2a44" stroke-width="1.5"/>
-      <text x="166" y="70" font-size="11" font-weight="700" fill="#1f2a44" letter-spacing="1">SPARK SERVER</text>
-      <text x="166" y="86" font-size="9.5" fill="#5b6475">every service listens on 127.0.0.1 only</text>
+      <text x="676" y="30" font-size="9" fill="#475569" text-anchor="end">Later: ParentPoint and TeacherAIde read the same IDs</text>
 
-      <!-- Family Graph -->
-      <rect x="360" y="120" width="300" height="130" rx="10" fill="#e6f4f2" stroke="#0f766e" stroke-width="1.5"/>
-      <text x="376" y="144" font-size="13" font-weight="700" fill="#0f766e">Family Graph</text>
-      <text x="376" y="160" font-size="9.5" fill="#1c2433">identity registry &middot; 127.0.0.1:3500</text>
-      <text x="376" y="182" font-size="9.5" fill="#1c2433">&#8226; people, households, encrypted contact data</text>
-      <text x="376" y="197" font-size="9.5" fill="#1c2433">&#8226; issues I&#8230; and F&#8230; IDs, never twice</text>
-      <text x="376" y="212" font-size="9.5" fill="#1c2433">&#8226; crosswalk: MissionIQ record &#8594; person</text>
-      <text x="376" y="227" font-size="9.5" fill="#1c2433">&#8226; audit trail of every match and decision</text>
+      <!-- operator's Mac -->
+      <rect x="20" y="48" width="300" height="346" rx="12" fill="#ffffff" stroke="#1f2a44" stroke-width="1.5"/>
+      <text x="36" y="70" font-size="11" font-weight="700" fill="#1f2a44" letter-spacing="1">OPERATOR'S MAC</text>
+      <text x="36" y="86" font-size="9.5" fill="#5b6475">Doc Anonymizer answers on 127.0.0.1 only</text>
 
       <!-- Doc Anonymizer -->
-      <rect x="166" y="120" width="160" height="130" rx="10" fill="#ffffff" stroke="#1f2a44"/>
-      <text x="180" y="144" font-size="13" font-weight="700" fill="#1f2a44">Doc Anonymizer</text>
-      <text x="180" y="160" font-size="9.5" fill="#1c2433">127.0.0.1:5000</text>
-      <text x="180" y="182" font-size="9.5" fill="#1c2433">&#8226; any file: PDF, Word,</text>
-      <text x="180" y="196" font-size="9.5" fill="#1c2433">  scans, slides, sheets</text>
-      <text x="180" y="212" font-size="9.5" fill="#1c2433">&#8226; spreadsheets also get</text>
-      <text x="180" y="226" font-size="9.5" fill="#1c2433">  community IDs</text>
+      <rect x="36" y="120" width="238" height="130" rx="10" fill="#ffffff" stroke="#1f2a44"/>
+      <text x="50" y="144" font-size="13" font-weight="700" fill="#1f2a44">Doc Anonymizer</text>
+      <text x="50" y="160" font-size="9.5" fill="#1c2433">browser at 127.0.0.1:5000</text>
+      <text x="50" y="182" font-size="9.5" fill="#1c2433">&#8226; any file: PDF, Word, scans,</text>
+      <text x="50" y="196" font-size="9.5" fill="#1c2433">  slides, sheets</text>
+      <text x="50" y="212" font-size="9.5" fill="#1c2433">&#8226; spreadsheets also get</text>
+      <text x="50" y="226" font-size="9.5" fill="#1c2433">  community IDs</text>
 
       <!-- Ollama -->
-      <rect x="166" y="290" width="160" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
-      <text x="180" y="314" font-size="12" font-weight="700" fill="#1f2a44">Local AI model</text>
-      <text x="180" y="330" font-size="9.5" fill="#1c2433">Ollama &middot; 127.0.0.1:11434</text>
-      <text x="180" y="350" font-size="9.5" fill="#1c2433">finds names and contact</text>
-      <text x="180" y="364" font-size="9.5" fill="#1c2433">details; never leaves box</text>
+      <rect x="36" y="290" width="238" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+      <text x="50" y="314" font-size="12" font-weight="700" fill="#1f2a44">Local AI model</text>
+      <text x="50" y="330" font-size="9.5" fill="#1c2433">Ollama on the Mac</text>
+      <text x="50" y="350" font-size="9.5" fill="#1c2433">finds names and contact details;</text>
+      <text x="50" y="364" font-size="9.5" fill="#1c2433">the text never leaves the Mac</text>
+
+      <!-- spark box -->
+      <rect x="362" y="48" width="316" height="346" rx="12" fill="#ffffff" stroke="#1f2a44" stroke-width="1.5"/>
+      <text x="378" y="70" font-size="11" font-weight="700" fill="#1f2a44" letter-spacing="1">SPARK SERVER</text>
+      <text x="378" y="86" font-size="9.5" fill="#5b6475">Kubernetes, managed from HQ; site network only</text>
+
+      <!-- Family Graph -->
+      <rect x="378" y="120" width="284" height="130" rx="10" fill="#e6f4f2" stroke="#0f766e" stroke-width="1.5"/>
+      <text x="392" y="144" font-size="13" font-weight="700" fill="#0f766e">Family Graph</text>
+      <text x="392" y="160" font-size="9.5" fill="#1c2433">identity registry &middot; site port 30500</text>
+      <text x="392" y="182" font-size="9.5" fill="#1c2433">&#8226; people, households, encrypted contacts</text>
+      <text x="392" y="197" font-size="9.5" fill="#1c2433">&#8226; issues I&#8230; and F&#8230; IDs, never twice</text>
+      <text x="392" y="212" font-size="9.5" fill="#1c2433">&#8226; crosswalk: MissionIQ record &#8594; person</text>
+      <text x="392" y="227" font-size="9.5" fill="#1c2433">&#8226; audit trail of every match and decision</text>
 
       <!-- MissionIQ -->
-      <rect x="360" y="290" width="300" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
-      <text x="376" y="314" font-size="12" font-weight="700" fill="#1f2a44">MissionIQ</text>
-      <text x="376" y="330" font-size="9.5" fill="#1c2433">donor platform &middot; its own database file</text>
-      <text x="376" y="350" font-size="9.5" fill="#1c2433">&#8226; one-time import: read-only, never written</text>
-      <text x="376" y="364" font-size="9.5" fill="#1c2433">&#8226; "Sync now" gets the exact linked ID back</text>
+      <rect x="378" y="290" width="284" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+      <text x="392" y="314" font-size="12" font-weight="700" fill="#1f2a44">MissionIQ</text>
+      <text x="392" y="330" font-size="9.5" fill="#1c2433">donor platform &middot; site port 30301</text>
+      <text x="392" y="350" font-size="9.5" fill="#1c2433">&#8226; one-time import from a read-only copy</text>
+      <text x="392" y="364" font-size="9.5" fill="#1c2433">&#8226; "Sync now" gets the exact linked ID back</text>
 
       <!-- arrows -->
-      <line x1="326" y1="170" x2="356" y2="170" stroke="#0f766e" stroke-width="2" marker-end="url(#arrT)"/>
-      <line x1="356" y1="200" x2="330" y2="200" stroke="#0f766e" stroke-width="2" marker-end="url(#arrT)"/>
-      <text x="330" y="112" font-size="8.5" fill="#0f766e" font-weight="600">roster plan / commit</text>
-      <line x1="246" y1="250" x2="246" y2="286" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
-      <text x="252" y="272" font-size="8.5" fill="#475569">detect PII</text>
+      <line x1="274" y1="170" x2="374" y2="170" stroke="#0f766e" stroke-width="2" marker-end="url(#arrT)"/>
+      <line x1="374" y1="200" x2="278" y2="200" stroke="#0f766e" stroke-width="2" marker-end="url(#arrT)"/>
+      <text x="341" y="146" font-size="8.5" fill="#0f766e" font-weight="600" text-anchor="middle">roster</text>
+      <text x="341" y="158" font-size="8.5" fill="#0f766e" font-weight="600" text-anchor="middle">plan +</text>
+      <text x="341" y="218" font-size="8.5" fill="#0f766e" font-weight="600" text-anchor="middle">commit</text>
+      <text x="341" y="232" font-size="8" fill="#475569" text-anchor="middle">site</text>
+      <text x="341" y="243" font-size="8" fill="#475569" text-anchor="middle">LAN</text>
+      <line x1="155" y1="250" x2="155" y2="286" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="161" y="272" font-size="8.5" fill="#475569">detect PII</text>
       <line x1="470" y1="290" x2="470" y2="254" stroke="#0f766e" stroke-width="2" marker-end="url(#arrT)"/>
       <text x="476" y="276" font-size="8.5" fill="#0f766e" font-weight="600">import (read-only)</text>
-      <line x1="580" y1="254" x2="580" y2="286" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
-      <text x="586" y="276" font-size="8.5" fill="#475569">exact IDs</text>
-
-      <!-- operator -->
-      <rect x="20" y="150" width="112" height="70" rx="10" fill="#ffffff" stroke="#1f2a44"/>
-      <text x="34" y="176" font-size="11.5" font-weight="700" fill="#1f2a44">Operator</text>
-      <text x="34" y="192" font-size="9" fill="#1c2433">Mac browser over</text>
-      <text x="34" y="205" font-size="9" fill="#1c2433">an SSH tunnel</text>
-      <line x1="132" y1="185" x2="162" y2="185" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
-
-      <!-- future -->
-      <rect x="20" y="300" width="112" height="86" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="4 3"/>
-      <text x="34" y="324" font-size="11" font-weight="700" fill="#475569">Later</text>
-      <text x="34" y="340" font-size="9" fill="#475569">ParentPoint,</text>
-      <text x="34" y="353" font-size="9" fill="#475569">TeacherAIde read</text>
-      <text x="34" y="366" font-size="9" fill="#475569">the same IDs</text>
+      <line x1="590" y1="254" x2="590" y2="286" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="596" y="270" font-size="8.5" fill="#475569">exact IDs,</text>
+      <text x="596" y="281" font-size="8.5" fill="#475569">in-server</text>
 
       <!-- outside -->
       <text x="24" y="412" font-size="9" fill="#9f1239" font-weight="600">Nothing on this page talks to the internet. The only outside call is GitHub, and only when you press Push.</text>
@@ -470,8 +468,8 @@ every [?] is answered</span></div>
     <h3>Measured on test data</h3>
     <table class="tbl">
       <tr><th>Run</th><th>People</th><th>Questions</th><th>Wrong matches</th></tr>
-      <tr><td>MissionIQ demo data, first import</td><td>@@PEOPLE@@</td><td>@@QUESTIONS@@</td><td>0</td></tr>
-      <tr><td>Same import, run again</td><td>@@PEOPLE@@</td><td>0</td><td>0</td></tr>
+      <tr><td>MissionIQ demo data, first import</td><td>1,289</td><td>10</td><td>0</td></tr>
+      <tr><td>Same import, run again</td><td>1,289</td><td>0</td><td>0</td></tr>
       <tr><td>500-family roster, first time (before the rework)</td><td>1,000</td><td>884</td><td>0</td></tr>
       <tr><td>500-family roster, first time (after)</td><td>1,000</td><td>30</td><td>0</td></tr>
       <tr><td>Same roster, re-imported</td><td>1,000</td><td>0</td><td>0</td></tr>
@@ -489,11 +487,11 @@ every [?] is answered</span></div>
     <div class="card">
       <h3>Security posture</h3>
       <ul>
-        <li>Family Graph, Doc Anonymizer, and Ollama listen on 127.0.0.1 only. From your Mac you reach them through an SSH tunnel (below); Doc Anonymizer refuses any other address.</li>
-        <li>Doc Anonymizer refuses any Family Graph address that is not on this machine or the local network. There is no override.</li>
+        <li>Family Graph and MissionIQ run in Kubernetes on the Spark server, managed from HQ, and answer only on the site network. MissionIQ reaches Family Graph inside the server.</li>
+        <li>Every Family Graph data call needs a key. Port 30500 is plain HTTP, so keep it on a staff-only network; guest or student Wi-Fi must not reach it.</li>
+        <li>Doc Anonymizer runs on your Mac, answers only on 127.0.0.1, and refuses any Family Graph address outside the local network. No override.</li>
         <li>Doc Anonymizer's Family Graph key carries only the <span class="mono">roster</span> scope. It is stored in a file only the owner can read, never shown again, never logged.</li>
         <li>Contact details in Family Graph are encrypted at rest; searches use keyed hashes.</li>
-        <li>Doc Anonymizer refuses requests from other websites, and a changed Family Graph address never receives the stored key.</li>
         <li>Uploaded files are deleted the moment processing ends or fails.</li>
       </ul>
     </div>
@@ -502,8 +500,9 @@ every [?] is answered</span></div>
       <ul>
         <li><strong>Logged:</strong> file name, sizes, counts matched / new / asked, import run code, timings, and full error details.</li>
         <li><strong>Never logged:</strong> names, emails, phones, addresses, document text, replacement values, or keys.</li>
-        <li>Family Graph: <span class="mono">~/.family-graph/logs/server.log</span> and <span class="mono">cli.log</span>.</li>
-        <li>Doc Anonymizer: <span class="mono">~/doc-anonymizer/anonymizer.log</span>.</li>
+        <li>Family Graph: <span class="mono">server.log</span> and <span class="mono">cli.log</span> under <span class="mono">/data/logs</span> in its pod.</li>
+        <li>MissionIQ: <span class="mono">/data/logs/familygraph.log</span> in its pod.</li>
+        <li>Doc Anonymizer: <span class="mono">~/doc-anonymizer/anonymizer.log</span> on the Mac.</li>
         <li>Paste the last lines into a chat when something breaks; they are safe to share.</li>
       </ul>
     </div>
@@ -511,30 +510,32 @@ every [?] is answered</span></div>
 
   <div class="section">
     <h3>First-time setup on the Spark server</h3>
-    <div class="cmd">cd ~/familygraph
-git checkout main &amp;&amp; git pull &amp;&amp; SFW=1 sfw npm ci
-node bin/family-graph.js start                     # leave this window running
-node bin/family-graph.js issue-key docanonymizer roster
-node bin/family-graph.js issue-key missioniq       # only if MissionIQ uses a scoped key
-node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --dry-run
-node bin/family-graph.js import-missioniq ~/missionIQ/data/missioniq.db --category church</div>
-    <p class="caption">Paste the docanonymizer key into Doc Anonymizer's [ FAMILY GRAPH ] panel, and the missioniq key into MissionIQ's FAMILYGRAPH_TOKEN. Run everything after start in a second Terminal window. To use the apps from your Mac, open a tunnel first: <span class="mono">ssh -L 5000:127.0.0.1:5000 -L 3500:127.0.0.1:3500 [you]@[spark-server]</span>, then browse to http://127.0.0.1:5000. The dry run shows the counts and how many questions to expect; the real run asks them and writes only after you type YES. Exact paths are in each README.</p>
+    <div class="cmd"># HQ: build Family Graph 5a698e6, merge the edge-ops branch, sync familygraph
+# On the Spark server, as root:
+FG="k3s kubectl -n familygraph exec -it deploy/familygraph --"
+$FG node bin/family-graph.js issue-key missioniq              # token goes into Vault
+$FG node bin/family-graph.js issue-key docanonymizer roster   # token goes into Doc Anonymizer
+# copy MissionIQ's database into the pod (runbook step 4), then:
+$FG node bin/family-graph.js import-missioniq /tmp/missioniq.db --dry-run
+$FG node bin/family-graph.js import-missioniq /tmp/missioniq.db --category church
+# HQ: sync missioniq-secrets, then missioniq. In MissionIQ press Sync now once.</div>
+    <p class="caption">Every command, in order, with checks and rollback: <span class="mono">familygraph-missioniq-connect.md</span> in the edge-ops repo. In Doc Anonymizer's [ FAMILY GRAPH ] panel use <span class="mono">http://[box-ip]:30500</span> and the docanonymizer key. The missioniq key goes into Vault, never into a chat or a file. Import before the first Sync now, so every MissionIQ record links by its own id. The dry run shows the counts and questions; the real run writes only after you type YES.</p>
   </div>
 
   <div class="two" style="margin-top:6px">
     <div class="card">
       <h3>Keep in the backup routine</h3>
       <ul>
-        <li>Family Graph: <span class="mono">family-graph backup &lt;passphrase&gt;</span> (encrypted).</li>
-        <li>Doc Anonymizer: the <span class="mono">keys/</span> folder. Without a key file an anonymized document cannot be restored.</li>
+        <li>Family Graph: <span class="mono">family-graph backup &lt;passphrase&gt;</span> in its pod (encrypted, lands on its volume; copy it off the box).</li>
+        <li>Doc Anonymizer: the <span class="mono">keys/</span> folder on the Mac. Without a key file an anonymized document cannot be restored.</li>
       </ul>
     </div>
     <div class="card">
       <h3>Known follow-ups</h3>
       <ul>
         <li>MissionIQ: "re-check all" button, student sync, and household re-stamp, so new contacts use exact links. Until then, re-run the import to link new records.</li>
-        <li>A 2,000-row roster keeps Family Graph busy for about 10 seconds.</li>
-        <li>@@STALE_NOTE@@</li>
+        <li>Call Center: the goal is to run it on the local network too. Today it is a Firebase app, not set up on the server; the rebuild has not started.</li>
+        <li>Doc Anonymizer is not on the server yet; moving it there would keep roster traffic off the LAN.</li>
       </ul>
     </div>
   </div>

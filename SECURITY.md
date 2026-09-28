@@ -52,8 +52,12 @@ checkout.
   names, emails, phones, addresses, birthdates, or keys
   (`~/.family-graph/logs/server.log` and `cli.log`).
 - **Container binding.** The Dockerfile binds `0.0.0.0` inside the container;
-  publish it as `-p 127.0.0.1:3500:3500` so it stays on the host. On the Spark
-  server, reach it through an SSH tunnel or a LAN bind inside the firewall.
+  publish it as `-p 127.0.0.1:3500:3500` so it stays on the host. On the
+  managed Spark servers (Kubernetes, `ClaritasEDU/edge-ops`), in-cluster apps
+  use the ClusterIP Service, and the site's LAN port `30500` exposes Family
+  Graph to the school network over plain HTTP. Every data route there still
+  needs a Bearer key, `/api/safe` stays loopback-only, and the port must stay
+  on a staff-only network, never guest or student Wi-Fi.
 - **Supply chain.** Every dependency install must route through Socket Firewall
   (`sfw`), which checks fetched packages against Socket's risk database before
   they touch disk. See `CONTRIBUTING.md`.

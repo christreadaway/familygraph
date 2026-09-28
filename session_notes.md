@@ -4004,4 +4004,18 @@ cd ~/familygraph
 SFW=1 sfw npm ci
 ```
 
+## 2026-09-28 (follow-up) - The Spark box runs Kubernetes, so the deploy docs were wrong
+
+The owner shared the two internal addresses and the ports gave it away: Family Graph and MissionIQ already run in k3s on the Spark box as NodePorts (30500, 30301), deployed from HQ ArgoCD out of `ClaritasEDU/edge-ops`. Everything this repo said about the Spark server assumed a hand-built box: `git pull`, `npm ci`, `start`, both apps on 127.0.0.1, an SSH tunnel. None of that applies there.
+
+Worse, the image pinned on both boxes was `fdaf131`, the Dockerfile merge from this morning, which predates every line of the community id work. The roster API, the crosswalk and `import-missioniq` are not running anywhere yet.
+
+What shipped. An edge-ops branch (`claude/gracious-archimedes-8xhkgx`, three commits) pins `5a698e6` on both sites, adds `FAMILYGRAPH_TOKEN` to MissionIQ's Vault-rendered Secret and the in-cluster `FAMILYGRAPH_URL` (`http://familygraph.familygraph.svc:80`, the address beacon already uses) to MissionIQ's site values, and adds the runbook `familygraph-missioniq-connect.md`. `helm template` confirms the only MissionIQ Deployment diff is the one env entry. The full suite passes at the deploy SHA: 772 tests, 771 pass, 1 skipped, 0 fail.
+
+Here, the README and SECURITY.md now describe both shapes: the managed Kubernetes box (pin in edge-ops, state on the pod's volume, CLI via `kubectl exec`, in-cluster URL for apps, LAN port 30500 for the dashboard and Doc Anonymizer) and the hand-built box. The overview PDF's system map and setup page were redrawn the same way. The committed `docs/community-identity-overview.html` had shipped with its `@@PEOPLE@@`-style placeholders unfilled; it now matches the PDF.
+
+Decisions. Import before the first MissionIQ "Sync now", so every record links by its MissionIQ id; MissionIQ only calls Family Graph on an upload or a Sync now, so connecting early is harmless if nobody presses it. Rollback is a re-pin to `fdaf131`: the old runner leaves a schema-20 database alone and ignores `external_refs`. The MissionIQ snapshot for the import is taken with the SQLite backup API inside MissionIQ's own pod and streamed into the Family Graph pod, so it never lands on the host disk and includes anything still in the WAL (tested here with a live writer).
+
+Open. Port 30500 is plain HTTP on the school LAN, and edge-ops' network posture doc still says "familygraph stays on loopback". Doc Anonymizer has no image or chart, so it runs on a Mac and is the one consumer whose roster traffic crosses the LAN. Both are flagged in the runbook for the ops review.
+
 *End of session notes*

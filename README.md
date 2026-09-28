@@ -122,10 +122,26 @@ Inside the container Family Graph binds `0.0.0.0` (it has to, to be
 reachable on the container interface). The `-p 127.0.0.1:3500:3500` is what
 keeps it on the host only. Never publish it as plain `-p 3500:3500`.
 
-On the Spark server (Family Graph and Doc Anonymizer side by side inside the
-firewall), both services listen on `127.0.0.1`. Reach them from your laptop
-through an SSH tunnel, or a LAN bind that stays inside the firewall. Doc
-Anonymizer talks to Family Graph at `http://127.0.0.1:3500` on the same box.
+**On the managed Spark servers** this image runs in Kubernetes, deployed
+from HQ ArgoCD out of the `ClaritasEDU/edge-ops` repo. Nothing is installed
+by hand there:
+
+- The version is an image pin in `sites/familygraph/<site>.values.yaml`, and
+  all state lives on the pod's volume at `/data`.
+- Apps inside the cluster (MissionIQ, beacon) call
+  `http://familygraph.familygraph.svc:80` and never touch the site network.
+- The site also publishes port `30500` on the school network (owner request,
+  2026-09-28) for the dashboard and for Doc Anonymizer running on a Mac. That
+  port is plain HTTP behind API keys, so keep it on a staff-only network.
+- CLI commands run inside the pod:
+  `k3s kubectl -n familygraph exec -it deploy/familygraph -- node bin/family-graph.js <command>`.
+- The upgrade, the MissionIQ import, and the MissionIQ connection are laid
+  out step by step in edge-ops `familygraph-missioniq-connect.md`.
+
+**On a hand-built box** (Family Graph and Doc Anonymizer side by side, no
+Kubernetes), both services listen on `127.0.0.1`. Reach them from your
+laptop through an SSH tunnel. Doc Anonymizer talks to Family Graph at
+`http://127.0.0.1:3500` on the same box.
 
 ---
 
@@ -509,6 +525,17 @@ has linked MissionIQ's records. The master token also works.
 Logs for the run go to `~/.family-graph/logs/cli.log` (counts only, never
 names), not into the prompts. Paste its tail into a chat when something
 goes wrong.
+
+**On a fresh connection, import first.** Run `import-missioniq` before
+MissionIQ's first "Sync now", so every MissionIQ record is linked by its own
+id instead of matched by name. MissionIQ only talks to Family Graph on a new
+upload or when someone presses "Sync now", so connecting it early is
+harmless as long as nobody syncs.
+
+**On the managed Spark servers** MissionIQ's database lives on its own pod's
+volume. Take a read-only snapshot inside the MissionIQ pod, stream it into
+the Family Graph pod, and run the import there. The exact commands are in
+edge-ops `familygraph-missioniq-connect.md` (step 4).
 
 ---
 
