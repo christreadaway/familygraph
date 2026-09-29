@@ -206,6 +206,27 @@ function build({ db, secrets, includePii }) {
     res.json({ tags: updated });
   });
 
+  // Add tags without replacing the list: POST {tags:[...]} -> {code, tags}.
+  r.post('/:code/tags/add', (req, res) => {
+    if (!isValidCode(req.params.code, 'family')) {
+      return res.status(400).json({ error: 'invalid family code' });
+    }
+    const { tags } = req.body || {};
+    if (!Array.isArray(tags) || !tags.length || tags.some(t => typeof t !== 'string' || !t.trim())) {
+      return res.status(400).json({ error: 'tags must be a non-empty array of strings' });
+    }
+    const updated = tagsLib.addFamilyTags(db, req.params.code, tags);
+    if (updated == null) return res.status(404).json({ error: 'not found' });
+    audit.record(db, {
+      action: 'family_add_tags',
+      actor: req.auth?.actor || 'unknown',
+      entityCode: req.params.code,
+      entityKind: 'family',
+      metadata: { added: tags.length, total: updated.length },
+    });
+    res.json({ code: req.params.code, tags: updated });
+  });
+
   r.delete('/:code/tags/:tag', (req, res) => {
     if (!isValidCode(req.params.code, 'family')) {
       return res.status(400).json({ error: 'invalid family code' });

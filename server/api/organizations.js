@@ -182,6 +182,7 @@ function build({ db, secrets, includePii }) {
           person_code: req.body?.person_code,
           family_code: req.body?.family_code,
           role: req.body?.role,
+          class_year: req.body?.class_year ?? null,
         },
       });
       res.status(201).json({ code });

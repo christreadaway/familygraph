@@ -37,7 +37,7 @@ const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('
 
 // A MissionIQ database with the columns the real one has (families,
 // contacts, children, plus the fg_* stamps its sync writes).
-function fakeMissionIQ(dir, { families: fams = [], contacts: cons = [], children: kids = [] }, { minimal = false } = {}) {
+function fakeMissionIQ(dir, { families: fams = [], contacts: cons = [], children: kids = [], links = [] }, { minimal = false } = {}) {
   const p = path.join(dir, `missioniq-${crypto.randomBytes(4).toString('hex')}.sqlite`);
   const m = new Database(p);
   if (minimal) {
@@ -56,6 +56,8 @@ function fakeMissionIQ(dir, { families: fams = [], contacts: cons = [], children
         zip TEXT, family_id TEXT, role TEXT DEFAULT 'parent', relationship TEXT DEFAULT 'parent', birthday TEXT,
         gender TEXT, do_not_contact INTEGER DEFAULT 0, fg_person_code TEXT,
         created_at TEXT DEFAULT '2026-01-01 00:00:00');
+      CREATE TABLE family_links (id INTEGER PRIMARY KEY AUTOINCREMENT, family_id_a TEXT NOT NULL,
+        family_id_b TEXT NOT NULL, link_type TEXT NOT NULL DEFAULT 'shared_custody', notes TEXT);
       CREATE TABLE children (id INTEGER PRIMARY KEY AUTOINCREMENT, family_id TEXT NOT NULL, first_name TEXT,
         last_name TEXT, grade TEXT, birthday TEXT, enrolled INTEGER DEFAULT 1);
     `);
@@ -64,7 +66,9 @@ function fakeMissionIQ(dir, { families: fams = [], contacts: cons = [], children
     const cols = Object.keys(row);
     m.prepare(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...cols.map(c => row[c]));
   };
+  if (!minimal && fams.some(f => 'donor_types' in f)) m.exec(`ALTER TABLE families ADD COLUMN donor_types TEXT DEFAULT '[]'`);
   fams.forEach(f => ins('families', f));
+  links.forEach(l => ins('family_links', l));
   cons.forEach(c => ins('contacts', c));
   kids.forEach(k => ins('children', k));
   m.close();
@@ -728,4 +732,70 @@ test('cli > import-missioniq asks, writes only on YES, and is safe to re-run', a
   for (const secret of ['Jane', 'Garcia', 'jane@example.org', '512-555-0101', 'Maple']) {
     assert.ok(!logs.includes(secret), `logs must not contain ${secret}`);
   }
+});
+
+test('missioniq > donor_types become family tags and extended_family links become grandparent_of; re-run is idempotent', async t => {
+  const ctx = setup(t);
+  const data = {
+    families: [
+      { id: 'fam-g', family_name: 'Elder Family', address_line1: '1 Elm St', city: 'Austin', state: 'TX', zip: '78703', donor_types: '["grandparent","alumni"]' },
+      { id: 'fam-k', family_name: 'Young Family', address_line1: '2 Pine St', city: 'Austin', state: 'TX', zip: '78704', donor_types: '[]' },
+      { id: 'fam-x', family_name: 'Other Family', address_line1: '3 Ash St', city: 'Austin', state: 'TX', zip: '78705', donor_types: 'not json' },
+    ],
+    contacts: [
+      { id: 'c-g', first_name: 'Ruth', last_name: 'Elder', email: 'ruth@example.org', family_id: 'fam-g' },
+      { id: 'c-k', first_name: 'Paul', last_name: 'Young', email: 'paul@example.org', family_id: 'fam-k' },
+      { id: 'c-x', first_name: 'Ann', last_name: 'Other', email: 'ann@example.org', family_id: 'fam-x' },
+    ],
+    links: [
+      // The grandparent family is on the b side here: direction comes from donor_types.
+      { family_id_a: 'fam-k', family_id_b: 'fam-g', link_type: 'extended_family' },
+      // Neither side is a grandparent: direction unknown, skipped and counted.
+      { family_id_a: 'fam-k', family_id_b: 'fam-x', link_type: 'extended_family' },
+      // Other link types are not read.
+      { family_id_a: 'fam-g', family_id_b: 'fam-x', link_type: 'shared_custody' },
+    ],
+  };
+  const p = fakeMissionIQ(ctx.dir, data);
+  const r = await importAll(ctx, p);
+  assert.equal(r.status, 'committed');
+  assert.equal(r.stats.grandparent_families, 1);
+  assert.equal(r.stats.alumni_families, 1);
+  assert.equal(r.stats.extended_family_links, 2);
+  assert.equal(r.stats.extended_family_links_undirected, 1);
+  assert.equal(r.extras.tags_grandparent, 1);
+  assert.equal(r.extras.tags_school_alumni, 1);
+  assert.equal(r.extras.grandparent_links_created, 1);
+  const g = crosswalk.lookup(ctx.db, 'missioniq', 'family:fam-g').code;
+  const k = crosswalk.lookup(ctx.db, 'missioniq', 'family:fam-k').code;
+  const x = crosswalk.lookup(ctx.db, 'missioniq', 'family:fam-x').code;
+  const tags = require('../server/identity/tags');
+  assert.deepEqual(tags.getFamilyTags(ctx.db, g), ['grandparent', 'school-alumni']);
+  assert.deepEqual(tags.getFamilyTags(ctx.db, k), []);
+  assert.deepEqual(tags.getFamilyTags(ctx.db, x), []);
+  const rels = () => ctx.db.prepare('SELECT from_code, to_code, kind FROM relationships ORDER BY kind').all();
+  assert.deepEqual(rels(), [
+    { from_code: k, to_code: g, kind: 'grandchild_of' },
+    { from_code: g, to_code: k, kind: 'grandparent_of' },
+  ]);
+
+  const again = await importAll(ctx, p);
+  assert.equal(again.status, 'committed');
+  assert.equal(again.extras.grandparent_links_created, 0);
+  assert.equal(again.extras.grandparent_links_existing, 1);
+  assert.equal(rels().length, 2);
+  assert.deepEqual(tags.getFamilyTags(ctx.db, g), ['grandparent', 'school-alumni']);
+});
+
+test('missioniq > a MissionIQ without donor_types or family_links still imports', async t => {
+  const ctx = setup(t);
+  const p = fakeMissionIQ(ctx.dir, SMITHS);
+  const m = new Database(p); m.exec('DROP TABLE family_links'); m.close();
+  const r = await importAll(ctx, p);
+  assert.equal(r.status, 'committed');
+  assert.equal(r.stats.extended_family_links, 0);
+  assert.deepEqual(r.extras, {
+    tags_grandparent: 0, tags_school_alumni: 0, tag_families_unlinked: 0,
+    grandparent_links_created: 0, grandparent_links_existing: 0, grandparent_links_unlinked: 0,
+  });
 });

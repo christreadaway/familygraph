@@ -24,7 +24,11 @@ function build({ db }) {
       return res.status(400).json({ error: `invalid kind: ${kind}` });
     }
     try {
-      const code = relationships.add(db, from, to, kind, detail);
+      const { code, existing } = relationships.ensure(db, from, to, kind, detail);
+      if (existing) {
+        // Idempotent repeat: nothing written, so no audit row.
+        return res.status(200).json({ ...relationships.get(db, code), existing: true });
+      }
       audit.record(db, {
         action: 'relationship_add',
         actor: req.auth?.actor || 'unknown',
@@ -34,6 +38,25 @@ function build({ db }) {
     } catch (e) {
       res.status(400).json({ error: userFacingMessage(e) });
     }
+  });
+
+  // DELETE /api/relationships?from=&to=&kind= removes the triple and its reverse.
+  r.delete('/', (req, res) => {
+    const { from, to, kind } = req.query || {};
+    if (!isValidCode(from) || !isValidCode(to) || !kind) {
+      return res.status(400).json({ error: 'from, to, kind query parameters required' });
+    }
+    if (!relationships.VALID_KINDS.has(kind)) {
+      return res.status(400).json({ error: `invalid kind: ${kind}` });
+    }
+    const n = relationships.removeTriple(db, from, to, kind);
+    if (!n) return res.status(404).json({ error: 'not found' });
+    audit.record(db, {
+      action: 'relationship_remove',
+      actor: req.auth?.actor || 'unknown',
+      metadata: { from, to, kind, removed: n },
+    });
+    res.status(204).end();
   });
 
   r.delete('/:code', (req, res) => {

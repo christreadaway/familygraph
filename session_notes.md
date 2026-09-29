@@ -4019,3 +4019,15 @@ Decisions. Import before the first MissionIQ "Sync now", so every record links b
 Open. Port 30500 is plain HTTP on the school LAN, and edge-ops' network posture doc still says "familygraph stays on loopback". Doc Anonymizer has no image or chart, so it runs on a Mac and is the one consumer whose roster traffic crosses the LAN. Both are flagged in the runbook for the ops review.
 
 *End of session notes*
+
+## 2026-09-29 - Grandparent households, alumni, and grandparent links for connected apps
+
+MissionIQ needs to tell Family Graph three things a donor office knows: this household is a grandparent household, this family or person is an alumnus, and this grandparent household belongs to that grandchild's household. Family Graph stores the facts, never the gifts.
+
+1. **Relationship kinds `grandparent_of` / `grandchild_of`.** Two families or two persons, never mixed. Each writes its reverse; deleting either (by id or by triple) removes both. Migration 0021 rebuilds `relationships` on older databases, because SQLite cannot alter a CHECK constraint.
+2. **`POST /api/relationships` is idempotent** for every kind: an identical triple (or the reverse of an existing pair) returns the existing row with `200` and `existing: true`. New `DELETE /api/relationships?from=&to=&kind=`.
+3. **`POST /api/families|people/:code/tags/add`** unions tags in one transaction, so two apps adding at once never lose a tag. Standard values: `grandparent`, `school-alumni`. Tags stay free-form.
+4. **`affiliations.class_year`** (migration 0021): integer 1900-2100 or null, 400 otherwise; kept through the student -> alumni transition.
+5. **The MissionIQ import** carries `donor_types` over as tags and `extended_family` links as `grandparent_of`. MissionIQ's links have no direction, so the family marked grandparent decides; both or neither -> skipped and counted. Idempotent on re-run.
+
+Audit rows for the new writes carry codes and counts only. Documented in `INTEGRATION_GUIDE.md`, "Connected apps: tags, grandparent links, alumni class year".

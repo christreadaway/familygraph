@@ -144,7 +144,7 @@ Top-level tables:
 - `memberships` (family↔person with role, custody, started_at/ended_at)
 - `addresses`, `family_addresses`, `person_addresses`
 - `emails`, `phones`, `person_emails`, `person_phones`
-- `relationships` (parent_of, child_of, spouse_of, godparent_of, sibling_of, related_household, custody_of, guardian_of, other; symmetric back-references where applicable)
+- `relationships` (parent_of, child_of, spouse_of, godparent_of, sibling_of, related_household, custody_of, guardian_of, grandparent_of, grandchild_of, other; symmetric back-references where applicable)
 - `aliases` (loser code → winner code)
 - `source_records`, `provenance` (which source contributed which field to which entity)
 - `conflicts` (resolution-queue rows with status: open | merged | rejected | dismissed)

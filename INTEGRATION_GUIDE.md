@@ -960,6 +960,105 @@ When you're ready to wire FG into a sibling app:
       roster, after-care registration). Debounce at 5 minutes per
       person on your side; FG just stores what you send.
 
+## Connected apps: tags, grandparent links, alumni class year
+
+Added 2026-09-29 for donor apps such as MissionIQ. A key issued with
+`family-graph issue-key missioniq` (default scopes `pii.read`, `pii.write`,
+`sanitize`, `audit.write`) can call every endpoint below: reads need
+`pii.read`, writes need `pii.write`. FamilyGraph stores facts about people
+and households only - never dollar amounts or gifts.
+
+### Tags (grandparent household, alumni)
+
+Tags are free-form, lowercased, and deduped. Two standard values for this use:
+
+| Tag | Meaning |
+|---|---|
+| `grandparent` | The family is a grandparent household |
+| `school-alumni` | The family or person is a school alumnus |
+
+Add tags without replacing the list (the read and write happen in one
+transaction, so two apps adding at once never lose a tag):
+
+```
+POST /api/families/f_0123456789abcdef/tags/add
+{ "tags": ["grandparent"] }
+
+200 { "code": "f_0123456789abcdef", "tags": ["grandparent", "parishioner"] }
+```
+
+`POST /api/people/:code/tags/add` is the same for a person. `400` when
+`tags` is not a non-empty array of strings, `404` when the record does not
+exist. Remove one tag with `DELETE /api/families/:code/tags/:tag` (or
+`/api/people/...`) -> `200 { "tags": [...] }`. `PUT .../tags` still replaces
+the whole list; avoid it from a connected app.
+
+### Grandparent links
+
+Relationship kinds `grandparent_of` and `grandchild_of` link two families
+(a grandparent household and the grandchild's household) or two persons,
+never a family to a person. Each creates its reverse: `A grandparent_of B`
+also writes `B grandchild_of A`.
+
+```
+POST /api/relationships
+{ "from": "f_aaaaaaaaaaaaaaaa", "to": "f_bbbbbbbbbbbbbbbb", "kind": "grandparent_of" }
+
+201 { "code": "r_0123456789abcdef" }
+```
+
+`POST /api/relationships` is idempotent for every kind: posting an identical
+(from, to, kind) again - or the reverse of an existing pair - returns the
+row already there instead of a duplicate:
+
+```
+200 { "code": "r_0123456789abcdef", "from_code": "f_aaaaaaaaaaaaaaaa",
+      "to_code": "f_bbbbbbbbbbbbbbbb", "kind": "grandparent_of", "detail": null,
+      "created_at": "...", "updated_at": "...", "existing": true }
+```
+
+`400` for missing fields, an unknown kind, a family paired with a person,
+or a self-link.
+
+Remove a link by its triple (the reverse goes too):
+
+```
+DELETE /api/relationships?from=f_aaaaaaaaaaaaaaaa&to=f_bbbbbbbbbbbbbbbb&kind=grandparent_of
+204 (removed)   404 (no such link)   400 (from, to, kind missing or invalid)
+```
+
+`DELETE /api/relationships/:code` still works; for the grandparent kinds it
+removes the reverse as well. Read links with
+`GET /api/relationships/:code?kind=grandparent_of`.
+
+### Alumni class year
+
+Affiliations take an optional `class_year` (integer 1900-2100, or `null`):
+
+```
+POST /api/organizations/org_0123456789abcdef/affiliations
+{ "person_code": "p_0123456789abcdef", "role": "alumni", "class_year": 2009 }
+
+201 { "code": "aff_0123456789abcdef" }
+```
+
+`400` for anything else ("2009" as a four-digit string is accepted).
+Re-affiliating without `class_year` keeps the stored year; `null` clears it.
+Affiliation reads (`GET /api/organizations/:code`, a person's or family's
+affiliations) return `class_year`. The student -> alumni transition
+(`POST /api/organizations/affiliations/:code/transition`) carries the year
+over, or takes a new `class_year` in its body.
+
+### The one-time MissionIQ import
+
+`family-graph import-missioniq` also reads MissionIQ's `families.donor_types`
+(`grandparent` -> tag `grandparent`, `alumni` -> tag `school-alumni`) and its
+`family_links` rows of type `extended_family`. MissionIQ does not record
+which side of a link is the grandparent, so the family marked `grandparent`
+in donor_types is taken as the grandparent side; when both or neither are,
+the link is skipped and counted. Re-running changes nothing. Donations and
+amounts are never read.
+
 ## 16. Open questions for v0.3
 
 These are documented as deferred in the FamilyGraph spec, but

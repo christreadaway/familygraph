@@ -71,6 +71,7 @@ function row2affiliation(row, secrets, { includePii = false } = {}) {
     person_code: row.person_code || null,
     family_code: row.family_code || null,
     role: row.role,
+    class_year: row.class_year == null ? null : row.class_year,
     started_at: row.started_at,
     ended_at: row.ended_at,
     reason: row.reason || null,
@@ -207,7 +208,21 @@ function archiveOrganization(db, secrets, code, audit = {}) {
 // Affiliations
 // ---------------------------------------------------------------------------
 
+// Optional graduating class for an affiliation (school alumni, mostly).
+// Returns undefined when the caller did not supply the field at all.
+function _validateClassYear(input) {
+  if (!input || !('class_year' in input)) return undefined;
+  const v = input.class_year;
+  if (v == null || v === '') return null;
+  const n = typeof v === 'string' && /^\d{4}$/.test(v.trim()) ? Number(v.trim()) : v;
+  if (!Number.isInteger(n) || n < 1900 || n > 2100) {
+    throw new Error('class_year must be an integer between 1900 and 2100, or null');
+  }
+  return n;
+}
+
 function affiliate(db, secrets, orgCode, input = {}, audit = {}) {
+  const classYear = _validateClassYear(input);
   if (!isValidCode(orgCode, 'organization')) throw new Error('invalid organization code');
   const org = db.prepare(`SELECT * FROM organizations WHERE code = ?`).get(orgCode);
   if (!org) throw new Error('organization not found');
@@ -261,10 +276,11 @@ function affiliate(db, secrets, orgCode, input = {}, audit = {}) {
     const nextNotesCt = 'notes' in input ? enc.encrypt(secrets, input.notes) : existingActive.notes_ct;
     const tx = db.transaction(() => {
       db.prepare(
-        `UPDATE affiliations SET role = ?, notes_ct = ?,
+        `UPDATE affiliations SET role = ?, notes_ct = ?, class_year = ?,
            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE code = ?`
-      ).run(nextRole, nextNotesCt, existingActive.code);
+      ).run(nextRole, nextNotesCt,
+        classYear === undefined ? existingActive.class_year : classYear, existingActive.code);
       const after = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(existingActive.code);
       history.record(db, {
         entityKind: 'affiliation', entityCode: existingActive.code, operation: 'update',
@@ -279,9 +295,10 @@ function affiliate(db, secrets, orgCode, input = {}, audit = {}) {
   const code = newCode('affiliation');
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT INTO affiliations (code, org_code, person_code, family_code, role, notes_ct)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(code, orgCode, resolvedPerson, resolvedFamily, role, enc.encrypt(secrets, input.notes));
+      `INSERT INTO affiliations (code, org_code, person_code, family_code, role, notes_ct, class_year)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(code, orgCode, resolvedPerson, resolvedFamily, role, enc.encrypt(secrets, input.notes),
+      classYear === undefined ? null : classYear);
     const row = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(code);
     history.record(db, {
       entityKind: 'affiliation', entityCode: code, operation: 'create',
@@ -370,6 +387,7 @@ function transition(db, secrets, code, input = {}, audit = {}) {
   if (PERSON_ONLY_ROLES.has(toRole) && !row.person_code) {
     throw new Error(`role '${toRole}' requires a person affiliation`);
   }
+  const classYearIn = _validateClassYear(input);
   const reasonClass = _validateReason(input.reason) || (toRole === 'alumni' ? 'graduated' : 'other');
   const endedAt = _normalizeEndedAt(input.ended_at);
   const newCodeValue = newCode('affiliation');
@@ -387,11 +405,13 @@ function transition(db, secrets, code, input = {}, audit = {}) {
       reason: reasonClass, relatedCodes: [newCodeValue],
     });
     db.prepare(
-      `INSERT INTO affiliations (code, org_code, person_code, family_code, role, started_at, notes_ct)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO affiliations (code, org_code, person_code, family_code, role, started_at, notes_ct, class_year)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       newCodeValue, row.org_code, row.person_code, row.family_code, toRole,
       endedRow.ended_at, enc.encrypt(secrets, input.notes),
+      // The class year survives graduation: student (class of 2030) -> alumni (class of 2030).
+      classYearIn === undefined ? (row.class_year ?? null) : classYearIn,
     );
     const created = db.prepare(`SELECT * FROM affiliations WHERE code = ?`).get(newCodeValue);
     history.record(db, {

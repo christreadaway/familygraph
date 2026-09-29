@@ -32,16 +32,18 @@ function _write(db, table, code, tags) {
 function getFamilyTags(db, code) { return _read(db, 'families', code) || []; }
 function getPersonTags(db, code) { return _read(db, 'persons', code) || []; }
 
-function addFamilyTags(db, code, tags) {
-  const existing = _read(db, 'families', code);
-  if (existing == null) return null;
-  return _write(db, 'families', code, [...existing, ...(tags || [])]);
+// Union tags into the list. The read and the write share one transaction
+// (better-sqlite3 is synchronous, so nothing interleaves between them), so
+// two apps adding different tags never lose each other's write.
+function _add(db, table, code, tags) {
+  return db.transaction(() => {
+    const existing = _read(db, table, code);
+    if (existing == null) return null;
+    return _write(db, table, code, [...existing, ...(tags || [])]);
+  })();
 }
-function addPersonTags(db, code, tags) {
-  const existing = _read(db, 'persons', code);
-  if (existing == null) return null;
-  return _write(db, 'persons', code, [...existing, ...(tags || [])]);
-}
+function addFamilyTags(db, code, tags) { return _add(db, 'families', code, tags); }
+function addPersonTags(db, code, tags) { return _add(db, 'persons', code, tags); }
 
 function setFamilyTags(db, code, tags) {
   if (_read(db, 'families', code) == null) return null;

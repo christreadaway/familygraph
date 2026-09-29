@@ -494,6 +494,8 @@ switch (cmd) {
           out(fmtSummary(s).replace(/need you/g, 'decided by you'));
           out(`  MissionIQ records linked: ${r.crosswalk.person} people, ${r.crosswalk.family} households (${s.crosswalk.created} new links, ${s.crosswalk.relinked} changed)`);
           out(`  import run: ${(r.result.import_runs || []).join(', ') || '-'}`);
+          const x = r.extras;
+          out(`  tags: ${x.tags_grandparent} grandparent, ${x.tags_school_alumni} school-alumni households; grandparent links: ${x.grandparent_links_created} new, ${x.grandparent_links_existing} already there, ${r.stats.extended_family_links_undirected} skipped (direction unknown), ${x.grandparent_links_unlinked} not linked`);
           if (r.stale.length) {
             out('');
             out(`${r.stale.length} MissionIQ records still carry an old Family Graph id. Correct ids:`);

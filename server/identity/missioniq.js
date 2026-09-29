@@ -31,6 +31,9 @@ const Database = require('better-sqlite3');
 const roster = require('./roster');
 const crosswalk = require('./crosswalk');
 const ids = require('../crypto/identifiers');
+const tagsLib = require('./tags');
+const relationships = require('./relationships');
+const log = require('../log');
 
 const SOURCE = 'missioniq';
 const PSEUDO_FAMILIES = new Set(['unmatched donations']);
@@ -54,6 +57,43 @@ function _hint(code, kind) {
   return typeof code === 'string' && ids.kindOf(code) === kind && ids.isValidCode(code) ? code : null;
 }
 
+function _donorTypes(v) {
+  if (v == null || v === '') return new Set();
+  try {
+    const arr = JSON.parse(v);
+    return new Set(Array.isArray(arr) ? arr.map(x => String(x).trim().toLowerCase()) : []);
+  } catch (_) { return new Set(); }
+}
+
+// After the households are linked: carry donor_types over as family tags and
+// extended_family links as grandparent_of relationships. Both are idempotent
+// (tags union; relationships.ensure returns what is there). Counts only.
+function applyExtras(db, { familyTags, grandparentLinks }) {
+  const out = {
+    tags_grandparent: 0, tags_school_alumni: 0, tag_families_unlinked: 0,
+    grandparent_links_created: 0, grandparent_links_existing: 0, grandparent_links_unlinked: 0,
+  };
+  for (const [fid, tags] of familyTags || []) {
+    const hit = crosswalk.lookup(db, SOURCE, `family:${fid}`);
+    if (!hit || hit.kind !== 'family') { out.tag_families_unlinked += 1; continue; }
+    tagsLib.addFamilyTags(db, hit.code, tags);
+    if (tags.includes('grandparent')) out.tags_grandparent += 1;
+    if (tags.includes('school-alumni')) out.tags_school_alumni += 1;
+  }
+  for (const l of grandparentLinks || []) {
+    const g = crosswalk.lookup(db, SOURCE, `family:${l.grandparent}`);
+    const c = crosswalk.lookup(db, SOURCE, `family:${l.grandchild}`);
+    if (!g || !c || g.kind !== 'family' || c.kind !== 'family' || g.code === c.code) {
+      out.grandparent_links_unlinked += 1;
+      continue;
+    }
+    const r = relationships.ensure(db, g.code, c.code, 'grandparent_of');
+    if (r.existing) out.grandparent_links_existing += 1; else out.grandparent_links_created += 1;
+  }
+  log.info('missioniq.import.extras', out);
+  return out;
+}
+
 // Read MissionIQ into roster households. Pure: opens the file read-only and
 // returns plain data.
 function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
@@ -67,7 +107,7 @@ function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
     // One deferred read transaction = one WAL snapshot. MissionIQ is usually
     // running while this reads; separate SELECTs could see a family's contact
     // but not the family, and import that contact as an orphan household.
-    const { families, contacts, children } = mdb.transaction(() => {
+    const { families, contacts, children, links } = mdb.transaction(() => {
       const tables = new Set(mdb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(r => r.name));
       if (!tables.has('families') || !tables.has('contacts')) {
         throw new Error('this is not a MissionIQ database (no families / contacts tables)');
@@ -77,7 +117,7 @@ function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
       const kc = tables.has('children') ? _cols(mdb, 'children') : null;
 
       const families = mdb.prepare(
-        `SELECT id, ${['family_name', 'address_line1', 'address_line2', 'city', 'state', 'zip', 'fg_family_code', 'deceased'].map(c => _sel(fc, c)).join(', ')}
+        `SELECT id, ${['family_name', 'address_line1', 'address_line2', 'city', 'state', 'zip', 'fg_family_code', 'deceased', 'donor_types'].map(c => _sel(fc, c)).join(', ')}
            FROM families ORDER BY ${fc.has('created_at') ? 'created_at, ' : ''}id`
       ).all();
       const contacts = mdb.prepare(
@@ -91,7 +131,18 @@ function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
         `SELECT id, ${['family_id', 'first_name', 'last_name', 'grade', 'birthday', 'enrolled'].map(c => _sel(kc, c)).join(', ')}
            FROM children ORDER BY id`
       ).all() : [];
-      return { families, contacts, children };
+      // family_links: only extended_family rows matter (grandparent links).
+      // No amounts, notes, or donations are read.
+      let links = [];
+      if (tables.has('family_links')) {
+        const lc = _cols(mdb, 'family_links');
+        if (lc.has('family_id_a') && lc.has('family_id_b') && lc.has('link_type')) {
+          links = mdb.prepare(
+            `SELECT family_id_a, family_id_b FROM family_links WHERE link_type = 'extended_family' ORDER BY ${lc.has('id') ? 'id' : 'rowid'}`
+          ).all();
+        }
+      }
+      return { families, contacts, children, links };
     })();
 
     const byFamily = new Map();
@@ -107,7 +158,11 @@ function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
       skipped_pseudo_families: 0, skipped_pseudo_family_contacts: 0, skipped_deceased_families: 0, skipped_empty_families: 0,
       skipped_emergency_contacts: 0, contacts_without_family: 0, children_without_family: 0,
       prior_person_codes: 0, prior_family_codes: 0,
+      grandparent_families: 0, alumni_families: 0, extended_family_links: 0,
     };
+    // MissionIQ family id -> tags to carry over from donor_types.
+    const familyTags = new Map();
+    const donorTypes = new Map();
     const households = [];
 
     const personFromContact = c => {
@@ -175,6 +230,12 @@ function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
       }
       const hint = _hint(f.fg_family_code, 'family');
       if (hint) stats.prior_family_codes += 1;
+      const dt = _donorTypes(f.donor_types);
+      donorTypes.set(String(f.id), dt);
+      const ft = [];
+      if (dt.has('grandparent')) { ft.push('grandparent'); stats.grandparent_families += 1; }
+      if (dt.has('alumni')) { ft.push('school-alumni'); stats.alumni_families += 1; }
+      if (ft.length) familyTags.set(String(f.id), ft);
       stats.families += 1;
       const withAddr = f.address_line1 ? f : (members.contacts.find(c => c.address_line1) || {});
       households.push({
@@ -202,7 +263,22 @@ function readMissionIQ(dbPath, { includeDeceased = false } = {}) {
         households.push({ persons: [personFromChild(k)] });
       }
     }
-    return { households, stats };
+    // Grandparent direction: MissionIQ's family_links has no direction (a/b
+    // is just which page the link was made from), so the family whose
+    // donor_types says 'grandparent' is the grandparent side. Both or
+    // neither -> not knowable; the link is skipped and counted.
+    const grandparentLinks = [];
+    let skippedLinks = 0;
+    for (const l of links) {
+      const a = String(l.family_id_a); const b = String(l.family_id_b);
+      const ga = (donorTypes.get(a) || new Set()).has('grandparent');
+      const gb = (donorTypes.get(b) || new Set()).has('grandparent');
+      if (ga === gb || a === b) { skippedLinks += 1; continue; }
+      grandparentLinks.push(ga ? { grandparent: a, grandchild: b } : { grandparent: b, grandchild: a });
+    }
+    stats.extended_family_links = links.length;
+    stats.extended_family_links_undirected = skippedLinks;
+    return { households, stats, familyTags, grandparentLinks };
   } finally {
     mdb.close();
   }
@@ -360,7 +436,7 @@ function _contradictedKeys(err, decisions) {
 // `confirm(summary)` returns true to write. Both may be async (CLI prompts).
 async function runImport({ db, secrets, thresholds, dbPath, category = null, actor = 'cli:import-missioniq',
   decide, confirm, say = () => {}, dryRun = false, includeDeceased = false, maxRounds = 10 }) {
-  const { households, stats } = readMissionIQ(dbPath, { includeDeceased });
+  const { households, stats, familyTags, grandparentLinks } = readMissionIQ(dbPath, { includeDeceased });
   say({ type: 'read', stats, households: households.length });
   if (!households.length) return { status: 'empty', stats };
 
@@ -430,10 +506,11 @@ async function runImport({ db, secrets, thresholds, dbPath, category = null, act
     stats,
     result: committed,
     stale: staleStamps(committed, households),
+    extras: applyExtras(db, { familyTags, grandparentLinks }),
     crosswalk: crosswalk.countBySource(db, SOURCE),
   };
 }
 
 module.exports = {
-  readMissionIQ, runImport, pendingItems, staleStamps, describeItem, parseAnswer, REASON_TEXT, SOURCE,
+  readMissionIQ, runImport, applyExtras, pendingItems, staleStamps, describeItem, parseAnswer, REASON_TEXT, SOURCE,
 };

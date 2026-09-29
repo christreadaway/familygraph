@@ -224,13 +224,15 @@ CREATE TABLE IF NOT EXISTS relationships (
   from_code    TEXT NOT NULL,             -- p_ or f_
   to_code      TEXT NOT NULL,
   kind         TEXT NOT NULL,             -- parent_of, child_of, spouse_of, godparent_of,
-                                          -- sibling_of, related_household, custody_of, other
+                                          -- sibling_of, related_household, custody_of,
+                                          -- guardian_of, grandparent_of, grandchild_of, other
   detail       TEXT,                      -- free-form qualifier
   created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   CHECK (kind IN (
     'parent_of','child_of','spouse_of','godparent_of','sibling_of',
-    'related_household','custody_of','guardian_of','other'
+    'related_household','custody_of','guardian_of','other',
+    'grandparent_of','grandchild_of'
   ))
 );
 
