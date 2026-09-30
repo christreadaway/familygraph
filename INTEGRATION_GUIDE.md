@@ -993,6 +993,18 @@ exist. Remove one tag with `DELETE /api/families/:code/tags/:tag` (or
 `/api/people/...`) -> `200 { "tags": [...] }`. `PUT .../tags` still replaces
 the whole list; avoid it from a connected app.
 
+Every tag call follows the merge alias first, the same way relationships
+do: a tag sent to a family or person that was merged away lands on the
+survivor (and is read from it), and `tags/add` answers with the survivor's
+code, so a caller holding an old code can update its cache. The
+merged-away row is never written.
+
+Pace tag and relationship writes under the `/api` bucket (§13.1: 200, then
+10/s per key). A bulk change (MissionIQ's "Mark as…" on hundreds of
+families) should send a short burst and then stay under 10 per second, and
+treat a `429` as "wait `Retry-After` seconds and continue", never as a
+failed write. MissionIQ's outbox sends a burst of 20, then 8 per second.
+
 ### Grandparent links
 
 Relationship kinds `grandparent_of` and `grandchild_of` link two families
@@ -1009,7 +1021,10 @@ POST /api/relationships
 
 `POST /api/relationships` is idempotent for every kind: posting an identical
 (from, to, kind) again - or the reverse of an existing pair - returns the
-row already there instead of a duplicate:
+row already there instead of a duplicate. If the pair was there but its
+reverse row was missing, the reverse is written and audited as
+`relationship_reverse_add` (codes only); a plain repeat writes nothing and
+leaves no audit row:
 
 ```
 200 { "code": "r_0123456789abcdef", "from_code": "f_aaaaaaaaaaaaaaaa",
@@ -1057,7 +1072,14 @@ over, or takes a new `class_year` in its body.
 which side of a link is the grandparent, so the family marked `grandparent`
 in donor_types is taken as the grandparent side; when both or neither are,
 the link is skipped and counted. Re-running changes nothing. Donations and
-amounts are never read.
+amounts are never read. A run that carried any tags or links writes one
+`missioniq_import_extras` audit row with the counts only.
+
+After the import, MissionIQ's outbox keeps FamilyGraph current. It removes a
+link in the direction it sent it; for a pair it never sent (one this import
+created), it deletes both directions, and a `404` counts as done. Two
+MissionIQ families that resolve to the same FamilyGraph family are never
+sent as a link (that would be a self-link `400`).
 
 ## 16. Open questions for v0.3
 

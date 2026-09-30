@@ -4018,7 +4018,6 @@ Decisions. Import before the first MissionIQ "Sync now", so every record links b
 
 Open. Port 30500 is plain HTTP on the school LAN, and edge-ops' network posture doc still says "familygraph stays on loopback". Doc Anonymizer has no image or chart, so it runs on a Mac and is the one consumer whose roster traffic crosses the LAN. Both are flagged in the runbook for the ops review.
 
-*End of session notes*
 
 ## 2026-09-29 - Grandparent households, alumni, and grandparent links for connected apps
 
@@ -4031,3 +4030,21 @@ MissionIQ needs to tell Family Graph three things a donor office knows: this hou
 5. **The MissionIQ import** carries `donor_types` over as tags and `extended_family` links as `grandparent_of`. MissionIQ's links have no direction, so the family marked grandparent decides; both or neither -> skipped and counted. Idempotent on re-run.
 
 Audit rows for the new writes carry codes and counts only. Documented in `INTEGRATION_GUIDE.md`, "Connected apps: tags, grandparent links, alumni class year".
+
+## 2026-09-30 - Review fixes: tags follow merges, schema 21, audit gaps, and MissionIQ's outbox
+
+A review of yesterday's work ran MissionIQ's new outbox against a real Family Graph and found two problems on this side and a handful on MissionIQ's.
+
+**Tags did not follow merges.** `relationships.ensure` resolves the merge alias; `tags.js` did not. A `tags/add` sent to a family merged away in the dashboard landed on the dead row, where nothing ever reads it. Every tag function now resolves the alias before it reads or writes, and the tag routes audit and answer with the survivor's code, so a caller holding an old code can fix its cache. The merged-away row is never written.
+
+**`SCHEMA_VERSION` said 20 after migration 0021.** The runner recorded 21, `/health` reported 20. Bumped to 21, and a new test pins `SCHEMA_VERSION` to the newest migration file so the next migration cannot forget it.
+
+**Audit gaps.** The "pair exists but its reverse was missing" path of `POST /api/relationships` wrote a row and audited nothing; it now writes `relationship_reverse_add` (codes only). A plain repeat still writes nothing and audits nothing. The MissionIQ import's extras (tags and grandparent links) write one `missioniq_import_extras` audit row with the counts, only when there was something to carry.
+
+**MissionIQ's side (its own repo, not committed here).** The outbox now paces sends under our `/api` bucket (a burst of 20, then 8 per second, against 200 then 10/s) and treats a `429` as "wait `Retry-After`, then continue by itself", never as a failed attempt; a bulk "Mark as..." on 300 families went from 92 refusals to 300 sent on the first attempt against a live Family Graph. An unlink follows the direction MissionIQ actually sent, and a pair it never sent (one our import created) is deleted in both directions, since `DELETE` of a missing triple is a 404 and counts as done. Two MissionIQ families on one Family Graph family are no longer posted as a self-link. The integration guide says all of this for the next connected app.
+
+Why resolve the alias in `tags.js` instead of in each route: the import pipeline and the MissionIQ extras call the library directly, and the rule should hold for every caller, the way it already does for relationships.
+
+Tests: 786 (785 pass, 1 skipped because it cannot run as root), up from 783.
+
+*End of session notes*

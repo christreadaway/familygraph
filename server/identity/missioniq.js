@@ -34,6 +34,7 @@ const ids = require('../crypto/identifiers');
 const tagsLib = require('./tags');
 const relationships = require('./relationships');
 const log = require('../log');
+const audit = require('../audit');
 
 const SOURCE = 'missioniq';
 const PSEUDO_FAMILIES = new Set(['unmatched donations']);
@@ -68,7 +69,7 @@ function _donorTypes(v) {
 // After the households are linked: carry donor_types over as family tags and
 // extended_family links as grandparent_of relationships. Both are idempotent
 // (tags union; relationships.ensure returns what is there). Counts only.
-function applyExtras(db, { familyTags, grandparentLinks }) {
+function applyExtras(db, { familyTags, grandparentLinks }, { actor = 'cli:import-missioniq' } = {}) {
   const out = {
     tags_grandparent: 0, tags_school_alumni: 0, tag_families_unlinked: 0,
     grandparent_links_created: 0, grandparent_links_existing: 0, grandparent_links_unlinked: 0,
@@ -91,6 +92,8 @@ function applyExtras(db, { familyTags, grandparentLinks }) {
     if (r.existing) out.grandparent_links_existing += 1; else out.grandparent_links_created += 1;
   }
   log.info('missioniq.import.extras', out);
+  // One audit row for the extras (counts only, never a tag value or a name).
+  if (Object.values(out).some(Boolean)) audit.record(db, { action: 'missioniq_import_extras', actor, metadata: out });
   return out;
 }
 
@@ -506,7 +509,7 @@ async function runImport({ db, secrets, thresholds, dbPath, category = null, act
     stats,
     result: committed,
     stale: staleStamps(committed, households),
-    extras: applyExtras(db, { familyTags, grandparentLinks }),
+    extras: applyExtras(db, { familyTags, grandparentLinks }, { actor }),
     crosswalk: crosswalk.countBySource(db, SOURCE),
   };
 }

@@ -103,7 +103,7 @@ function build({ db, secrets, includePii }) {
     audit.record(db, {
       action: 'person_set_tags',
       actor: req.auth?.actor || 'unknown',
-      entityCode: req.params.code,
+      entityCode: tagsLib.resolveCode(db, req.params.code),
       entityKind: 'person',
       metadata: { tags: updated },
     });
@@ -121,14 +121,16 @@ function build({ db, secrets, includePii }) {
     }
     const updated = tagsLib.addPersonTags(db, req.params.code, tags);
     if (updated == null) return res.status(404).json({ error: 'not found' });
+    // A merged-away code lands on the survivor; answer with the survivor's code.
+    const code = tagsLib.resolveCode(db, req.params.code);
     audit.record(db, {
       action: 'person_add_tags',
       actor: req.auth?.actor || 'unknown',
-      entityCode: req.params.code,
+      entityCode: code,
       entityKind: 'person',
       metadata: { added: tags.length, total: updated.length },
     });
-    res.json({ code: req.params.code, tags: updated });
+    res.json({ code, tags: updated });
   });
 
   r.delete('/:code/tags/:tag', (req, res) => {
@@ -140,7 +142,7 @@ function build({ db, secrets, includePii }) {
     audit.record(db, {
       action: 'person_remove_tag',
       actor: req.auth?.actor || 'unknown',
-      entityCode: req.params.code,
+      entityCode: tagsLib.resolveCode(db, req.params.code),
       entityKind: 'person',
       metadata: { tag: req.params.tag, tags: updated },
     });

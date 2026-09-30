@@ -156,7 +156,7 @@ Top-level tables:
 - `idempotency_keys` - roster commit replay store: request HMAC + encrypted response, 7 days (migration 0012)
 
 The schema is versioned (`schema_version` table) and applied idempotently on
-startup. Current `SCHEMA_VERSION` is 20.
+startup. Current `SCHEMA_VERSION` is 21.
 
 ---
 

@@ -42,9 +42,9 @@ function _find(db, from, to, kind) {
     .get(from, to, kind);
 }
 
-// ensure: idempotent add. Returns { code, existing }. An identical
-// (from, to, kind) returns the row already there; a missing reverse is
-// filled in either way. Runs in one transaction.
+// ensure: idempotent add. Returns { code, existing, reverseAdded }. An
+// identical (from, to, kind) returns the row already there; a missing reverse
+// is filled in either way (reverseAdded says it was). Runs in one transaction.
 function ensure(db, fromCode, toCode, kind, detail = null) {
   if (!VALID_KINDS.has(kind)) throw new Error(`unknown relationship kind: ${kind}`);
   const from = aliases.resolveAlias(db, fromCode);
@@ -71,12 +71,14 @@ function ensure(db, fromCode, toCode, kind, detail = null) {
     }
     // Symmetric back-reference if applicable.
     const inv = INVERSE[kind];
+    let reverseAdded = false;
     if (inv && !_find(db, to, from, inv)) {
       db.prepare(
         `INSERT INTO relationships (code, from_code, to_code, kind, detail) VALUES (?, ?, ?, ?, ?)`
       ).run(newCode('relationship'), to, from, inv, detail);
+      reverseAdded = true;
     }
-    return { code, existing };
+    return { code, existing, reverseAdded };
   });
   return tx();
 }

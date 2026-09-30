@@ -9,13 +9,22 @@
 //   category = 'school'       -> families get 'school-parent'
 //                                persons with grade=8 also get 'school-alumni-incoming'
 // Custom tags supplied with the import are unioned on top.
+//
+// Every read and write follows the merge alias first, the same way
+// relationships.ensure does: a tag sent to a merged-away family or person
+// lands on (and is read from) the survivor, never on the dead row.
+
+const aliases = require('./aliases');
 
 function _norm(t) {
   return String(t || '').trim().toLowerCase().replace(/\s+/g, '-');
 }
 
+// The code a tag call should act on: the merge survivor of `code`.
+function resolveCode(db, code) { return aliases.resolveAlias(db, code); }
+
 function _read(db, table, code) {
-  const row = db.prepare(`SELECT tags FROM ${table} WHERE code = ?`).get(code);
+  const row = db.prepare(`SELECT tags FROM ${table} WHERE code = ?`).get(resolveCode(db, code));
   if (!row) return null;
   if (!row.tags) return [];
   try { const arr = JSON.parse(row.tags); return Array.isArray(arr) ? arr : []; }
@@ -25,7 +34,7 @@ function _read(db, table, code) {
 function _write(db, table, code, tags) {
   const clean = Array.from(new Set((tags || []).map(_norm).filter(Boolean))).sort();
   db.prepare(`UPDATE ${table} SET tags = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE code = ?`)
-    .run(clean.length ? JSON.stringify(clean) : null, code);
+    .run(clean.length ? JSON.stringify(clean) : null, resolveCode(db, code));
   return clean;
 }
 
@@ -115,6 +124,7 @@ function autoTagsForRow(category, canonical, customTags = []) {
 }
 
 module.exports = {
+  resolveCode,
   getFamilyTags, getPersonTags,
   addFamilyTags, addPersonTags,
   setFamilyTags, setPersonTags,

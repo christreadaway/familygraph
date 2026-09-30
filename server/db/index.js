@@ -44,7 +44,9 @@ const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 //       (open-source naming generalization; data-preserving).
 //  20 — external_refs crosswalk: another app's record id -> FG code, so an
 //       imported person is looked up exactly, never re-matched by name.
-const SCHEMA_VERSION = 20;
+//  21 — grandparent_of / grandchild_of relationship kinds and
+//       affiliations.class_year (alumni class year).
+const SCHEMA_VERSION = 21;
 
 function open(dbPath, options = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });

@@ -779,6 +779,13 @@ test('missioniq > donor_types become family tags and extended_family links becom
     { from_code: g, to_code: k, kind: 'grandparent_of' },
   ]);
 
+  // One audit row for the extras: counts only, never a name or a tag value.
+  const ex = ctx.db.prepare(`SELECT actor, metadata FROM audit_events WHERE action = 'missioniq_import_extras'`).all();
+  assert.equal(ex.length, 1);
+  assert.equal(ex[0].actor, 'test');
+  assert.deepEqual(JSON.parse(ex[0].metadata), r.extras);
+  assert.ok(!/Elder|Young|ruth@/.test(ex[0].metadata));
+
   const again = await importAll(ctx, p);
   assert.equal(again.status, 'committed');
   assert.equal(again.extras.grandparent_links_created, 0);

@@ -134,6 +134,61 @@ test('tags > concurrent tags/add calls never lose a tag', async t => {
   assert.deepEqual(tags.getFamilyTags(c.db, f), names);
 });
 
+test('tags > a tag call on a merged-away family or person lands on the survivor (review 9/30)', async t => {
+  const c = await setup(t);
+  const loser = c.fam(); const winner = c.fam();
+  families.merge(c.db, c.secrets, loser, winner);
+  const r = await c.call('POST', `/api/families/${loser}/tags/add`, { tags: ['grandparent'] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, { code: winner, tags: ['grandparent'] });
+  assert.deepEqual(tags.getFamilyTags(c.db, winner), ['grandparent']);
+  assert.equal(c.db.prepare('SELECT tags FROM families WHERE code = ?').get(loser).tags, null, 'the merged-away row is untouched');
+  // Reads follow the alias too, and a remove by the old code clears the survivor.
+  assert.deepEqual(tags.getFamilyTags(c.db, loser), ['grandparent']);
+  const del = await c.call('DELETE', `/api/families/${loser}/tags/grandparent`);
+  assert.equal(del.status, 200);
+  assert.deepEqual(tags.getFamilyTags(c.db, winner), []);
+  await c.call('PUT', `/api/families/${loser}/tags`, { tags: ['school-alumni'] });
+  assert.deepEqual(tags.getFamilyTags(c.db, winner), ['school-alumni']);
+  const audits = c.db.prepare(`SELECT entity_code FROM audit_events WHERE action LIKE 'family_%tag%'`).all();
+  assert.ok(audits.length >= 3 && audits.every(a => a.entity_code === winner), 'audited on the survivor');
+
+  const pl = c.person(); const pw = c.person();
+  people.merge(c.db, c.secrets, pl, pw);
+  const rp = await c.call('POST', `/api/people/${pl}/tags/add`, { tags: ['school-alumni'] });
+  assert.deepEqual(rp.body, { code: pw, tags: ['school-alumni'] });
+  assert.deepEqual(tags.getPersonTags(c.db, pw), ['school-alumni']);
+});
+
+test('relationships > re-adding a triple whose reverse went missing writes the reverse and audits it (codes only)', async t => {
+  const c = await setup(t);
+  const g = c.fam(); const k = c.fam();
+  await c.call('POST', '/api/relationships', { from: g, to: k, kind: 'grandparent_of' });
+  c.db.prepare(`DELETE FROM relationships WHERE from_code = ? AND kind = 'grandchild_of'`).run(k);
+  const again = await c.call('POST', '/api/relationships', { from: g, to: k, kind: 'grandparent_of' });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.existing, true);
+  assert.deepEqual(rels(c.db, k), [{ from_code: k, to_code: g, kind: 'grandchild_of' }]);
+  const rows = c.db.prepare(`SELECT metadata FROM audit_events WHERE action = 'relationship_reverse_add'`).all();
+  assert.equal(rows.length, 1);
+  assert.deepEqual(Object.keys(JSON.parse(rows[0].metadata)).sort(), ['code', 'from', 'kind', 'to']);
+  // A plain repeat (nothing written) still leaves no audit row.
+  await c.call('POST', '/api/relationships', { from: g, to: k, kind: 'grandparent_of' });
+  assert.equal(c.db.prepare(`SELECT COUNT(*) n FROM audit_events WHERE action = 'relationship_reverse_add'`).get().n, 1);
+});
+
+test('schema > SCHEMA_VERSION matches the newest migration and /health reports it', async t => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { SCHEMA_VERSION } = require('../server/db');
+  const newest = Math.max(...fs.readdirSync(path.join(__dirname, '..', 'server', 'db', 'migrations'))
+    .map(f => /^(\d{4})_/.exec(f)).filter(Boolean).map(m => Number(m[1])));
+  assert.equal(SCHEMA_VERSION, newest);
+  const c = await setup(t);
+  const h = await c.call('GET', '/api/health');
+  assert.equal(h.body.schema, SCHEMA_VERSION);
+});
+
 test('affiliations > class_year validates, round-trips, and survives the alumni transition', async t => {
   const c = await setup(t);
   const p = c.person();

@@ -24,9 +24,18 @@ function build({ db }) {
       return res.status(400).json({ error: `invalid kind: ${kind}` });
     }
     try {
-      const { code, existing } = relationships.ensure(db, from, to, kind, detail);
+      const { code, existing, reverseAdded } = relationships.ensure(db, from, to, kind, detail);
       if (existing) {
-        // Idempotent repeat: nothing written, so no audit row.
+        // Idempotent repeat: no audit row when nothing was written. When the
+        // triple was there but its reverse was missing, the reverse was just
+        // written: record that (codes only).
+        if (reverseAdded) {
+          audit.record(db, {
+            action: 'relationship_reverse_add',
+            actor: req.auth?.actor || 'unknown',
+            metadata: { code, from, to, kind },
+          });
+        }
         return res.status(200).json({ ...relationships.get(db, code), existing: true });
       }
       audit.record(db, {
